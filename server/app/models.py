@@ -101,11 +101,16 @@ class SessionStart(Input):
     block_id: str
     id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,80}$")
     occurred_at: datetime | None = None
+    mode: Literal["keep_duration", "keep_end"] = "keep_duration"
 
 
 class SessionAction(Input):
     id: str
     occurred_at: datetime | None = None
+
+
+class SessionExtend(SessionAction):
+    minutes: int = Field(ge=5, le=120)
 
 
 class FeedbackCreate(Input):
@@ -118,8 +123,8 @@ class FeedbackCreate(Input):
 
     @model_validator(mode="after")
     def required_details(self):
-        if self.choice == "partial" and self.remaining_minutes is None:
-            raise ValueError("部分完成需要填写剩余投入")
+        if self.choice in ("partial", "interrupted") and self.remaining_minutes is None:
+            raise ValueError("部分完成或被打断需要填写剩余投入")
         if self.choice == "waiting" and (self.check_at is None or self.check_at.tzinfo is None):
             raise ValueError("等待结果需要包含时区的检查时间")
         if self.session_id is None and (self.choice != "not_started" or self.block_id is None):
@@ -173,6 +178,19 @@ class WaitingResolve(Input):
         if self.resolution == "ready" and self.remaining_minutes is None:
             raise ValueError("继续投入需要填写剩余工作量")
         return self
+
+
+class WaitingSnooze(Input):
+    id: str
+    check_at: datetime
+    version: int | None = Field(default=None, ge=1)
+
+    @field_validator("check_at")
+    @classmethod
+    def aware(cls, value):
+        if value.tzinfo is None:
+            raise ValueError("检查时间需要包含时区")
+        return value
 
 
 class PlanRequest(Input):
@@ -238,10 +256,12 @@ MODELS = {
     "block.create": BlockCreate, "block.move": BlockMove,
     "session.start": SessionStart, "session.pause": SessionAction,
     "session.resume": SessionAction, "session.end": SessionAction,
+    "session.extend": SessionExtend,
     "feedback.create": FeedbackCreate, "review.save": ReviewSave,
     "settings.update": SettingsUpdate,
     "plan.apply": PlanAction, "plan.undo": PlanAction,
     "waiting.resolve": WaitingResolve,
+    "waiting.snooze": WaitingSnooze,
     "project.create": ProjectCreate, "project.update": ProjectUpdate,
     "sleep.log": SleepLog, "sleep.delete": SleepDelete,
 }

@@ -13,6 +13,7 @@ void main() {
         'task_id': 't',
         'title': '代码',
         'status': 'scheduled',
+        'version': 1,
         'kind': 'flexible',
         'start_at': '2026-10-19T16:00:00Z',
         'end_at': '2026-10-19T17:00:00Z',
@@ -20,6 +21,67 @@ void main() {
     ],
   };
   final now = DateTime.utc(2026, 10, 19, 15);
+  test('extension and waiting snooze replace the OS reminder instead of leaving the old alert', () async {
+    var current = now;
+    final c = PlannerController(storage: MemoryStore(), clock: () => current);
+    await c.initialize();
+    c.state = snapshot();
+    c.state['tasks'] = <Json>[
+      {
+        'id': 't',
+        'title': '代码',
+        'state': 'ready',
+        'version': 1,
+        'remaining_minutes': 60,
+        'outcome_criteria': '保存输出',
+        'dependency_ids': <String>[],
+      },
+    ];
+    await c.startBlock(c.blocks.single);
+    final driver = FakeDriver();
+    final service = ReminderService(
+      controller: c,
+      driver: driver,
+      clock: () => current,
+    );
+    await service.initialize();
+    await service.enable();
+    final end = buildReminders(
+      c.state,
+      current,
+    ).firstWhere((r) => r.key.startsWith('session:') && r.key.endsWith(':end'));
+    current = current.add(const Duration(minutes: 65));
+    driver.pending.remove(end.id);
+    driver.active.add(end.id);
+    await c.extendSession(c.sessions.single, 15);
+    await service.refresh();
+    expect(
+      driver.pending[end.id]!.at,
+      current.add(const Duration(minutes: 15)),
+    );
+    expect(driver.active, isNot(contains(end.id)));
+    await c.controlSession(c.sessions.single, 'end');
+    await c.submit('feedback.create', {
+      'session_id': c.sessions.single['id'],
+      'choice': 'waiting',
+      'check_at': current.add(const Duration(hours: 2)).toIso8601String(),
+    });
+    await service.refresh();
+    final check = (c.state['waiting_checks'] as List).single as Json;
+    final waiting = buildReminders(
+      c.state,
+      current,
+    ).firstWhere((r) => r.key.startsWith('waiting:'));
+    await c.snoozeWaiting(check, current.add(const Duration(hours: 4)));
+    await service.refresh();
+    expect(
+      driver.pending[waiting.id]!.at,
+      current.add(const Duration(hours: 4)),
+    );
+    expect(driver.cancelled, contains(waiting.id));
+    service.dispose();
+    c.dispose();
+  });
   test('rescheduling replaces old OS alarms and preserves delivered prompts until feedback', () async {
     final c = PlannerController(storage: MemoryStore());
     await c.initialize();

@@ -137,7 +137,7 @@ def apply(state, operation, device_id, now):
     elif kind == "session.start":
         block = find(state, "blocks", data["block_id"])
         task = find(state, "tasks", block["task_id"])
-        if block["status"] != "scheduled" or task["state"] in ("done", "cancelled"):
+        if block["status"] != "scheduled" or task["state"] in ("done", "cancelled", "waiting"):
             raise DomainError("这段安排已经结束")
         for key in task["dependency_ids"]:
             if find(state, "tasks", key)["state"] != "done":
@@ -148,15 +148,23 @@ def apply(state, operation, device_id, now):
             raise DomainError("该时间段已有执行记录，请安排下一段")
         at = event_time(data.get("occurred_at"), now)
         duration = parse(block["end_at"]) - parse(block["start_at"])
+        mode = data.get("mode", "keep_duration")
+        expected = parse(block["end_at"]) if mode == "keep_end" else at + duration
+        if expected <= at:
+            raise DomainError("原定结束时间已过，请保留原时长或另作安排", "INVALID_TRANSITION")
         entity = {"id": data.get("id") or identifier(), "block_id": block["id"], "task_id": task["id"], "device_id": device_id,
                   "state": "running", "actual_start_at": stamp(at), "actual_end_at": None,
-                  "expected_end_at": stamp(at + duration), "last_event_at": stamp(at),
+                  "expected_end_at": stamp(expected), "last_event_at": stamp(at), "start_mode": mode,
+                  "planned_seconds": int((expected - at).total_seconds()),
                   "intervals": [{"start_at": stamp(at), "end_at": None}], "version": 1}
         if any(s["id"] == entity["id"] for s in state["sessions"]):
             raise DomainError("执行标识已经存在")
         state["sessions"].append(entity)
         task["state"] = "in_progress"
         task["version"] += 1
+    elif kind == "session.extend":
+        from .execution import extend_session
+        entity = extend_session(state, data, now)
     elif kind.startswith("session."):
         entity = find(state, "sessions", data["id"])
         at = event_time(data.get("occurred_at"), now, entity["last_event_at"])
@@ -221,13 +229,26 @@ def apply(state, operation, device_id, now):
             for check in state["waiting_checks"]:
                 if check["task_id"] == task["id"] and check["resolved_at"] is None:
                     check["resolved_at"] = stamp(now)
-        elif data["choice"] == "partial":
+        elif data["choice"] in ("partial", "interrupted"):
             task["remaining_minutes"] = data["remaining_minutes"]
         elif data["choice"] == "waiting":
             if parse(data["check_at"]) <= now:
                 raise DomainError("请选择未来的结果检查时间", "INVALID_CHECK_TIME", 422)
-            state["waiting_checks"].append({"id": identifier(), "task_id": task["id"], "source_block_id": block["id"], "check_at": stamp(parse(data["check_at"])), "resolved_at": None})
+            if any(w["id"] == operation.operation_id for w in state["waiting_checks"]):
+                raise DomainError("检查点标识已存在")
+            state["waiting_checks"].append({"id": operation.operation_id, "task_id": task["id"], "source_block_id": block["id"], "check_at": stamp(parse(data["check_at"])), "resolved_at": None, "version": 1})
         state["feedbacks"].append(entity)
+    elif kind == "waiting.snooze":
+        entity = find(state, "waiting_checks", data["id"])
+        task = find(state, "tasks", entity["task_id"])
+        if entity["resolved_at"] is not None or task["state"] != "waiting":
+            raise DomainError("这个等待事项已处理，请先同步", "INVALID_TRANSITION")
+        version = entity.get("version", 1)
+        if data.get("version") is not None and data["version"] != version:
+            raise DomainError("检查时间已被另一台设备修改，请同步后重试", "STALE_VERSION")
+        if parse(data["check_at"]) <= now:
+            raise DomainError("请选择未来的结果检查时间", "INVALID_CHECK_TIME", 422)
+        entity.update(check_at=stamp(parse(data["check_at"])), version=version + 1)
     elif kind == "waiting.resolve":
         entity = find(state, "waiting_checks", data["id"])
         task = find(state, "tasks", entity["task_id"])
@@ -250,7 +271,7 @@ def apply(state, operation, device_id, now):
             task["remaining_minutes"] = data["remaining_minutes"]
         source = entity.get("source_block_id") or next((b["id"] for b in state["blocks"] if b.get("task_id") == task["id"]), None)
         state["feedbacks"].append({"id": identifier(), "task_id": task["id"], "block_id": source, "session_id": None,
-                                   "choice": "done" if data["resolution"] == "done" else "partial", "outcome_text": data["outcome_text"],
+                                   "choice": "done" if data["resolution"] == "done" else "partial", "outcome_text": data.get("outcome_text", ""),
                                    "source": "waiting_result", "created_at": stamp(now), "device_id": device_id})
     elif kind == "review.save":
         previous_version = max((r["version"] for r in state["reviews"] if r["date"] == data["date"]), default=0)

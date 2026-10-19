@@ -1,6 +1,75 @@
 part of '../home.dart';
 
 extension _WaitingSheet on _PlannerHomeState {
+  Future<void> snoozeWaiting(Json check) async {
+    final current = local(check['check_at']);
+    var selected = InkDateTimeWheel.ceilTo(
+      (current.isAfter(now) ? current : now).add(const Duration(hours: 2)),
+      5,
+    );
+    String? error;
+    await showOwnedDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialog) => AlertDialog(
+          title: const Text('结果还没回来，什么时候再看？'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(task(check['task_id'])?['title'] ?? '等候结果'),
+                  const SizedBox(height: 16),
+                  InkDateTimeWheel(
+                    initial: selected,
+                    today: now,
+                    minimum: now,
+                    onChanged: (day, hour, minute) => setDialog(
+                      () => selected = DateTime(
+                        day.year,
+                        day.month,
+                        day.day,
+                        hour,
+                        minute,
+                      ),
+                    ),
+                  ),
+                  if (error != null) Text(error!),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('先不改'),
+            ),
+            FilledButton(
+              key: const Key('waiting.save-snooze'),
+              onPressed: () async {
+                try {
+                  final when = await resolvePlannedTime(
+                    selected,
+                    TimeOfDay(hour: selected.hour, minute: selected.minute),
+                  );
+                  await c.snoozeWaiting(check, when);
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                } catch (value) {
+                  if (context.mounted) {
+                    setDialog(() => error = value.toString());
+                  }
+                }
+              },
+              child: const Text('改约检查时间'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> resolveWaiting(Json check) async {
     final outcome = TextEditingController();
     var resolution = 'done', minutes = 30;

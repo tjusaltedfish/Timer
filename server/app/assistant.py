@@ -225,7 +225,7 @@ SYSTEM_PROMPT = """你是用户的私人时间管理助手，帮他把每天的�
 {"type":"protect","title":"午饭","start_local":"...","minutes":45}       吃饭、休息等保护时段
 {"type":"move_block","block":"b2","start_local":"..."}                 改期，时长不变
 {"type":"feedback","block":"b2","choice":"done|partial|waiting|interrupted|not_started","outcome_text":"...","remaining_minutes":30,"check_local":"..."}
-  partial 需要 remaining_minutes；waiting 需要 check_local。
+  partial 和 interrupted 需要 remaining_minutes；waiting 需要 check_local。
 task / block / 分类只能使用下方上下文里出现的编号；没有合适的分类就省略 project。不需要改动时 drafts 为空数组。"""
 
 

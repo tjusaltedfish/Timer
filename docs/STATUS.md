@@ -8,6 +8,15 @@
 - 产品里程碑 `77882f0`：助手、桌面挂件、分类、睡眠及 v3 界面；环境修复 `8e5bce5`：共享 SDK、缓存和双工具环境入口。
 - 当前实现与未验证项以本文为准；任务拆解见 `vibe-blueprint/08-implementation-plan.md`；环境以 `development-environment.md` 为准；当前视觉以 `design/ink-system.md` 为准；学习复盘的已确认设计见 `design/daily-review.md`。
 
+## 后续开发：弹性执行基础
+
+- 同日日终回顾版本重复已修复，连续提交保留独立版本及原文；幂等重试不新增版本，旧重复版本记录之后按最大版本继续递增。
+- 已接入 session.start 的 keep_duration / keep_end、session.extend、waiting.snooze，以及 interrupted 必填剩余投入。界面提供迟到选择、15/30 分钟续时、检查点改约和中断后重排入口。
+- 计时到点后续时不补算未确认的空档；离线事件按真实发生时间重建。等待检查点使用操作 ID 保持离线反馈→改约的身份一致。
+- 客户端操作与执行规则已拆到 operations.dart / execution.dart，存储拆到 storage.dart；统一时钟支持边界测试。
+- 当前后台 35 项、Flutter 43 项测试通过，analyze 无问题。包含手机宽度的迟到/续时/中断/改约、离线重启、计时区间与提醒替换测试。原生打包回归将在本阶段完成后执行。
+- 下一切片：确定性小幅顺延、提案与撤销；统一问询、已有块改期等剩余工作继续推进。
+
 ## 本次环境修复与保存
 
 - 项目当前路径 `C:/Users/ASUS/Documents/Timer`；Claude 的产品进展已保存为提交 `77882f0`。
@@ -16,7 +25,7 @@
 - `tools/setup-dev.ps1` 按锁文件恢复依赖、更新 Android 本地 SDK 路径、准备插件联接；`-Clean` 用于改名或工具链迁移后的旧生成配置清理。共享工作区联接为 `%USERPROFILE%/DevTools/Timer/workspace`，目标是当前 Timer 仓库。
 - `AGENTS.md`、`CLAUDE.md` 和 `docs/development-environment.md` 提供两端共用规则：不自动升级依赖，不删除或重复安装 SDK/Pub 缓存。
 - 新共享环境实测：`flutter doctor -v` 为 **No issues found**；后台 **25 passed**；Flutter **34 passed**；analyze **No issues found**；Windows release、Android 三种 ABI 的 debug APK 均构建成功。记录在忽略提交的 `artifacts/sdk-repair-*.log`。
-- 同一天三次保存回顾时版本号 `1, 2, 2` 的已复现缺陷留待业务修复；本轮没有更改产品业务逻辑。
+- 环境修复阶段曾复现同日回顾版本 `1, 2, 2`；现已在后续业务开发中修复，见本文弹性执行基础记录。
 
 ## 最新产品与视觉决定
 
@@ -61,7 +70,7 @@
 
 ## 下一步
 
-已知缺陷：同日回顾版本重复，需要补回归测试并修复。以下功能仍需继续实现或验收：
+以下功能仍需继续实现或验收；续时、迟到模式和检查点改约的基础实现见本文最新记录：
 
 1. 按已确认的 `docs/design/daily-review.md` 实现材料收集、AI 复盘、回忆卡片与间隔复习。
 2. 用户在电脑端「设置 · 助手」填写服务地址、模型名、Key，跑一次「测试连接」和一次真实对话。

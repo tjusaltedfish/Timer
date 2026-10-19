@@ -98,9 +98,19 @@ extension _TasksPage on _PlannerHomeState {
                             ],
                           ),
                         ),
-                        FilledButton(
-                          onPressed: () => resolveWaiting(check),
-                          child: const Text('结果回来了'),
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            FilledButton(
+                              onPressed: () => resolveWaiting(check),
+                              child: const Text('结果回来了'),
+                            ),
+                            TextButton(
+                              key: ValueKey('waiting.snooze.${check['id']}'),
+                              onPressed: () => snoozeWaiting(check),
+                              child: const Text('还没回来 · 改约'),
+                            ),
+                          ],
                         ),
                       ],
                     ),

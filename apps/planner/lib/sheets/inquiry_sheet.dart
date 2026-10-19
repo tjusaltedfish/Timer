@@ -94,7 +94,8 @@ extension _InquirySheet on _PlannerHomeState {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (choice == 'partial') ...[
+                          if (choice == 'partial' ||
+                              choice == 'interrupted') ...[
                             const SizedBox(height: 18),
                             Text(
                               '还需要多久？',
@@ -205,12 +206,14 @@ extension _InquirySheet on _PlannerHomeState {
                       'session_id': s['id'],
                       'choice': choice,
                       'outcome_text': text.text.trim(),
-                      if (choice == 'partial') 'remaining_minutes': remaining,
+                      if (choice == 'partial' || choice == 'interrupted')
+                        'remaining_minutes': remaining,
                       if (checkAt != null)
                         'check_at': checkAt.toUtc().toIso8601String(),
                     });
                     if (dialogContext.mounted) Navigator.pop(dialogContext);
-                    if (choice == 'partial' && mounted) {
+                    if ((choice == 'partial' || choice == 'interrupted') &&
+                        mounted) {
                       await replanDialog(task(block['task_id'])!);
                     }
                   } catch (value) {

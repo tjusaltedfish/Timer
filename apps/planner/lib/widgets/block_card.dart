@@ -26,17 +26,17 @@ extension _BlockCard on _PlannerHomeState {
   Widget focusCard(Json block, {bool focused = true}) {
     final t = task(block['task_id']), s = session(block['id']);
     final state = s?['state'];
-    final planned = DateTime.parse(block['end_at'])
-        .difference(DateTime.parse(block['start_at']))
-        .inSeconds;
+    final planned =
+        s?['planned_seconds'] as int? ??
+        DateTime.parse(block['end_at'])
+            .difference(DateTime.parse(block['start_at']))
+            .inSeconds;
     var elapsed = 0;
     if (s != null) {
       for (final interval in s['intervals'] as List? ?? []) {
-        elapsed +=
-            (DateTime.tryParse(interval['end_at'] ?? '') ??
-                    DateTime.now().toUtc())
-                .difference(DateTime.parse(interval['start_at']))
-                .inSeconds;
+        elapsed += (DateTime.tryParse(interval['end_at'] ?? '') ?? c.nowUtc)
+            .difference(DateTime.parse(interval['start_at']))
+            .inSeconds;
       }
     }
     final remaining = s == null
@@ -45,9 +45,7 @@ extension _BlockCard on _PlannerHomeState {
         ? DateTime.parse(s['expected_end_at'])
               .difference(DateTime.parse(s['paused_at']))
               .inSeconds
-        : DateTime.parse(s['expected_end_at'])
-              .difference(DateTime.now().toUtc())
-              .inSeconds;
+        : DateTime.parse(s['expected_end_at']).difference(c.nowUtc).inSeconds;
     final seal = blockSeal(block);
     return Semantics(
       label:
@@ -149,32 +147,35 @@ extension _BlockCard on _PlannerHomeState {
           FilledButton(
             key: const Key('action.pause'),
             onPressed: () => attempt(
-              () => c.submit(
-                state == 'paused' ? 'session.resume' : 'session.pause',
-                {'id': s!['id'], 'occurred_at': utcNow},
-              ),
+              () =>
+                  c.controlSession(s!, state == 'paused' ? 'resume' : 'pause'),
             ),
             child: Text(state == 'paused' ? '继续这一段' : '暂停'),
           ),
           OutlinedButton(
             key: const Key('action.end'),
             onPressed: () => attempt(() async {
-              await c.submit('session.end', {
-                'id': s!['id'],
-                'occurred_at': utcNow,
-              });
+              await c.controlSession(s!, 'end');
               if (mounted) await feedbackDialog(block);
             }),
             child: const Text('结束并反馈'),
           ),
+          ...extensionActions(s!),
         ],
       );
     }
     if (state == 'awaiting_feedback') {
-      return FilledButton(
-        key: const Key('action.inquiry'),
-        onPressed: () => feedbackDialog(block),
-        child: const Text('这一段，进展如何？'),
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          FilledButton(
+            key: const Key('action.inquiry'),
+            onPressed: () => feedbackDialog(block),
+            child: const Text('这一段，进展如何？'),
+          ),
+          if (c.canExtendSession(s!)) ...extensionActions(s),
+        ],
       );
     }
     if (t != null &&
@@ -208,13 +209,62 @@ extension _BlockCard on _PlannerHomeState {
     );
   }
 
-  Future<void> startBlock(Json block) => attempt(
-    () => c.submit('session.start', {
-      'id': const Uuid().v4(),
-      'block_id': block['id'],
-      'occurred_at': utcNow,
-    }),
-  );
+  List<Widget> extensionActions(Json s) => [
+    for (final minutes in [15, 30])
+      TextButton(
+        key: ValueKey('action.extend.$minutes'),
+        onPressed: () => attempt(() async {
+          await c.extendSession(s, minutes);
+          message('已增加 $minutes 分钟。后续安排将在同步后检查。');
+        }),
+        child: Text('再给我 $minutes 分钟'),
+      ),
+  ];
+
+  Future<void> startBlock(Json block) async {
+    var mode = 'keep_duration';
+    if (c.nowUtc.difference(DateTime.parse(block['start_at'])).inMinutes > 5) {
+      final end = DateTime.parse(block['end_at']);
+      final duration = end.difference(DateTime.parse(block['start_at']));
+      final chosen = await showOwnedDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('这一段现在开始，怎么安排？'),
+          content: Text(
+            '原计划 ${hm(local(block['start_at']))}—${hm(local(block['end_at']))}。可以保留原时长，或按原结束时刻收尾。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('稍后'),
+            ),
+            OutlinedButton(
+              key: const Key('start.mode.keep_end'),
+              onPressed: end.isAfter(c.nowUtc)
+                  ? () => Navigator.pop(context, 'keep_end')
+                  : null,
+              child: Text(
+                end.isAfter(c.nowUtc)
+                    ? '按原结束 · 还剩 ${end.difference(c.nowUtc).inMinutes} 分钟'
+                    : '原结束时刻已过',
+              ),
+            ),
+            FilledButton(
+              key: const Key('start.mode.keep_duration'),
+              onPressed: () => Navigator.pop(context, 'keep_duration'),
+              child: Text(
+                '保留 ${duration.inMinutes} 分钟 · 到 ${hm(tz.TZDateTime.from(c.nowUtc.add(duration), zone))}',
+              ),
+            ),
+          ],
+        ),
+      );
+      if (chosen == null) return;
+      mode = chosen;
+    }
+    await attempt(() => c.startBlock(block, mode: mode));
+  }
+
   Widget blockTile(Json block) {
     final t = task(block['task_id']);
     return Column(

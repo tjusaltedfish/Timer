@@ -105,11 +105,12 @@ extension _WidgetPage on _PlannerHomeState {
     String status = blockStatus(block);
     if (state == 'running' || state == 'paused') {
       final expected = DateTime.parse(s!['expected_end_at']);
-      final total = end.difference(start).inSeconds;
+      final total =
+          s['planned_seconds'] as int? ?? end.difference(start).inSeconds;
       final left =
           (state == 'paused'
                   ? expected.difference(DateTime.parse(s['paused_at']))
-                  : expected.difference(DateTime.now().toUtc()))
+                  : expected.difference(c.nowUtc))
               .inSeconds;
       progress = total <= 0 ? 0 : (1 - left / total).clamp(0.0, 1.0);
       status = state == 'paused'

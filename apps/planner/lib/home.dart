@@ -89,7 +89,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
   int _clockMinute = -1;
   int _lastReminderSerial = 0;
   tz.Location get zone => tz.getLocation(c.settings['timezone'] as String);
-  DateTime get now => tz.TZDateTime.now(zone);
+  DateTime get now => tz.TZDateTime.from(c.nowUtc, zone);
   DateTime local(String value) =>
       tz.TZDateTime.from(DateTime.parse(value), zone);
   List<Json> get todaysBlocks => daySlices(
@@ -185,7 +185,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
     }
   }
 
-  String get utcNow => DateTime.now().toUtc().toIso8601String();
+  String get utcNow => c.nowUtc.toIso8601String();
 
   String get greeting {
     final h = now.hour;
