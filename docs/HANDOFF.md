@@ -1,7 +1,7 @@
 # 接手开发指导：技术方案与水墨审美规范
 
 > 写给接手本项目的 AI 开发者（也给人看）。日期 2026-10-19。
-> 本文件是**唯一的开发入口**：先读完本文，再读 `docs/STATUS.md` 与 `docs/vibe-blueprint/` 中被引用的章节。
+> 开发入口：先读根目录 `AGENTS.md` 和 `docs/STATUS.md`，再读本文的状态表与当前任务相关方案。本文 §4–10 保留详细设计目标，不代表其中能力均已实现；当前视觉、环境和实现差异以对应专项文档与源码为准。
 > 本文与旧蓝图冲突时，以本文为准（尤其是视觉部分：旧蓝图的「暖白 + 墨绿」方案已被「简约水墨」替代）。
 
 > **最新用户视觉要求（2026-10-19 续接）**：黑白灰的简约水墨风。实际色表以 `docs/design/ink-system.md` 和 `lib/theme/tokens.dart` 为准；本文后续有关朱砂与淡彩的描述由这条要求覆盖。
@@ -21,52 +21,47 @@
 7. **App 黑名单 / 番茄钟锁机功能已被用户删除**，不要实现，也不要申请相关权限（无障碍、使用情况访问、设备管理等）。
 8. 每完成一个里程碑：跑完 §11 的验证命令，更新 `docs/STATUS.md`，**只写真实跑过的结果**。没跑过的就写「未验证」。
 9. 不要为了让测试通过而删测试或放宽断言；文案改了，就同步改测试里的 finder。
-10. 项目路径含中文（`C:\Users\ASUS\Documents\日程表`），部分原生工具链对非 ASCII 路径有问题，见 §2.3。
+10. 项目当前路径为 `C:/Users/ASUS/Documents/Timer`；工具链与缓存使用共享 DevTools 路径，见 §2.3。
 
 ---
 
 ## 1. 用户原始需求 → 实现状态对照
 
-| # | 用户需求（原意） | 当前状态 | 本轮要做 |
+| # | 用户需求 | 当前状态 | 剩余工作 |
 |---|---|---|---|
-| 1 | 一周七天时间表，可滑动选择，像大学课表 | 有：桌面 7 列、手机单日 + 左右滑；样式粗糙 | 按 §5.6 重做为水墨课表，手机支持横滑多日 |
-| 2 | 时间段过后主动询问结果，避免敷衍 | 有：结束提醒、补追问一次、反馈弹窗（完成/部分/等待/被打断） | 做成统一的「问询」流（§5.8），支持一句话自然语言回复 |
-| 3 | 现实不顺时（迟到、拖延、没干完、结果在等），时间能弹性调整 | 部分：部分完成→重排提案；等待结果→检查点 | 补全弹性状态机：迟到、超时续时、未开始、被打断（§6） |
-| 4 | 用状态机实现弹性机制 | 后台已有任务/执行段状态，但缺「时间块派生状态」与事件→调整规则 | §6 给出完整状态机与规则表 |
-| 5 | 主页不只是表格：一列待办 + 时间卡片轮盘，按时间远近渐渐虚化 | **未实现**（只有一张焦点卡 + 列表） | §5.5 卡片轮盘，是本轮视觉重点 |
-| 6 | 自然语言对话框，接 OpenAI 中转站或 DeepSeek；到点通知；结束后询问并决定是否调整；每天结束总结分析并存档到电脑 | 通知与日终原文归档已有；**助手完全未接入** | §7 完整方案 |
-| 7 | 手机 App + 电脑都能用 | Windows 原生构建曾通过；**没有 APK**；跨网络连接未打通 | §8 连接方案、§9 Android 构建 |
-| — | App 黑名单 | 用户已删除 | 不做 |
+| 1 | 七天课表、滑动选择 | 桌面七列、手机横滑多日、点选和圈选新建已实现 | 已有块的表单/拖动及离线改期 |
+| 2 | 时间段结束后主动问结果 | 结束与补问提醒、快捷反馈、等待检查点已有 | OPPO 通知实测、统一问询队列与自然语言回复联动 |
+| 3 | 迟到、拖延、未完成、等待时弹性调整 | 部分完成可生成重排提案，等待结果可检查和验收 | 迟到模式、续时、检查点改约、一级微调及撤销交互 |
+| 4 | 状态机 | 任务、执行段、时间块及基础派生显示状态已有 | 完整事件→调整规则与相应测试 |
+| 5 | 列表与渐虚卡片轮盘 | 已实现，含鼠标滚轮、轻划吸附、窗口变化修复 | Android 真机 profile 与完整可访问性验收 |
+| 6 | 对话助手、提醒、日终分析和电脑存档 | 兼容 API 通道、对话/拟办、提醒与原文归档已有，Mock 测试通过 | 真实 API、问询联动、自动 AI 日终分析；材料与知识回忆按已确认设计实现 |
+| 7 | Android 手机与 Windows 电脑 | Windows release 和 Android debug 构建通过，源码已推送私有仓库 | 正式签名、跨网络连接、OPPO 真机、常驻与恢复验收 |
+| 新增 | 分类、睡眠、桌面挂件 | 已实现相应管理、记录和窗口功能 | 挂件拖动/透明度手测，真机与同步场景验收 |
 
 ---
 
 ## 2. 当前真实状态（2026-10-19 本次核查）
 
-### 2.1 代码
+### 2.1 代码与仓库
 
-- `server/`：Python FastAPI + SQLite，**14 个 pytest 本次实际运行全部通过**（`server/.venv`）。
-- `apps/planner/`：Flutter 客户端（Android / Windows / Web）。
-- 工作区有**未提交的改动**（提醒、日历切片、过期处理、结果返回等），git status 中的 `M` 与 `??` 文件都是有效进展，不是垃圾。这些已有进展已复核并保存为提交 `81c5566`。继续前请以 `docs/STATUS.md` 的最新证据为准。
+- FastAPI/SQLite 后台实际测试 **25 passed**；Flutter 实际测试 **34 passed**；analyze **No issues found**。
+- Windows release、Android 三种 ABI 的 debug APK 已构建成功；Flutter doctor **No issues found**。
+- 私有仓库 `https://github.com/tjusaltedfish/Timer`，分支 `main`；产品提交 `77882f0`，环境修复提交 `8e5bce5`，均已推送并核对远程一致。
+- 原有大型 UI 已拆分，助手在 `server/app/assistant.py`，窗口管理在 `apps/planner/lib/desktop/`。最新状态和已知缺陷见 `docs/STATUS.md`。
 
-### 2.2 工具链（续接后的实际复核）
+### 2.2 当前工具链
 
-用户目录工具链实际存在且已使用：Flutter 3.47.7 / Dart 3.13.5、ATL、Android SDK 36.0.0、NDK 28.2.13676358、ASCII 工作区联接。此前缺失的记录已失效。
+共享根目录 `%USERPROFILE%/DevTools/Timer`：Flutter 3.47.7 / Dart 3.13.5、Android SDK、ATL、Pub 缓存及工作区联接。`tools/toolchain.json` 固定版本与 revision，`dev-environment.ps1` 校验实际 Git HEAD。
 
-本次 pytest 14 项、Flutter test 20 项、analyze 均通过，Windows 原生闭环回归通过，Android 调试 APK 已生成。详细证据见 `docs/STATUS.md`。
+原 AppData 路径在 Codex 进程中发生 Store 应用重定向；新 SDK 与缓存文件已通过真实物理路径验证。不要从旧环境记录推断 SDK 丢失后重复安装。
 
-Android 资产复制在 ASCII 联接路径失败，已实测改用**真实项目路径**加 `--android-project-arg=android.overridePathCheck=true` 成功；使用 `tools/build-android.ps1`。Windows release 的 AOT 编译需使用独立 ASCII 实体目录，当前构建脚本负责准备。
+### 2.3 环境恢复步骤
 
-### 2.3 环境重建步骤
-
-1. **Flutter SDK**：安装 stable（之前用的是 3.47.7 / Dart 3.13.5，`pubspec.yaml` 要求 `sdk: ^3.13.5`）。放在 ASCII 路径，例如 `C:\Users\ASUS\AppData\Local\TimePlanner\toolchains\flutter`（与 `tools/*.ps1` 和 `local.properties` 一致，免改脚本）。之前官方发布索引曾返回 404，可用官方 Git 仓库 `git clone -b stable https://github.com/flutter/flutter.git`。
-2. **Android SDK**：用户**已明确同意**安装 Android SDK 并接受 Google SDK 许可（许可原文见 `docs/licenses/android-sdk-license.txt`）。
-   - 下载官方 command-line tools，放到 `...\TimePlanner\toolchains\android\cmdline-tools\latest\`。
-   - `sdkmanager --licenses`（已获授权，可接受）。
-   - 安装 `platform-tools`、`build-tools;<版本>`、`platforms;android-<版本>`；版本以 `flutter doctor -v` 和首次 `flutter build apk` 报错提示为准，不要凭记忆写死。
-   - `flutter config --android-sdk <路径>`；不要改系统 PATH，必要时在脚本里临时设置。
-3. **非 ASCII 路径问题**：Dart 分析服务器、Gradle、部分插件在中文路径下会出错。做法：建目录联接 `New-Item -ItemType Junction -Path $env:LOCALAPPDATA\TimePlanner\workspace -Target 'C:\Users\ASUS\Documents\日程表'`，在 `...\workspace\apps\planner` 下执行 `flutter analyze` / `flutter build apk`。`flutter test` 之前在真实路径能跑、在联接路径会报原生资产复制错误——两边都试，记录哪个可用。
-4. **Windows 原生构建**：`flutter_secure_storage` 的 Windows 插件需要 ATL。之前做法是从微软官方组件包解压 ATL 到用户目录并设 `PLANNER_ATL_ROOT`（见 `tools/build-windows.ps1`）。如果嫌麻烦，可以让用户在 VS Installer 勾选「C++ ATL」组件——**这会改系统安装，需要先问用户**。
-5. 验证：`flutter doctor -v`、`flutter test`、`flutter analyze` 全部通过后再继续。
+1. 在项目根目录运行 `./tools/setup-dev.ps1`：固定 SDK/缓存、对齐 Android 配置、按锁文件恢复包、准备插件联接。
+2. 仅在项目改名/移动或确认生成路径过期时加 `-Clean`；不要日常清空 SDK 或 Pub 缓存。
+3. 测试与构建使用 §11 的入口；完整环境说明见 `docs/development-environment.md`。
+4. Android SDK 许可已有用户授权；正式个人签名仍待用户设置口令。真机权限和账号/DNS 授权由用户本人完成。
+5. 现有环境不需要重装 VS 或 SDK。新机器缺失组件时先确认具体缺项，再按固定版本准备；不要自动升级工具链。
 
 ---
 
@@ -79,7 +74,8 @@ Android 资产复制在 ASCII 联接路径失败，已实测改用**真实项目
 │   │          (幂等) + events(不可变日志)+ devices │
 │   ├─ 维护循环（5s）：到点段→待反馈；归档写盘      │
 │   ├─ 规划器 planning.py：有界重排提案            │
-│   ├─ [新增] assistant/：LLM 网关、拟办、日终分析 │
+│   ├─ assistant.py：LLM 网关、拟办（已有）        │
+│   ├─ 自动日终分析 / 材料与回忆（待实现）        │
 │   └─ archives/：YYYY-MM-DD.md / .json 日报存档   │
 │  Flutter Windows 客户端（读本机 desktop-token）  │
 └───────────────▲──────────────────────────────────┘
@@ -103,11 +99,13 @@ Android 资产复制在 ASCII 联接路径失败，已实测改用**真实项目
 | `apps/planner/lib/reminders.dart` | 由状态推导出全部提醒，调度系统通知 |
 | `apps/planner/lib/calendar.dart` | 按时区把时间块切成每日片段（处理跨日、夏令时） |
 | `apps/planner/lib/week_calendar.dart` | 周课表组件 |
-| `apps/planner/lib/planner_app.dart` | **1913 行的单文件 UI，必须拆分**（§10） |
+| `apps/planner/lib/planner_app.dart` | 公开入口；app/home/pages/sheets/widgets 已拆分，后续继续收窄大型组件职责 |
+| `server/app/assistant.py` | 模型配置、请求、短编号上下文和拟办转换 |
+| `apps/planner/lib/desktop/` | Windows 窗口、置顶与挂件模式 |
 
 ### 3.2 现有操作（`kind`）
 
-`task.create` `task.update` `block.create` `block.move` `session.start` `session.pause` `session.resume` `session.end` `feedback.create` `waiting.resolve` `review.save` `settings.update` `plan.apply` `plan.undo`
+`task.create` `task.update` `block.create` `block.move` `session.start` `session.pause` `session.resume` `session.end` `feedback.create` `waiting.resolve` `review.save` `settings.update` `plan.apply` `plan.undo` `project.create` `project.update` `sleep.log` `sleep.delete`
 
 注意：`block.move` 后台支持，但客户端 `_optimistic()` **没有实现**（会抛「需要连接电脑」）。做拖动改期前要补上。
 
@@ -722,21 +720,24 @@ apps/planner/lib/
 ## 11. 验证命令（每个里程碑都要跑）
 
 ```powershell
-# 后台
-cd server; .\.venv\Scripts\python.exe -m pytest -q
-# 客户端（真实路径）
-cd apps\planner; flutter test
-# 静态检查（ASCII 联接路径）
-cd $env:LOCALAPPDATA\TimePlanner\workspace\apps\planner; flutter analyze
-# Windows 原生
-.\tools\build-windows.ps1 -Mode debug
-# Android
-flutter build apk --release --split-per-abi
+# 从项目根目录执行；先恢复固定环境
+./tools/setup-dev.ps1
+./server/.venv/Scripts/python.exe -m pytest server/tests -q
+. ./tools/dev-environment.ps1
+$taskEnv = Initialize-PlannerEnvironment
+Push-Location $taskEnv.App
+& $taskEnv.Flutter test --no-pub
+& $taskEnv.Flutter analyze --no-pub
+Pop-Location
+./tools/build-windows.ps1 -Mode release
+./tools/build-android.ps1 -Mode debug
 ```
+
+Android release 待个人签名配置后再验证。只有相关改动才重复相应检查；只改文档不重新运行整套构建。
 
 界面验收：`flutter run -d chrome` 或 `flutter build web` 后用浏览器在 360/390/412/1280 宽度截图，存 `artifacts/`（已被忽略提交），在 `STATUS.md` 里列出文件名。检查清单：
 
-- [ ] 页面只出现一种强调色（朱砂），且每屏朱砂元素 ≤ 3 处。
+- [ ] 符合当前「墨晕白纸」黑白近中性色规范，状态同时有文字或形状说明。
 - [ ] 正文对比度 ≥ 4.5:1（抽查 `inkZhong` 文本）。
 - [ ] 轮盘：焦点卡清晰；过去卡在上且偏淡；未来卡在下；模糊随距离递增；减少动画模式下无模糊。
 - [ ] 无 Material 默认紫/蓝色残留（检查 Switch、Checkbox、DatePicker、TimePicker、SnackBar、ProgressIndicator 的主题）。
@@ -749,20 +750,20 @@ flutter build apk --release --split-per-abi
 
 ## 12. 里程碑与验收
 
-| 里程碑 | 内容 | 完成标准 |
+| 里程碑 | 当前状态 | 未完成的验收或实现 |
 |---|---|---|
-| M0 环境 | 按 §2.3 重建工具链；跑通现有测试；提交现有未提交改动 | pytest、flutter test、analyze 全绿；一次提交 |
-| M1 设计系统 | 字体子集、纸纹、tokens、主题、通用组件；拆分 `planner_app.dart` | 所有页面换上新主题，功能不退化，测试绿 |
-| M2 今日页 | 卡片轮盘 + 列表切换 + 圆相计时 + 桌面两栏时间轴 + 日期条 | §11 轮盘检查项通过；Android profile 模式滑动流畅 |
-| M3 一周页 | 新课表、手机横滑多日、长按新建、拖动改期（含 `block.move` 乐观更新） | 拖动改期在离线时排队、联网后同步；固定块不可拖 |
-| M4 问询与弹性 | `InquirySheet`、§6.5 新操作、一级自动微调与撤销 | 后台新增测试覆盖 §6.3 每一行；通知点开直达问询 |
-| M5 助手 | §7.1–7.5、助手页、问询中的「直接说一句」 | Mock 测试全过；用户填入真实 Key 后手工跑通一次「安排明天」 |
-| M6 日终分析 | §7.6 | 归档 md 中出现「助手分析」；无 Key 时降级正常 |
-| M7 连接与 APK | Cloudflare Tunnel 文档与脚本、Android 构建、签名、图标、ColorOS 引导 | 真机安装；手机在 4G 网络下配对并同步成功；锁屏提醒准时 |
-| M8 电脑端常驻与打包 | 计划任务、托盘、Windows release | 重启电脑后后台自动运行，客户端可连 |
-| M9 验收 | 按 `docs/vibe-blueprint/02-scope-and-requirements.md` 逐条 | `STATUS.md` 逐条写证据 |
+| M0 环境 | 已修复共享工具链，doctor、测试、分析和双端构建通过；代码已推送 | 日常通过 setup-dev 维护，不重新安装 |
+| M1 设计系统 | 文楷、墨晕白纸、主题与页面拆分已实现 | 深色真机、完整可访问性走查 |
+| M2 今日页 | 轮盘、列表、圆相、桌面时间轴已有实现和测试 | OPPO profile 流畅度 |
+| M3 一周页 | 多日显示、点选/圈选新建已有 | 表单/拖动已有块、离线改期 |
+| M4 问询与弹性 | 快捷反馈、等待检查与规则重排已有 | 续时、改约、迟到模式、自动微调和统一问询 |
+| M5 助手 | 兼容 API、对话、拟办确认与 Mock 测试已有 | 真实 Key/模型验收、问询联动、完整场景 |
+| M6 日终分析 | 原文和确定性归档已有 | 自动 AI 分析、归档版本缺陷；材料与知识回忆依已确认设计实现 |
+| M7 连接与 APK | Android debug 构建通过 | 正式签名、移动网络配对、OPPO 锁屏提醒 |
+| M8 电脑端 | Windows release 和置顶挂件已有 | 托盘、开机自启、备份恢复及完整运行验收 |
+| M9 总体验收 | 尚未完成 | 按范围表逐条补真实证据与一周试用 |
 
-建议顺序 M0 → M1 → M2 → M4 → M3 → M5 → M7 → M6 → M8 → M9（先让日常最高频的「今日 + 问询」好用，再做周视图细节）。
+后续实现按用户当前任务推进；具体待办与已知缺陷以 `docs/STATUS.md` 和 `vibe-blueprint/08-implementation-plan.md` 为准。
 
 ---
 
@@ -778,10 +779,10 @@ flutter build apk --release --split-per-abi
 
 ## 14. 已知坑
 
-- 中文路径：见 §2.3。
+- 旧目录与 AppData 重定向：见 §2.3；统一运行共享环境入口。
 - `flutter_secure_storage` Windows 需要 ATL。
 - Web 端令牌只存内存（刷新需重新连接），这是有意的。
 - 时区默认 `America/Los_Angeles`（用户当前所在），有夏令时；所有时间计算走 `tz` 库，已有夏令时测试，不要用 `DateTime.now()` 的本地时区代替用户时区。
 - 后台维护循环每 5 秒运行，测试里用注入的 `clock`，不要 `sleep`。
-- `projects` 是固定四个（`models.py` 里 `Literal`），新增项目要同时改前后端。
+- 分类由用户建立、改名和归档；任务可不归类。不要恢复四个硬编码分类。
 - 本地通知 id 由 key 哈希得到，改 key 格式会导致旧通知取消不掉——改之前先全部取消再重排。

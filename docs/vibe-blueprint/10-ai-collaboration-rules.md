@@ -1,6 +1,6 @@
 # 后续 AI 协作规则
 
-先读 00-index、02-scope-and-requirements 和当前任务相关契约。默认建议不能写成用户已明确确认的事实。
+先读根目录 AGENTS.md、docs/STATUS.md，再读 00-index、02-scope-and-requirements 和当前任务相关契约。环境统一使用 tools/setup-dev.ps1 与 docs/development-environment.md，当前视觉使用 docs/design/ink-system.md。默认建议不能写成用户已明确确认的事实。
 
 ## 当前授权阶段
 

@@ -2,6 +2,12 @@
 
 日期：2026-10-19。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
 
+## 仓库与交接入口
+
+- 私有仓库：[tjusaltedfish/Timer](https://github.com/tjusaltedfish/Timer)，分支 `main`，已完成首次推送并核对远程提交一致。
+- 产品里程碑 `77882f0`：助手、桌面挂件、分类、睡眠及 v3 界面；环境修复 `8e5bce5`：共享 SDK、缓存和双工具环境入口。
+- 当前实现与未验证项以本文为准；任务拆解见 `vibe-blueprint/08-implementation-plan.md`；环境以 `development-environment.md` 为准；当前视觉以 `design/ink-system.md` 为准；学习复盘的已确认设计见 `design/daily-review.md`。
+
 ## 本次环境修复与保存
 
 - 项目当前路径 `C:/Users/ASUS/Documents/Timer`；Claude 的产品进展已保存为提交 `77882f0`。
@@ -43,17 +49,19 @@
 | 静态检查 | No issues found（ASCII 联接入口） |
 | Web | 浏览器实测 375×812 与 1280×820：新建、滚轮选时、课表点空白新建、轮盘居中与轻划；测试数据只写在预览浏览器本地 |
 | Windows release | 构建通过，实际启动并截图验证纸面标题栏与 `--widget` 挂件模式（置顶小窗、位置右上） |
-| Android | debug APK 构建通过（见下方「待补」） |
+| Android | 三种 ABI 的 debug APK 构建通过；正式签名与 OPPO 真机验收待完成 |
 
 未验证：真实模型调用（尚无用户 Key）、OPPO 真机安装与通知、手机与电脑跨网络同步、挂件拖动/透明度滑块的手动操作、深色模式真机观感。
 
-## 上轮工具链记录（当前入口见本文顶部环境修复）
+## 工具链入口
 
-- 本轮发现 `%LOCALAPPDATA%\TimePlanner\toolchains` 再次缺失，已重新安装：Flutter 3.47.7（官方 Git，开启 core.longpaths）、ATL（官方 VS 组件包，SHA256 与 `artifacts/atl-packages.json` 一致）、Android cmdline-tools 23（SHA1 校验）、platform 36 / build-tools 36.0.0 / NDK 28.2.13676358 / CMake 3.22.1。
-- 注意：`sdkmanager.bat` 会把 `platforms;android-36` 的分号当成分隔符，需用 `--package_file`。
-- `flutter analyze` 在 `%LOCALAPPDATA%\TimePlanner\workspace\apps\planner`（ASCII 联接）运行；`flutter test` 在真实路径运行。
+- Flutter、Android、ATL 和 Pub 缓存均从 `%USERPROFILE%/DevTools/Timer` 选取；版本和 revision 由 `tools/toolchain.json` 固定。
+- 每次切换工具先运行 `tools/setup-dev.ps1`；仅在迁移或确认生成路径过期时加 `-Clean`。详细说明与命令见 `development-environment.md`。
+- 最早的环境缺失记录及旧 AppData 路径保留在 Git 历史中，不再作为当前安装或构建指令。
 
 ## 下一步
+
+已知缺陷：同日回顾版本重复，需要补回归测试并修复。以下功能仍需继续实现或验收：
 
 1. 按已确认的 `docs/design/daily-review.md` 实现材料收集、AI 复盘、回忆卡片与间隔复习。
 2. 用户在电脑端「设置 · 助手」填写服务地址、模型名、Key，跑一次「测试连接」和一次真实对话。
