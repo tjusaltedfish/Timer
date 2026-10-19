@@ -31,7 +31,7 @@
 |---|---|---|---|
 | 1 | 七天课表、滑动选择 | 桌面七列、手机横滑多日、点选和圈选新建已实现 | 已有块的表单/拖动及离线改期 |
 | 2 | 时间段结束后主动问结果 | 结束与补问提醒、快捷反馈、等待检查点已有 | OPPO 通知实测、统一问询队列与自然语言回复联动 |
-| 3 | 迟到、拖延、未完成、等待时弹性调整 | 部分完成可生成重排提案，等待结果可检查和验收 | 迟到模式、续时、检查点改约、一级微调及撤销交互 |
+| 3 | 迟到、拖延、未完成、等待时弹性调整 | 迟到模式、续时、中断余量、检查点改约、规则重排、一级微调与撤销已有 | 统一问询与自然语言回复联动、完整双端试用 |
 | 4 | 状态机 | 任务、执行段、时间块及基础派生显示状态已有 | 完整事件→调整规则与相应测试 |
 | 5 | 列表与渐虚卡片轮盘 | 已实现，含鼠标滚轮、轻划吸附、窗口变化修复 | Android 真机 profile 与完整可访问性验收 |
 | 6 | 对话助手、提醒、日终分析和电脑存档 | 兼容 API 通道、对话/拟办、提醒与原文归档已有，Mock 测试通过 | 真实 API、问询联动、自动 AI 日终分析；材料与知识回忆按已确认设计实现 |
@@ -44,9 +44,9 @@
 
 ### 2.1 代码与仓库
 
-- FastAPI/SQLite 后台实际测试 **25 passed**；Flutter 实际测试 **34 passed**；analyze **No issues found**。
+- FastAPI/SQLite 后台实际测试 **52 passed**；Flutter 实际测试 **47 passed**；analyze **No issues found**；Windows 原生集成 **1 passed**。最新规则与验证见 `elastic-operations.md` 和 `STATUS.md`。
 - Windows release、Android 三种 ABI 的 debug APK 已构建成功；Flutter doctor **No issues found**。
-- 私有仓库 `https://github.com/tjusaltedfish/Timer`，分支 `main`；产品提交 `77882f0`，环境修复提交 `8e5bce5`，均已推送并核对远程一致。
+- 私有仓库 `https://github.com/tjusaltedfish/Timer`，分支 `main`；历史锚点为产品 `77882f0`、环境 `8e5bce5`，后续已新增回顾版本修复与弹性执行；最新提交以 `git log` 为准。
 - 原有大型 UI 已拆分，助手在 `server/app/assistant.py`，窗口管理在 `apps/planner/lib/desktop/`。最新状态和已知缺陷见 `docs/STATUS.md`。
 
 ### 2.2 当前工具链
@@ -105,7 +105,9 @@
 
 ### 3.2 现有操作（`kind`）
 
-`task.create` `task.update` `block.create` `block.move` `session.start` `session.pause` `session.resume` `session.end` `feedback.create` `waiting.resolve` `review.save` `settings.update` `plan.apply` `plan.undo` `project.create` `project.update` `sleep.log` `sleep.delete`
+`task.create` `task.update` `block.create` `block.move` `session.start` `session.pause` `session.resume` `session.end` `session.extend` `feedback.create` `waiting.resolve` `waiting.snooze` `review.save` `settings.update` `plan.apply` `plan.undo` `project.create` `project.update` `sleep.log` `sleep.delete`
+
+迟到模式、续时、检查点改约和确定性顺延的已实现约定见 `elastic-operations.md`；客户端的乐观操作与存储已拆到 `operations.dart` / `execution.dart` / `storage.dart`。
 
 注意：`block.move` 后台支持，但客户端 `_optimistic()` **没有实现**（会抛「需要连接电脑」）。做拖动改期前要补上。
 
@@ -457,7 +459,7 @@ class _CardWheelState extends State<CardWheel> {
    - 完成了 → 「留下了什么？」（结果说明，选填，但给提示：链接、文件名、数据）。
    - 做了一部分 → 「还需要多久？」15/30/45/60/90/120 + 自定义；「下一步是什么？」；提交后自动生成重排提案（已有逻辑）。
    - 在等结果 → 「什么时候去看？」快捷：2 小时后 / 今晚 / 明早 9 点 / 自定义。
-   - 被打断了 → 「还需要多久？」+ 原因（选填）；提交后同样给重排提案（**当前代码被打断后不更新剩余时间，需要补**）。
+   - 被打断了 → 「还需要多久？」+ 原因（选填）；提交后更新剩余时间并给重排提案（已实现）。
 4. 底部一个输入框「或者直接说一句」——发给助手解析（§7.5），返回填好的选项让用户确认。
 5. 多段待回话时，顶部显示「1 / 3」，提交后自动进入下一段；「稍后」把这一段放回队列（补问提醒最多一次，已有逻辑）。
 
@@ -511,10 +513,10 @@ running ──(续时)──> running(extended)
 | 迟到开始 | 开始时间晚于计划 > 5 分钟 | 无 | 开始时弹出：「按原时长（结束延后到 10:55）」/「按原结束（压缩为 65 分）」。选前者且与后续弹性块重叠 → 触发顺延规则 |
 | 到点未开始 | `late` | 推送一次「该开始了」 | 现在开始 / 推迟 15 分钟 / 跳过并重排 |
 | 整段错过 | `missed` | 进入待回话 | 没有开始（→ 剩余时间不变，生成重排提案）/ 补录 / 改期 |
-| 时间到还没做完 | 计时到点 | 段转为待反馈（已有） | 「再给我 15/30 分钟」（**新增 `session.extend`**）→ 后续弹性块顺延；或「做了一部分」→ 重排 |
+| 时间到还没做完 | 计时到点 | 段转为待反馈（已有） | 「再给我 15/30 分钟」（`session.extend`，已实现）→ 按约束顺延；或「做了一部分」→ 重排 |
 | 部分完成 | 反馈 partial | 更新剩余（已有） | 自动打开重排提案（已有） |
-| 被打断 | 反馈 interrupted | **补：要求填剩余时间** | 同部分完成 |
-| 等待结果 | 反馈 waiting | 建检查点（已有） | 到检查点问询：回来了（完成/还要投入）/ 还没回来（再约时间，**新增 `waiting.snooze`**） |
+| 被打断 | 反馈 interrupted | 要求填剩余时间（已实现） | 同部分完成 |
+| 等待结果 | 反馈 waiting | 建检查点（已有） | 回来了（完成/还要投入）/ 还没回来（再约时间，`waiting.snooze` 已实现） |
 | 当天结束仍有未确认 | 日终时间 | 日终提醒（已有） | 逐一问询；未回答的保持「未确认」，绝不推定完成 |
 | 过载 | 提案中有 `unscheduled_items` | 无 | 显示「装不下 120 分钟」，建议：延到下周 / 降优先级 / 拆小 / 放弃 |
 
@@ -528,7 +530,9 @@ running ──(续时)──> running(extended)
   才自动顺延，并显示 10 秒「已顺延 2 段 · 撤销」提示（撤销调用已有 `plan.undo`）。实现方式：服务端内部生成提案并立即 `apply`，记录 `auto: true`。
 - **二级：提案确认**——其余所有情况都生成提案（已有 `plan/proposals`），用户确认后应用。
 
-### 6.5 需要新增的操作
+### 6.5 弹性操作实现约定
+
+下表前四项已实现；`block.move` 的客户端仍待补。详细边界、离线保护及最新证据见 `elastic-operations.md`。
 
 | kind | payload | 规则 |
 |---|---|---|
@@ -756,9 +760,9 @@ Android release 待个人签名配置后再验证。只有相关改动才重复�
 | M1 设计系统 | 文楷、墨晕白纸、主题与页面拆分已实现 | 深色真机、完整可访问性走查 |
 | M2 今日页 | 轮盘、列表、圆相、桌面时间轴已有实现和测试 | OPPO profile 流畅度 |
 | M3 一周页 | 多日显示、点选/圈选新建已有 | 表单/拖动已有块、离线改期 |
-| M4 问询与弹性 | 快捷反馈、等待检查与规则重排已有 | 续时、改约、迟到模式、自动微调和统一问询 |
+| M4 问询与弹性 | 快捷反馈、等待改约、迟到模式、续时、规则重排、自动微调及撤销已实现 | 统一问询队列、自然语言回复、完整双端试用 |
 | M5 助手 | 兼容 API、对话、拟办确认与 Mock 测试已有 | 真实 Key/模型验收、问询联动、完整场景 |
-| M6 日终分析 | 原文和确定性归档已有 | 自动 AI 分析、归档版本缺陷；材料与知识回忆依已确认设计实现 |
+| M6 日终分析 | 原文和确定性归档已有，版本重复已修复 | 自动 AI 分析；材料与知识回忆依已确认设计实现 |
 | M7 连接与 APK | Android debug 构建通过 | 正式签名、移动网络配对、OPPO 锁屏提醒 |
 | M8 电脑端 | Windows release 和置顶挂件已有 | 托盘、开机自启、备份恢复及完整运行验收 |
 | M9 总体验收 | 尚未完成 | 按范围表逐条补真实证据与一周试用 |
