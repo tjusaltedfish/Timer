@@ -5,6 +5,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import 'calendar.dart';
 import 'controller.dart';
+import 'theme/tokens.dart';
 
 class WeekCalendar extends StatelessWidget {
   const WeekCalendar({
@@ -162,13 +163,12 @@ class WeekCalendar extends StatelessWidget {
                                         '${hm(slice.start)}至${hm(slice.end)} ${slice.block['title']}',
                                     child: Material(
                                       color: slice.block['kind'] == 'protected'
-                                          ? const Color(0xffe5e5df)
-                                          : _color(slice.block)
-                                                .withValues(alpha: .14),
-                                      borderRadius: BorderRadius.circular(7),
+                                          ? context.inkPalette.wash
+                                          : context.inkPalette.paperRaised,
+                                      borderRadius: BorderRadius.circular(6),
                                       child: InkWell(
                                         onTap: () => onBlockTap(slice.block),
-                                        borderRadius: BorderRadius.circular(7),
+                                        borderRadius: BorderRadius.circular(6),
                                         child: Padding(
                                           padding: const EdgeInsets.all(5),
                                           child: Text(
@@ -196,14 +196,4 @@ class WeekCalendar extends StatelessWidget {
       );
     },
   );
-
-  Color _color(Json block) {
-    final task = tasks.where((t) => t['id'] == block['task_id']).firstOrNull;
-    return {
-          'code': const Color(0xff2c7050),
-          'learn': const Color(0xffa95e32),
-          'fab': const Color(0xff536b88),
-        }[task?['project_id']] ??
-        const Color(0xff71658a);
-  }
 }

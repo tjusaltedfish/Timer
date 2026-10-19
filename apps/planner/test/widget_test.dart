@@ -12,7 +12,7 @@ void main() {
     final controller = PlannerController(storage: MemoryStore());
     await controller.initialize();
     await tester.pumpWidget(PlannerApp(controller: controller));
-    expect(find.text('这一天，还留着空间。'), findsOneWidget);
+    expect(find.text('今日尚空。先落一笔有结果的事。'), findsOneWidget);
     await tester.tap(find.text('安排第一件事'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).at(0), '参数扫描');
@@ -25,7 +25,7 @@ void main() {
     expect(controller.pending.length, 2);
     expect(find.text('参数扫描'), findsAtLeastNWidgets(1));
     expect(tester.takeException(), isNull);
-    await tester.tap(find.text('课表'));
+    await tester.tap(find.text('一周'));
     await tester.pumpAndSettle();
     expect(find.text('00:00'), findsNothing);
     expect(find.text('09:00'), findsOneWidget);
