@@ -48,6 +48,12 @@ class TaskUpdate(Input):
 
     _aware_deadline = field_validator("deadline")(TaskCreate.aware.__func__)
 
+    @model_validator(mode="after")
+    def explicit_nulls(self):
+        if any(getattr(self, key) is None for key in self.model_fields_set - {"deadline"}):
+            raise ValueError("任务字段不能显式清空；截止时间可清除")
+        return self
+
 
 class BlockCreate(Input):
     id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,80}$")
@@ -148,6 +154,25 @@ class SettingsUpdate(Input):
                 raise ValueError("未知时区") from None
         return value
 
+    @model_validator(mode="after")
+    def explicit_nulls(self):
+        if any(getattr(self, key) is None for key in self.model_fields_set):
+            raise ValueError("设置字段不能清空")
+        return self
+
+
+class WaitingResolve(Input):
+    id: str
+    resolution: Literal["done", "ready"]
+    outcome_text: str = Field(default="", max_length=4000)
+    remaining_minutes: int | None = Field(default=None, ge=1, le=100000)
+
+    @model_validator(mode="after")
+    def remaining_when_ready(self):
+        if self.resolution == "ready" and self.remaining_minutes is None:
+            raise ValueError("继续投入需要填写剩余工作量")
+        return self
+
 
 class PlanRequest(Input):
     task_id: str
@@ -181,4 +206,5 @@ MODELS = {
     "feedback.create": FeedbackCreate, "review.save": ReviewSave,
     "settings.update": SettingsUpdate,
     "plan.apply": PlanAction, "plan.undo": PlanAction,
+    "waiting.resolve": WaitingResolve,
 }

@@ -362,7 +362,23 @@ void _optimistic(Json state, Json operation) {
     });
   } else if (kind == 'task.update') {
     final task = find(tasks, p['id']);
+    if (p['state'] != null &&
+        sessions.any(
+          (s) =>
+              s['task_id'] == task['id'] &&
+              ['running', 'paused'].contains(s['state']),
+        )) {
+      throw ApiFailure('请先结束当前投入。', 409);
+    }
     task.addAll({...p, 'version': (task['version'] as int) + 1});
+    if (task['state'] == 'cancelled') {
+      for (final block in blocks.where(
+        (b) => b['task_id'] == task['id'] && b['status'] == 'scheduled',
+      )) {
+        block['status'] = 'cancelled';
+        block['version']++;
+      }
+    }
   } else if (kind == 'block.create') {
     if (blocks.any((b) => b['id'] == p['id'])) return;
     final start = DateTime.parse(p['start_at'] as String),
@@ -486,6 +502,7 @@ void _optimistic(Json state, Json operation) {
       (state['waiting_checks'] as List).add({
         'id': operation['operation_id'],
         'task_id': task['id'],
+        'source_block_id': block['id'],
         'check_at': p['check_at'],
         'resolved_at': null,
       });
@@ -503,6 +520,40 @@ void _optimistic(Json state, Json operation) {
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'archive_status': 'pending',
       ...p,
+    });
+  } else if (kind == 'waiting.resolve') {
+    final check = find((state['waiting_checks'] as List).cast<Json>(), p['id']);
+    final task = find(tasks, check['task_id']);
+    if (check['resolved_at'] != null) throw ApiFailure('检查点已处理。', 409);
+    if (sessions.any(
+      (s) =>
+          s['task_id'] == task['id'] &&
+          ['running', 'paused'].contains(s['state']),
+    )) {
+      throw ApiFailure('请先结束该任务的当前投入。', 409);
+    }
+    check['resolved_at'] = DateTime.now().toUtc().toIso8601String();
+    task['state'] = p['resolution'];
+    task['version']++;
+    task['remaining_minutes'] = p['resolution'] == 'done'
+        ? 0
+        : p['remaining_minutes'];
+    if (p['resolution'] == 'done') {
+      for (final block in blocks.where(
+        (b) => b['task_id'] == task['id'] && b['status'] == 'scheduled',
+      )) {
+        block['status'] = 'cancelled';
+        block['version']++;
+      }
+    }
+    (state['feedbacks'] as List).add({
+      'id': operation['operation_id'],
+      'task_id': task['id'],
+      'block_id': check['source_block_id'],
+      'choice': p['resolution'] == 'done' ? 'done' : 'partial',
+      'source': 'waiting_result',
+      'created_at': check['resolved_at'],
+      'outcome_text': p['outcome_text'] ?? '',
     });
   } else if (kind == 'settings.update') {
     (state['settings'] as Json).addAll(p);

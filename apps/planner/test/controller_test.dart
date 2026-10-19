@@ -7,6 +7,42 @@ import 'package:time_planner/controller.dart';
 
 void main() {
   test(
+    'returned result resolves waiting without creating a work session',
+    () async {
+      final controller = PlannerController(storage: MemoryStore());
+      await controller.initialize();
+      controller.state['tasks'] = <Json>[
+        {
+          'id': 't',
+          'title': '扫描',
+          'state': 'waiting',
+          'remaining_minutes': 60,
+          'version': 1,
+        },
+      ];
+      controller.state['waiting_checks'] = <Json>[
+        {
+          'id': 'w',
+          'task_id': 't',
+          'source_block_id': 'b',
+          'resolved_at': null,
+        },
+      ];
+      await controller.submit('waiting.resolve', {
+        'id': 'w',
+        'resolution': 'done',
+        'outcome_text': '输出已核对',
+      });
+      expect(controller.tasks.single['state'], 'done');
+      expect(controller.sessions, isEmpty);
+      expect(
+        (controller.state['waiting_checks'] as List).single['resolved_at'],
+        isNotNull,
+      );
+      controller.dispose();
+    },
+  );
+  test(
     'offline actions survive restart and replay with the same operation id',
     () async {
       final storage = MemoryStore();

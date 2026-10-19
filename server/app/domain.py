@@ -147,6 +147,14 @@ def apply(state, operation, device_id, now):
     elif kind.startswith("session."):
         entity = find(state, "sessions", data["id"])
         at = event_time(data.get("occurred_at"), now, entity["last_event_at"])
+        # A timer closes the planned segment, not the immutable user-event log.
+        # Reconcile delayed offline actions against their actual timestamps.
+        if entity.get("ended_by") == "timer" and (kind == "session.end" or
+                data.get("occurred_at") and at <= parse(entity["actual_end_at"])):
+            entity["state"] = "running"
+            entity["actual_end_at"] = None
+            entity["intervals"][-1]["end_at"] = None
+            entity.pop("ended_by")
         allowed = {"session.pause": {"running"}, "session.resume": {"paused"}, "session.end": {"running", "paused"}}
         if entity["state"] not in allowed[kind]:
             raise DomainError("当前执行状态不允许这项操作", "INVALID_TRANSITION")
@@ -163,6 +171,7 @@ def apply(state, operation, device_id, now):
             close_interval(entity, at)
             entity["actual_end_at"] = stamp(at)
             entity["state"] = "awaiting_feedback"
+            entity["ended_by"] = "user"
         entity["last_event_at"] = stamp(at)
         entity["version"] += 1
     elif kind == "feedback.create":
@@ -173,6 +182,13 @@ def apply(state, operation, device_id, now):
             raise DomainError("请先结束本次投入，再提交结果")
         if not session and any(s["block_id"] == block["id"] for s in state["sessions"]):
             raise DomainError("这段已有执行记录，请从执行记录反馈")
+        if not session and block["status"] != "scheduled":
+            raise DomainError("这段安排已经反馈过了")
+        if task["state"] == "cancelled":
+            raise DomainError("任务已取消，请明确重新打开后再修改结果")
+        other_active = any(s["task_id"] == task["id"] and s["id"] != data["session_id"] and s["state"] in ("running", "paused") for s in state["sessions"])
+        if other_active and data["choice"] in ("done", "waiting"):
+            raise DomainError("该任务还有另一段正在进行的投入，请先结束它")
         entity = {**data, "id": identifier(), "task_id": task["id"], "block_id": block["id"], "created_at": stamp(now), "device_id": device_id}
         if session:
             session["state"] = "closed"
@@ -180,6 +196,8 @@ def apply(state, operation, device_id, now):
         block["status"] = "skipped" if data["choice"] == "not_started" else "completed"
         block["version"] += 1
         task["state"] = {"done": "done", "waiting": "waiting"}.get(data["choice"], "ready")
+        if other_active:
+            task["state"] = "in_progress"
         task["version"] += 1
         if data["choice"] == "done":
             task["remaining_minutes"] = 0
@@ -187,13 +205,40 @@ def apply(state, operation, device_id, now):
                 if future.get("task_id") == task["id"] and future["status"] == "scheduled":
                     future["status"] = "cancelled"
                     future["version"] += 1
+            for check in state["waiting_checks"]:
+                if check["task_id"] == task["id"] and check["resolved_at"] is None:
+                    check["resolved_at"] = stamp(now)
         elif data["choice"] == "partial":
             task["remaining_minutes"] = data["remaining_minutes"]
         elif data["choice"] == "waiting":
             if parse(data["check_at"]) <= now:
                 raise DomainError("请选择未来的结果检查时间", "INVALID_CHECK_TIME", 422)
-            state["waiting_checks"].append({"id": identifier(), "task_id": task["id"], "check_at": stamp(parse(data["check_at"])), "resolved_at": None})
+            state["waiting_checks"].append({"id": identifier(), "task_id": task["id"], "source_block_id": block["id"], "check_at": stamp(parse(data["check_at"])), "resolved_at": None})
         state["feedbacks"].append(entity)
+    elif kind == "waiting.resolve":
+        entity = find(state, "waiting_checks", data["id"])
+        task = find(state, "tasks", entity["task_id"])
+        if entity["resolved_at"] is not None:
+            raise DomainError("这个检查点已经处理过了")
+        if any(s["task_id"] == task["id"] and s["state"] in ("running", "paused") for s in state["sessions"]):
+            raise DomainError("请先结束该任务正在进行的投入")
+        if task["state"] == "cancelled":
+            raise DomainError("任务已取消，请明确重新打开后处理结果")
+        entity["resolved_at"] = stamp(now)
+        task["state"] = data["resolution"]
+        task["version"] += 1
+        if data["resolution"] == "done":
+            task["remaining_minutes"] = 0
+            for future in state["blocks"]:
+                if future.get("task_id") == task["id"] and future["status"] == "scheduled":
+                    future["status"] = "cancelled"
+                    future["version"] += 1
+        else:
+            task["remaining_minutes"] = data["remaining_minutes"]
+        source = entity.get("source_block_id") or next((b["id"] for b in state["blocks"] if b.get("task_id") == task["id"]), None)
+        state["feedbacks"].append({"id": identifier(), "task_id": task["id"], "block_id": source, "session_id": None,
+                                   "choice": "done" if data["resolution"] == "done" else "partial", "outcome_text": data["outcome_text"],
+                                   "source": "waiting_result", "created_at": stamp(now), "device_id": device_id})
     elif kind == "review.save":
         existing = next((r for r in state["reviews"] if r["date"] == data["date"]), None)
         entity = {"id": identifier(), **data, "version": (existing["version"] + 1) if existing else 1,

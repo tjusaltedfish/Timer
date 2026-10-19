@@ -4,6 +4,7 @@
 
 当前已进入正式实现：Flutter Android/Windows 工程与 Python 电脑后台已有任务、执行和反馈闭环，Windows 原生构建及隔离后台端到端测试通过。完整初版仍在推进，提醒、助手和 Android 构建未完成，详见 [当前状态](docs/STATUS.md)。
 
+- [接手开发指导（技术 + 水墨审美，优先阅读）](docs/HANDOFF.md)
 - [蓝图入口](docs/vibe-blueprint/00-index.md)
 - [需求验收](docs/vibe-blueprint/02-scope-and-requirements.md)
 - [开发任务](docs/vibe-blueprint/08-implementation-plan.md)

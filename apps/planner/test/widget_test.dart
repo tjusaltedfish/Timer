@@ -25,6 +25,11 @@ void main() {
     expect(controller.pending.length, 2);
     expect(find.text('参数扫描'), findsAtLeastNWidgets(1));
     expect(tester.takeException(), isNull);
+    await tester.tap(find.text('课表'));
+    await tester.pumpAndSettle();
+    expect(find.text('00:00'), findsNothing);
+    expect(find.text('09:00'), findsOneWidget);
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
   });

@@ -7,6 +7,9 @@ import 'package:uuid/uuid.dart';
 
 import 'controller.dart';
 import 'dialogs.dart';
+import 'calendar.dart';
+import 'week_calendar.dart';
+import 'reminders.dart';
 
 const ink = Color(0xff20382e),
     green = Color(0xff245a43),
@@ -34,8 +37,9 @@ String taskState(String? value) =>
     '未确认';
 
 class PlannerApp extends StatelessWidget {
-  const PlannerApp({super.key, required this.controller});
+  const PlannerApp({super.key, required this.controller, this.reminders});
   final PlannerController controller;
+  final ReminderService? reminders;
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: '日程之间',
@@ -69,39 +73,34 @@ class PlannerApp extends StatelessWidget {
         ),
       ),
     ),
-    home: PlannerHome(controller: controller),
+    home: PlannerHome(controller: controller, reminders: reminders),
   );
 }
 
 class PlannerHome extends StatefulWidget {
-  const PlannerHome({super.key, required this.controller});
+  const PlannerHome({super.key, required this.controller, this.reminders});
   final PlannerController controller;
+  final ReminderService? reminders;
   @override
   State<PlannerHome> createState() => _PlannerHomeState();
 }
 
-class _PlannerHomeState extends State<PlannerHome> {
+class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
   PlannerController get c => widget.controller;
   int page = 0;
   late DateTime selectedDay;
   String? selectedBlock;
   Timer? clock;
+  int _lastReminderSerial = 0;
   tz.Location get zone => tz.getLocation(c.settings['timezone'] as String);
   DateTime get now => tz.TZDateTime.now(zone);
   DateTime local(String value) =>
       tz.TZDateTime.from(DateTime.parse(value), zone);
-  List<Json> get todaysBlocks =>
-      c.blocks
-          .where(
-            (b) =>
-                !['superseded', 'cancelled'].contains(b['status']) &&
-                dateKey(local(b['start_at'])) == dateKey(selectedDay),
-          )
-          .toList()
-        ..sort(
-          (a, b) =>
-              a['start_at'].toString().compareTo(b['start_at'].toString()),
-        );
+  List<Json> get todaysBlocks => daySlices(
+    c.blocks,
+    selectedDay,
+    zone,
+  ).map((slice) => slice.block).toList();
   Json? task(String? id) => c.tasks.where((t) => t['id'] == id).firstOrNull;
   Json? session(String blockId) =>
       c.sessions.where((s) => s['block_id'] == blockId).lastOrNull;
@@ -113,17 +112,63 @@ class _PlannerHomeState extends State<PlannerHome> {
   @override
   void initState() {
     super.initState();
-    selectedDay = now;
+    final today = now;
+    selectedDay = DateTime(today.year, today.month, today.day);
     clock = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted && c.activeSession != null) setState(() {});
     });
     c.startPolling();
+    WidgetsBinding.instance.addObserver(this);
+    widget.reminders?.addListener(_openReminder);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openReminder());
   }
 
   @override
   void dispose() {
     clock?.cancel();
+    widget.reminders?.removeListener(_openReminder);
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(c.sync());
+      final reminders = widget.reminders;
+      if (reminders != null) unawaited(reminders.refresh(force: true));
+    }
+  }
+
+  void _openReminder() {
+    final reminders = widget.reminders;
+    if (!mounted ||
+        reminders == null ||
+        reminders.openSerial == _lastReminderSerial ||
+        reminders.lastOpen == null) {
+      return;
+    }
+    final payload = reminders.lastOpen!;
+    final block = c.blocks
+        .where((b) => b['id'] == payload['block_id'])
+        .firstOrNull;
+    if (payload['block_id'] != null && block == null) return;
+    _lastReminderSerial = reminders.openSerial;
+    setState(() {
+      page = payload['page'] == 'tasks'
+          ? 2
+          : payload['page'] == 'review'
+          ? 3
+          : 0;
+      if (block != null) {
+        selectedBlock = block['id'];
+        final date = local(block['start_at']);
+        selectedDay = DateTime(date.year, date.month, date.day);
+      }
+      if (payload['date'] != null) {
+        selectedDay = DateTime.tryParse(payload['date']) ?? selectedDay;
+      }
+    });
   }
 
   void message(Object error) {
@@ -145,7 +190,10 @@ class _PlannerHomeState extends State<PlannerHome> {
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: c,
+    animation: Listenable.merge([
+      c,
+      if (widget.reminders != null) widget.reminders!,
+    ]),
     builder: (context, _) {
       final wide = MediaQuery.sizeOf(context).width >= 1000;
       final labels = ['今天', '一周课表', '任务与等待', '日终回顾', '助手', '连接与设置'];
@@ -362,7 +410,7 @@ class _PlannerHomeState extends State<PlannerHome> {
     ],
   );
   void selectDate(DateTime date) => setState(() {
-    selectedDay = date;
+    selectedDay = DateTime(date.year, date.month, date.day);
     selectedBlock = null;
   });
 
@@ -864,14 +912,7 @@ class _PlannerHomeState extends State<PlannerHome> {
                         error = null;
                       });
                       try {
-                        final begin = tz.TZDateTime(
-                          zone,
-                          date.year,
-                          date.month,
-                          date.day,
-                          start.hour,
-                          start.minute,
-                        );
+                        final begin = await resolvePlannedTime(date, start);
                         final end = begin.add(Duration(minutes: minutes));
                         if (c.blocks.any(
                           (b) =>
@@ -1004,16 +1045,19 @@ class _PlannerHomeState extends State<PlannerHome> {
                             initialTime: TimeOfDay.fromDateTime(check),
                           );
                           if (time != null) {
-                            setDialog(
-                              () => check = tz.TZDateTime(
-                                zone,
-                                date.year,
-                                date.month,
-                                date.day,
-                                time.hour,
-                                time.minute,
-                              ),
-                            );
+                            try {
+                              final value = await resolvePlannedTime(
+                                date,
+                                time,
+                              );
+                              if (context.mounted) {
+                                setDialog(() => check = value);
+                              }
+                            } catch (value) {
+                              if (context.mounted) {
+                                setDialog(() => error = value.toString());
+                              }
+                            }
                           }
                         },
                         icon: const Icon(Icons.schedule),
@@ -1146,123 +1190,15 @@ class _PlannerHomeState extends State<PlannerHome> {
           heading('一周，有安排也有留白。', '点击时间块查看结果标准。固定预约与保护时段会保留。'),
           dateStrip(),
           const SizedBox(height: 24),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final days = constraints.maxWidth < 650
-                  ? [selectedDay]
-                  : List.generate(7, (i) => monday.add(Duration(days: i)));
-              return GestureDetector(
-                onHorizontalDragEnd: (details) {
-                  if ((details.primaryVelocity ?? 0).abs() > 100) {
-                    selectDate(
-                      selectedDay.add(
-                        Duration(days: details.primaryVelocity! < 0 ? 1 : -1),
-                      ),
-                    );
-                  }
-                },
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 42,
-                      child: Column(
-                        children: [
-                          const SizedBox(height: 48),
-                          for (var hour = 0; hour < 24; hour++)
-                            SizedBox(
-                              height: 60,
-                              child: Text(
-                                '${hour.toString().padLeft(2, '0')}:00',
-                                style: const TextStyle(fontSize: 10),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    for (final date in days)
-                      Expanded(
-                        child: Column(
-                          children: [
-                            SizedBox(
-                              height: 48,
-                              child: Center(
-                                child: Text(
-                                  '${weekdays[date.weekday - 1]} ${date.day}',
-                                ),
-                              ),
-                            ),
-                            SizedBox(
-                              height: 1440,
-                              child: Stack(
-                                children: [
-                                  for (var i = 0; i < 24; i++)
-                                    Positioned(
-                                      top: i * 60,
-                                      left: 0,
-                                      right: 0,
-                                      child: const Divider(height: 1),
-                                    ),
-                                  for (final block in c.blocks.where(
-                                    (b) =>
-                                        ![
-                                          'superseded',
-                                          'cancelled',
-                                        ].contains(b['status']) &&
-                                        dateKey(local(b['start_at'])) ==
-                                            dateKey(date),
-                                  ))
-                                    Positioned(
-                                      top:
-                                          local(block['start_at']).hour * 60.0 +
-                                          local(block['start_at']).minute,
-                                      left: 3,
-                                      right: 3,
-                                      height: DateTime.parse(block['end_at'])
-                                          .difference(
-                                            DateTime.parse(block['start_at']),
-                                          )
-                                          .inMinutes
-                                          .toDouble()
-                                          .clamp(18, 1440)
-                                          .toDouble(),
-                                      child: Material(
-                                        color: block['kind'] == 'protected'
-                                            ? const Color(0xffe5e5df)
-                                            : (projectColors[task(
-                                                        block['task_id'],
-                                                      )?['project_id']] ??
-                                                      green)
-                                                  .withValues(alpha: .14),
-                                        borderRadius: BorderRadius.circular(7),
-                                        child: InkWell(
-                                          onTap: () => blockDetails(block),
-                                          borderRadius: BorderRadius.circular(
-                                            7,
-                                          ),
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(5),
-                                            child: Text(
-                                              '${hm(local(block['start_at']))}${block['kind'] == 'fixed' ? ' ⌑' : ''}\n${block['title']}',
-                                              overflow: TextOverflow.fade,
-                                              style: const TextStyle(
-                                                fontSize: 10,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              );
-            },
+          WeekCalendar(
+            blocks: c.blocks,
+            tasks: c.tasks,
+            zone: zone,
+            selectedDay: selectedDay,
+            dayStart: c.settings['day_start'],
+            dayEnd: c.settings['day_end'],
+            onSelectDay: selectDate,
+            onBlockTap: blockDetails,
           ),
           const SizedBox(height: 70),
         ],
@@ -1270,12 +1206,67 @@ class _PlannerHomeState extends State<PlannerHome> {
     ),
   );
 
+  Future<tz.TZDateTime> resolvePlannedTime(
+    DateTime date,
+    TimeOfDay time,
+  ) async {
+    final candidates = localTimeCandidates(date, time.hour, time.minute, zone);
+    if (candidates.isEmpty) throw ApiFailure('该本地时间因夏令时切换而不存在，请选择其他时间。', 422);
+    if (candidates.length == 1) return candidates.single;
+    final chosen = await showOwnedDialog<tz.TZDateTime>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('这个时间出现两次，请选择'),
+        children: candidates
+            .map(
+              (value) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, value),
+                child: Text(
+                  '${hm(value)} · ${utcOffset(value.timeZoneOffset)}',
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (chosen == null) throw ApiFailure('时间尚未确认。', 422);
+    return chosen;
+  }
+
   Widget taskPage() => SingleChildScrollView(
     child: padded(
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           heading('每件事，都有下一步。', '任务目标、已经投入的时间和等待结果分别记录。'),
+          for (final check
+              in (c.state['waiting_checks'] as List).cast<Json>().where(
+                (w) => w['resolved_at'] == null,
+              ))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: panel(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '等待结果 · ${task(check['task_id'])?['title'] ?? '任务'}',
+                      style: const TextStyle(fontSize: 18),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '检查时间 ${dateKey(local(check['check_at']))} ${hm(local(check['check_at']))}',
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () => resolveWaiting(check),
+                      child: const Text('结果已返回'),
+                    ),
+                  ],
+                ),
+                color: const Color(0xffeaf0e6),
+              ),
+            ),
           if (c.tasks.isEmpty)
             const Padding(
               padding: EdgeInsets.all(24),
@@ -1336,6 +1327,96 @@ class _PlannerHomeState extends State<PlannerHome> {
       ),
     ),
   );
+
+  Future<void> resolveWaiting(Json check) async {
+    final outcome = TextEditingController();
+    var resolution = 'done', minutes = 30;
+    String? error;
+    await showOwnedDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialog) => AlertDialog(
+          title: const Text('核对返回的结果'),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(task(check['task_id'])?['outcome_criteria'] ?? ''),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('达到标准，确认完成'),
+                        selected: resolution == 'done',
+                        onSelected: (_) => setDialog(() => resolution = 'done'),
+                      ),
+                      ChoiceChip(
+                        label: const Text('还需继续投入'),
+                        selected: resolution == 'ready',
+                        onSelected: (_) =>
+                            setDialog(() => resolution = 'ready'),
+                      ),
+                    ],
+                  ),
+                  if (resolution == 'ready')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: DropdownButtonFormField<int>(
+                        initialValue: minutes,
+                        decoration: const InputDecoration(labelText: '剩余工作量'),
+                        items: [15, 30, 45, 60, 90, 120]
+                            .map(
+                              (n) => DropdownMenuItem(
+                                value: n,
+                                child: Text('$n 分钟'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) => minutes = v!,
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: outcome,
+                    maxLines: 2,
+                    maxLength: 4000,
+                    decoration: const InputDecoration(labelText: '结果说明（可选）'),
+                  ),
+                  if (error != null) Text(error!),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('稍后核对'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                try {
+                  await c.submit('waiting.resolve', {
+                    'id': check['id'],
+                    'resolution': resolution,
+                    'outcome_text': outcome.text.trim(),
+                    if (resolution == 'ready') 'remaining_minutes': minutes,
+                  });
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                } catch (e) {
+                  if (context.mounted) setDialog(() => error = e.toString());
+                }
+              },
+              child: const Text('保存结果'),
+            ),
+          ],
+        ),
+      ),
+    );
+    outcome.dispose();
+  }
 
   Future<void> editTask(Json t) async {
     final title = TextEditingController(text: t['title']),
@@ -1483,6 +1564,56 @@ class _PlannerHomeState extends State<PlannerHome> {
             ),
           ),
           const SizedBox(height: 18),
+          if (widget.reminders != null) ...[
+            panel(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('提醒与结果追问', style: TextStyle(fontSize: 19)),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('开始、结束、结果检查和日终提醒'),
+                    value: widget.reminders!.enabled,
+                    onChanged: (enabled) => attempt(
+                      () => enabled
+                          ? widget.reminders!.enable()
+                          : widget.reminders!.disable(),
+                    ),
+                  ),
+                  Text(widget.reminders!.status),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => attempt(widget.reminders!.test),
+                        child: const Text('启用并发送测试提醒'),
+                      ),
+                      if (widget.reminders!.driver.schedulesInSystem)
+                        OutlinedButton(
+                          onPressed: () =>
+                              attempt(widget.reminders!.requestExact),
+                          child: const Text('允许准时提醒'),
+                        ),
+                      TextButton(
+                        onPressed: () => attempt(
+                          () => widget.reminders!.refresh(force: true),
+                        ),
+                        child: const Text('重新检查提醒'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    '开始提醒后，结束时询问结果；未反馈时最多补提醒一次。等待结果单独设置检查点。',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+          ],
           panel(
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1492,9 +1623,17 @@ class _PlannerHomeState extends State<PlannerHome> {
                 DropdownButtonFormField<String>(
                   initialValue: c.settings['timezone'],
                   decoration: const InputDecoration(labelText: '日程时区'),
-                  items: ['America/Los_Angeles', 'Asia/Shanghai', 'UTC']
-                      .map((z) => DropdownMenuItem(value: z, child: Text(z)))
-                      .toList(),
+                  items:
+                      {
+                            c.settings['timezone'] as String,
+                            'America/Los_Angeles',
+                            'Asia/Shanghai',
+                            'UTC',
+                          }
+                          .map(
+                            (z) => DropdownMenuItem(value: z, child: Text(z)),
+                          )
+                          .toList(),
                   onChanged: (value) => attempt(
                     () => c.submit('settings.update', {'timezone': value}),
                   ),
@@ -1504,9 +1643,23 @@ class _PlannerHomeState extends State<PlannerHome> {
                   '可安排范围 ${c.settings['day_start']}—${c.settings['day_end']}。用餐和休息可通过新建「保护时段」设置。',
                 ),
                 const SizedBox(height: 14),
-                const Text(
-                  '本地通知权限与连接检查将在提醒切片接入。',
-                  style: TextStyle(fontSize: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => editTimeSetting('day_start'),
+                      child: Text('开始 ${c.settings['day_start']}'),
+                    ),
+                    OutlinedButton(
+                      onPressed: () => editTimeSetting('day_end'),
+                      child: Text('结束 ${c.settings['day_end']}'),
+                    ),
+                    OutlinedButton(
+                      onPressed: () => editTimeSetting('daily_review_time'),
+                      child: Text('日终回顾 ${c.settings['daily_review_time']}'),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1520,6 +1673,28 @@ class _PlannerHomeState extends State<PlannerHome> {
       ),
     ),
   );
+
+  Future<void> editTimeSetting(String field) async {
+    final parts = (c.settings[field] as String)
+        .split(':')
+        .map(int.parse)
+        .toList();
+    final value = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: parts[0], minute: parts[1]),
+    );
+    if (value == null) return;
+    await attempt(() async {
+      final text =
+          '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+      final start = field == 'day_start'
+          ? text
+          : c.settings['day_start'] as String;
+      final end = field == 'day_end' ? text : c.settings['day_end'] as String;
+      if (start.compareTo(end) >= 0) throw ApiFailure('结束时间必须晚于开始时间。', 422);
+      await c.submit('settings.update', {field: text});
+    });
+  }
 
   Future<void> pairDialog() async {
     final url = TextEditingController(text: c.serverUrl),

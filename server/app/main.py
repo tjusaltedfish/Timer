@@ -1,8 +1,10 @@
 import json
 import os
 import secrets
+import asyncio
+import logging
 from datetime import timedelta
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request
@@ -13,18 +15,35 @@ from pydantic import ValidationError
 from .domain import DomainError, apply, stamp, identifier, parse
 from .models import Operation, PairConfirm, PlanRequest
 from .planning import propose
+from .maintenance import expire_due
 from .reports import flush_archives, report_for
 from .store import Store, digest, encode, utcnow
 
 
 def create_app(directory=None, clock=utcnow):
-    directory = Path(directory or os.environ.get("PLANNER_DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
+    default_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share")) / "TimePlanner" / "data"
+    directory = Path(directory or os.environ.get("PLANNER_DATA_DIR", default_data))
     store = Store(directory)
 
     @asynccontextmanager
     async def lifespan(app):
+        expire_due(store, clock())
         flush_archives(store)
-        yield
+        async def maintain():
+            while True:
+                await asyncio.sleep(5)
+                try:
+                    expire_due(store, clock())
+                    flush_archives(store)
+                except (OSError, RuntimeError):
+                    logging.getLogger(__name__).exception("Background maintenance will retry")
+        worker = asyncio.create_task(maintain())
+        try:
+            yield
+        finally:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
 
     app = FastAPI(title="个人弹性日程助手", version="0.1.0", lifespan=lifespan)
     app.state.store = store
@@ -64,6 +83,7 @@ def create_app(directory=None, clock=utcnow):
 
     @app.get("/api/v1/snapshot")
     def snapshot(device=Depends(authenticated)):
+        expire_due(store, clock())
         state = store.state()
         state["server_time"] = stamp(clock())
         state["device"] = device
@@ -122,6 +142,7 @@ def create_app(directory=None, clock=utcnow):
 
     @app.post("/api/v1/operations")
     def mutate(operation: Operation, device=Depends(authenticated)):
+        expire_due(store, clock())
         request_hash = digest(encode(operation.model_dump()))
         with store.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
