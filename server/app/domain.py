@@ -253,8 +253,8 @@ def apply(state, operation, device_id, now):
                                    "choice": "done" if data["resolution"] == "done" else "partial", "outcome_text": data["outcome_text"],
                                    "source": "waiting_result", "created_at": stamp(now), "device_id": device_id})
     elif kind == "review.save":
-        existing = next((r for r in state["reviews"] if r["date"] == data["date"]), None)
-        entity = {"id": identifier(), **data, "version": (existing["version"] + 1) if existing else 1,
+        previous_version = max((r["version"] for r in state["reviews"] if r["date"] == data["date"]), default=0)
+        entity = {"id": identifier(), **data, "version": previous_version + 1,
                   "created_at": stamp(now), "archive_status": "pending"}
         state["reviews"].append(entity)
         state["jobs"].append({"id": identifier(), "kind": "archive", "review_id": entity["id"], "status": "pending", "attempts": 0})
