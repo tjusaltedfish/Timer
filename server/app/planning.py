@@ -2,7 +2,7 @@
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from .domain import DomainError, find, identifier, parse, stamp, validate_block
+from .domain import DomainError, active_intervals, find, identifier, parse, stamp, validate_block
 
 
 def propose(state, request, now):
@@ -37,6 +37,7 @@ def propose(state, request, now):
     pending = sorted(candidates.values(), key=priority)
     results, unscheduled, processed = [], [], {}
     occupied = [(parse(b["start_at"]), parse(b["end_at"])) for b in locked]
+    occupied += [(a, b) for _, a, b in active_intervals(state, now)]
     while pending:
         progressed = False
         for item in list(pending):
@@ -109,6 +110,8 @@ def propose(state, request, now):
 
 def apply_plan(state, proposal_id, now):
     proposal = find(state, "proposals", proposal_id)
+    if proposal["status"] == "blocked":
+        raise DomainError(proposal["reason"], "BLOCKED_PROPOSAL")
     if proposal["status"] != "draft" or proposal["base_revision"] != state["revision"] or parse(proposal["expires_at"]) <= now:
         raise DomainError("预览已过期或日程已变化，请重新生成", "STALE_PROPOSAL")
     for old in proposal["old_blocks"]:
@@ -116,10 +119,11 @@ def apply_plan(state, proposal_id, now):
         original["status"] = "superseded"
         original["version"] += 1
     for block in proposal["new_blocks"]:
-        validate_block(state, block)
+        validate_block(state, block, now=now)
         state["blocks"].append(dict(block))
     proposal["status"] = "applied"
     proposal["applied_revision"] = state["revision"] + 1
+    proposal["applied_at"] = stamp(now)
     return proposal
 
 

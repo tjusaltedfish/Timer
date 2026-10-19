@@ -102,11 +102,13 @@ class SessionStart(Input):
     id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,80}$")
     occurred_at: datetime | None = None
     mode: Literal["keep_duration", "keep_end"] = "keep_duration"
+    defer_adjustment: bool = False
 
 
 class SessionAction(Input):
     id: str
     occurred_at: datetime | None = None
+    defer_adjustment: bool = False
 
 
 class SessionExtend(SessionAction):
@@ -145,6 +147,7 @@ class ReviewSave(Input):
 
 
 class SettingsUpdate(Input):
+    auto_adjust: bool | None = None
     timezone: str | None = None
     day_start: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     day_end: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")

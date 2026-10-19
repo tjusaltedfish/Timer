@@ -34,7 +34,17 @@ def check_version(item, version):
         raise DomainError("这条记录已被另一台设备更新，请同步后重试", "STALE_VERSION")
 
 
-def validate_block(state, block, exclude_id=None):
+def active_intervals(state, now):
+    for session in state["sessions"]:
+        if session["state"] not in ("running", "paused"):
+            continue
+        end = parse(session["expected_end_at"])
+        if session["state"] == "paused":
+            end += max(timedelta(), now - parse(session["paused_at"]))
+        yield session["block_id"], parse(session["actual_start_at"]), end
+
+
+def validate_block(state, block, exclude_id=None, now=None):
     if block.get("task_id"):
         task = find(state, "tasks", block["task_id"])
         if task["state"] in ("done", "cancelled"):
@@ -52,6 +62,12 @@ def validate_block(state, block, exclude_id=None):
             continue
         if parse(block["start_at"]) < parse(other["end_at"]) and parse(block["end_at"]) > parse(other["start_at"]):
             raise DomainError(f"与「{other['title']}」的时间冲突", "TIME_CONFLICT")
+    if now is not None:
+        for block_id, start, end in active_intervals(state, now):
+            if block_id in (block.get("id"), exclude_id):
+                continue
+            if parse(block["start_at"]) < end and parse(block["end_at"]) > start:
+                raise DomainError("与当前投入的预计结束时间冲突", "TIME_CONFLICT")
 
 
 def event_time(value, now, minimum=None):
@@ -121,7 +137,7 @@ def apply(state, operation, device_id, now):
         entity["start_at"], entity["end_at"] = stamp(parse(data["start_at"])), stamp(parse(data["end_at"]))
         if any(b["id"] == entity["id"] for b in state["blocks"]):
             raise DomainError("时间块标识已经存在")
-        validate_block(state, entity)
+        validate_block(state, entity, now=now)
         state["blocks"].append(entity)
     elif kind == "block.move":
         entity = find(state, "blocks", data["id"])
@@ -131,7 +147,7 @@ def apply(state, operation, device_id, now):
         if any(s["block_id"] == entity["id"] for s in state["sessions"]) or entity["status"] != "scheduled":
             raise DomainError("已有执行记录，不能改写过去的安排")
         candidate = {**entity, "start_at": stamp(parse(data["start_at"])), "end_at": stamp(parse(data["end_at"]))}
-        validate_block(state, candidate, entity["id"])
+        validate_block(state, candidate, entity["id"], now=now)
         entity.update(candidate)
         entity["version"] += 1
     elif kind == "session.start":
@@ -330,4 +346,7 @@ def apply(state, operation, device_id, now):
         entity = undo_plan(state, data["proposal_id"])
     else:
         raise DomainError("不支持的操作", status=422)
+    if kind in ("session.start", "session.extend", "session.resume"):
+        from .adjustments import adjust_following
+        entity["adjustment"] = adjust_following(state, entity, now, automatic_allowed=not data.get("defer_adjustment", False))
     return entity

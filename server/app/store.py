@@ -25,7 +25,7 @@ def initial_state():
         "revision": 0,
         # Categories are the user's own; nothing is pre-filled.
         "projects": [], "sleeps": [],
-        "settings": {"timezone": "America/Los_Angeles", "day_start": "09:00", "day_end": "22:00", "daily_review_time": "21:30"},
+        "settings": {"timezone": "America/Los_Angeles", "day_start": "09:00", "day_end": "22:00", "daily_review_time": "21:30", "auto_adjust": True},
         "tasks": [], "blocks": [], "sessions": [], "feedbacks": [],
         "waiting_checks": [], "reviews": [], "proposals": [], "jobs": [],
     }
