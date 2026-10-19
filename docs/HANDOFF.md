@@ -6,6 +6,8 @@
 
 > **最新用户视觉要求（2026-10-19 续接）**：黑白灰的简约水墨风。实际色表以 `docs/design/ink-system.md` 和 `lib/theme/tokens.dart` 为准；本文后续有关朱砂与淡彩的描述由这条要求覆盖。
 
+> **环境更新（2026-10-19）**：项目已更名为 `C:/Users/ASUS/Documents/Timer`。Codex 的 AppData 工具链路径经实测会发生 Store 应用重定向；共享 SDK、Pub 缓存和工作区联接现位于 `%USERPROFILE%/DevTools/Timer`。环境操作以 `AGENTS.md`、`docs/development-environment.md`、`tools/toolchain.json` 为准，先运行 `tools/setup-dev.ps1`，不要按下文历史记录重复安装 SDK。最新功能进度以 `docs/STATUS.md` 为准。
+
 ---
 
 ## 0. 铁律（违反任何一条都算返工）

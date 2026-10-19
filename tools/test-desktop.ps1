@@ -1,10 +1,10 @@
 param([Parameter(Mandatory=$true)][string] $Fixture)
 $ErrorActionPreference = 'Stop'
-$taskProject = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\apps\planner'))
-$taskFlutter = Join-Path $env:LOCALAPPDATA 'TimePlanner\toolchains\flutter\bin\flutter.bat'
+. (Join-Path $PSScriptRoot 'dev-environment.ps1')
+$taskEnv = Initialize-PlannerEnvironment
+$taskProject = $taskEnv.App
+$taskFlutter = $taskEnv.Flutter
 $env:PLANNER_E2E_FIXTURE = [System.IO.Path]::GetFullPath($Fixture)
-$taskATL = Join-Path $env:LOCALAPPDATA 'TimePlanner\toolchains\atl\Contents\VC\Tools\MSVC\14.44.35207\atlmfc'
-if (Test-Path -LiteralPath $taskATL) { $env:PLANNER_ATL_ROOT = $taskATL }
 & (Join-Path $PSScriptRoot 'prepare-windows-plugins.ps1')
 Push-Location $taskProject
 try {

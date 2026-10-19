@@ -23,9 +23,10 @@
 
 ## 正式代码与验证
 
+- 环境入口：先运行 `./tools/setup-dev.ps1`；移动或改名后运行一次 `./tools/setup-dev.ps1 -Clean`。详见[共同开发环境](docs/development-environment.md)。Codex 与 Claude 共用 `%USERPROFILE%/DevTools/Timer` 下的工具链和包缓存。
 - `apps/planner`：Flutter 客户端；`server/app`：电脑常驻后台；`server/tests`：隔离数据测试。
 - 后台在 `server` 目录运行 `.\.venv\Scripts\python.exe -m pytest`。
-- Flutter 在真实 `apps/planner` 路径执行 `flutter test`；当前 Windows 环境的 `flutter analyze` 使用状态文档中的 ASCII 入口，以避开分析服务器的非 ASCII 路径传输问题。
+- Flutter 测试和静态检查在英文目录 `apps/planner` 执行；初始化方式和完整命令见共同开发环境说明。
 - 本机原生构建：`tools/build-windows.ps1 -Mode release`。构建脚本使用已准备的用户目录 SDK 与 ATL，不改全局 PATH。
 - Android 验证包：`tools/build-android.ps1 -Mode debug`，OPPO 使用 `apps/planner/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk`。正式个人签名配置仍待完成。
 - `tools/test-desktop.ps1 -Fixture <隔离测试配置>` 用于真实 Windows 原生闭环；测试配置包含临时设备凭证，保存在忽略提交的 `artifacts`，不要共享。

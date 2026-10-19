@@ -1,16 +1,15 @@
 param([ValidateSet('debug','release')] [string] $Mode = 'release')
 $ErrorActionPreference = 'Stop'
-$taskProject = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\apps\planner'))
-$taskFlutter = Join-Path $env:LOCALAPPDATA 'TimePlanner\toolchains\flutter\bin\flutter.bat'
-if (-not (Test-Path -LiteralPath $taskFlutter)) { throw 'Flutter SDK is missing; see docs/STATUS.md' }
-$taskATL = Join-Path $env:LOCALAPPDATA 'TimePlanner\toolchains\atl\Contents\VC\Tools\MSVC\14.44.35207\atlmfc'
-if (Test-Path -LiteralPath (Join-Path $taskATL 'include\atlbase.h')) { $env:PLANNER_ATL_ROOT = $taskATL }
+. (Join-Path $PSScriptRoot 'dev-environment.ps1')
+$taskEnv = Initialize-PlannerEnvironment
+$taskProject = $taskEnv.App
+$taskFlutter = $taskEnv.Flutter
 $taskOriginal = $taskProject
 if ($Mode -eq 'release') {
     # gen_snapshot cannot read the non-ASCII app.dill path on this toolchain.
     # A physical ASCII staging copy also avoids Flutter's junction asset-copy bug.
     $taskStageId = [guid]::NewGuid().ToString('N').Substring(0, 8)
-    $taskProject = Join-Path $env:LOCALAPPDATA "TimePlanner\b\$taskStageId"
+    $taskProject = Join-Path $taskEnv.Shared "b\$taskStageId"
     New-Item -ItemType Directory -Path $taskProject | Out-Null
     & robocopy $taskOriginal $taskProject /E /XJ /XD build .dart_tool .gradle .git ephemeral .plugin_symlinks /XF local.properties key.properties '*.jks' '*.keystore' /NFL /NDL /NJH /NJS | Out-Null
     if ($LASTEXITCODE -gt 7) { throw 'Could not prepare ASCII build snapshot.' }
@@ -20,7 +19,7 @@ $taskPreviousPluginRoot = $env:PLANNER_PLUGIN_SOURCE_ROOT
 Push-Location $taskProject
 try {
     if ($Mode -eq 'release') {
-        & $taskFlutter pub get
+        & $taskFlutter pub get --enforce-lockfile
         if ($LASTEXITCODE -ne 0) { throw 'Dependency resolution failed in ASCII build snapshot.' }
         $taskPluginSources = Join-Path $taskProject 'plugins'
         New-Item -ItemType Directory -Path $taskPluginSources | Out-Null
@@ -53,3 +52,5 @@ if ($Mode -eq 'release') {
         ConvertTo-Json | Set-Content -LiteralPath $taskRecord -Encoding utf8
     Write-Output "Windows preview folder: $taskOutput"
 }
+# robocopy reports success with exit codes 1-7; do not leak them as failure.
+exit 0

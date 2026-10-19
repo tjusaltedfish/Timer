@@ -1,13 +1,23 @@
 # 当前状态
 
-日期：2026-10-19（第三轮）。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
+日期：2026-10-19。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
+
+## 本次环境修复与保存
+
+- 项目当前路径 `C:/Users/ASUS/Documents/Timer`；Claude 的产品进展已保存为提交 `77882f0`。
+- 已确认原 SDK/缓存的逻辑 AppData 路径在 Codex 进程中实际指向 `OpenAI.Codex_.../LocalCache/Local`。共享工具链和缓存迁到 `%USERPROFILE%/DevTools/Timer`；`os.path.realpath` 已验证新 SDK 和 meta 包文件没有被重定向。原 SDK 与缓存副本保留。
+- `tools/toolchain.json` 固定 Flutter 3.47.7 / Dart 3.13.5 及 Git revision；`tools/dev-environment.ps1` 统一选择 SDK、Pub、Android、Java、ATL，并校验实际 Git HEAD。环境变量仅作用于进程。
+- `tools/setup-dev.ps1` 按锁文件恢复依赖、更新 Android 本地 SDK 路径、准备插件联接；`-Clean` 用于改名或工具链迁移后的旧生成配置清理。共享工作区联接为 `%USERPROFILE%/DevTools/Timer/workspace`，目标是当前 Timer 仓库。
+- `AGENTS.md`、`CLAUDE.md` 和 `docs/development-environment.md` 提供两端共用规则：不自动升级依赖，不删除或重复安装 SDK/Pub 缓存。
+- 新共享环境实测：`flutter doctor -v` 为 **No issues found**；后台 **25 passed**；Flutter **34 passed**；analyze **No issues found**；Windows release、Android 三种 ABI 的 debug APK 均构建成功。记录在忽略提交的 `artifacts/sdk-repair-*.log`。
+- 同一天三次保存回顾时版本号 `1, 2, 2` 的已复现缺陷留待业务修复；本轮没有更改产品业务逻辑。
 
 ## 最新产品与视觉决定
 
 - 视觉改为「墨晕白纸」v3：纯白纸面、墨从角落化开、大圆角、柔光晕、温和文案；仍为黑白（近中性灰，三通道差 ≤ 6）。规范见 `docs/design/ink-system.md`，替代上一版灰阶细线方案。
 - 分类完全由用户自己建立、改名、归档；不再内置「毕业代码 / 秋招 / Fab / 个人」四类（那只是开发动机）。任务可以不归类。已有数据中的旧分类保留，可在设置里改名或归档。
 - 新增：主动记录睡眠。
-- 日终复盘 + 知识回忆：用户提出新设想（选择当天学习材料与报告，AI 复盘并帮助回忆知识点）。设计稿 `docs/design/daily-review.md`，**等用户确认关键选项后实现**。
+- 日终复盘 + 知识回忆：设计选项已确认，见 `docs/design/daily-review.md`；材料读取、AI 复盘、回忆卡片和间隔复习尚未实现。
 - 黑名单 / 锁 App 功能已删除，不做。
 
 ## 本轮实现
@@ -37,7 +47,7 @@
 
 未验证：真实模型调用（尚无用户 Key）、OPPO 真机安装与通知、手机与电脑跨网络同步、挂件拖动/透明度滑块的手动操作、深色模式真机观感。
 
-## 工具链
+## 上轮工具链记录（当前入口见本文顶部环境修复）
 
 - 本轮发现 `%LOCALAPPDATA%\TimePlanner\toolchains` 再次缺失，已重新安装：Flutter 3.47.7（官方 Git，开启 core.longpaths）、ATL（官方 VS 组件包，SHA256 与 `artifacts/atl-packages.json` 一致）、Android cmdline-tools 23（SHA1 校验）、platform 36 / build-tools 36.0.0 / NDK 28.2.13676358 / CMake 3.22.1。
 - 注意：`sdkmanager.bat` 会把 `platforms;android-36` 的分号当成分隔符，需用 `--package_file`。
@@ -45,7 +55,7 @@
 
 ## 下一步
 
-1. 用户确认 `docs/design/daily-review.md` 的四个问题后，实现材料收集、AI 复盘、回忆卡片与间隔复习。
+1. 按已确认的 `docs/design/daily-review.md` 实现材料收集、AI 复盘、回忆卡片与间隔复习。
 2. 用户在电脑端「设置 · 助手」填写服务地址、模型名、Key，跑一次「测试连接」和一次真实对话。
 3. OPPO 真机：安装 APK、通知权限、ColorOS 后台；跨网络连接（Cloudflare Tunnel，需用户操作域名与账号）。
 4. HANDOFF 中剩余的弹性操作（续时、检查点改约、一级自动微调）、拖动改期、托盘常驻与开机自启。

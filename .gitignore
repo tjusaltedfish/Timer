@@ -18,3 +18,7 @@ archives/
 *.keystore
 local.properties
 artifacts/
+secrets/
+desktop-token
+llm-key
+.claude/settings.local.json

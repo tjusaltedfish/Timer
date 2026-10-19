@@ -1,9 +1,9 @@
 param([ValidateSet('debug', 'release')][string] $Mode = 'debug')
 $ErrorActionPreference = 'Stop'
-$taskProject = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\apps\planner'))
-$taskFlutter = Join-Path $env:LOCALAPPDATA 'TimePlanner\toolchains\flutter\bin\flutter.bat'
-$env:ANDROID_HOME = Join-Path $env:LOCALAPPDATA 'TimePlanner\toolchains\android-sdk'
-if (-not (Test-Path -LiteralPath $taskFlutter)) { throw 'Flutter SDK is missing.' }
+. (Join-Path $PSScriptRoot 'dev-environment.ps1')
+$taskEnv = Initialize-PlannerEnvironment
+$taskProject = $taskEnv.App
+$taskFlutter = $taskEnv.Flutter
 if ($Mode -eq 'release') {
     throw 'Personal release signing is not configured yet. Use debug for local verification; see docs/HANDOFF.md section 9.'
 }
