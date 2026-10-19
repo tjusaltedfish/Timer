@@ -75,10 +75,13 @@ extension _TodayPage on _PlannerHomeState {
               padding: const EdgeInsets.only(top: 12),
               child: Material(
                 color: palette.inquiryWash,
+                borderRadius: BorderRadius.circular(18),
+                clipBehavior: Clip.antiAlias,
                 child: ListTile(
                   dense: true,
                   leading: const Seal('问', label: '待回话'),
-                  title: Text('待回话 ${awaiting.length} 段 · 点此回答'),
+                  title: Text('有 ${awaiting.length} 段在等你说说结果'),
+                  trailing: const Icon(Icons.chevron_right),
                   onTap: () {
                     final b = c.blocks
                         .where((b) => b['id'] == awaiting.first['block_id'])
@@ -88,21 +91,20 @@ extension _TodayPage on _PlannerHomeState {
                 ),
               ),
             ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
+          sleepBar(),
+          const SizedBox(height: 12),
           Row(
             children: [
               Text('此刻', style: Theme.of(context).textTheme.titleMedium),
               const Spacer(),
-              TextButton(
-                onPressed: () => update(() => listMode = false),
-                child: Text(listMode ? '轮盘' : '轮盘 ·'),
-              ),
-              TextButton(
-                onPressed: () => update(() => listMode = true),
-                child: Text(listMode ? '列表 ·' : '列表'),
+              _ModeSwitch(
+                list: listMode,
+                onChanged: (value) => update(() => listMode = value),
               ),
             ],
           ),
+          const SizedBox(height: 4),
           const BrushDivider(),
           Expanded(
             child: LayoutBuilder(
@@ -126,6 +128,9 @@ extension _TodayPage on _PlannerHomeState {
                         dayStart: c.settings['day_start'],
                         dayEnd: c.settings['day_end'],
                         onBlockTap: blockDetails,
+                        markOf: blockMark,
+                        onSlotPicked: (start, minutes) =>
+                            taskDialog(start: start, minutes: minutes),
                       ),
                     ),
                   ],
@@ -134,6 +139,54 @@ extension _TodayPage on _PlannerHomeState {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ModeSwitch extends StatelessWidget {
+  const _ModeSwitch({required this.list, required this.onChanged});
+  final bool list;
+  final ValueChanged<bool> onChanged;
+  @override
+  Widget build(BuildContext context) {
+    final p = context.inkPalette;
+    Widget option(String text, bool value) {
+      final selected = list == value;
+      return Semantics(
+        selected: selected,
+        button: true,
+        child: GestureDetector(
+          onTap: () => onChanged(value),
+          child: AnimatedContainer(
+            duration: InkMetrics.micro,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: selected ? p.paperRaised : p.paper.withValues(alpha: 0),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: selected ? p.halo : null,
+            ),
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 13,
+                color: selected ? p.inkJiao : p.inkZhong,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: p.wash,
+        borderRadius: BorderRadius.circular(17),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [option('轮盘', false), option('列表', true)],
       ),
     );
   }

@@ -20,12 +20,18 @@ class InkTimeline extends StatelessWidget {
     required this.dayStart,
     required this.dayEnd,
     required this.onBlockTap,
+    this.onSlotPicked,
+    this.markOf,
   });
   final List<Json> blocks, tasks;
   final tz.Location zone;
   final DateTime day, now;
   final String dayStart, dayEnd;
   final ValueChanged<Json> onBlockTap;
+  final Color? Function(Json block)? markOf;
+
+  /// Tapping empty paper offers that half hour (one hour long) for a new task.
+  final void Function(tz.TZDateTime start, int minutes)? onSlotPicked;
   @override
   Widget build(BuildContext context) {
     final p = context.inkPalette, slices = daySlices(blocks, day, zone);
@@ -42,11 +48,39 @@ class InkTimeline extends StatelessWidget {
     final start = tz.TZDateTime(zone, day.year, day.month, day.day, first);
     final end = tz.TZDateTime(zone, day.year, day.month, day.day, last);
     final height = end.difference(start).inMinutes.toDouble();
+    void pick(double dy) {
+      final picked = onSlotPicked;
+      if (picked == null) return;
+      final minutes = ((dy - 10) / 30).floor().clamp(0, height ~/ 30 - 1) * 30;
+      final slot = start.add(Duration(minutes: minutes));
+      if (!slot.add(const Duration(minutes: 30)).isAfter(now)) {
+        ScaffoldMessenger.maybeOf(context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(content: Text('这段时间已经过去了，挑一个还没到来的时段吧。')),
+          );
+        return;
+      }
+      picked(slot, 60);
+    }
+
     return SingleChildScrollView(
       child: SizedBox(
         height: height + 24,
         child: Stack(
           children: [
+            Positioned.fill(
+              left: 58,
+              child: MouseRegion(
+                cursor: onSlotPicked == null
+                    ? MouseCursor.defer
+                    : SystemMouseCursors.click,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: (d) => pick(d.localPosition.dy),
+                ),
+              ),
+            ),
             for (var minute = 0; minute <= height; minute += 60) ...[
               Positioned(
                 top: minute.toDouble(),
@@ -83,9 +117,7 @@ class InkTimeline extends StatelessWidget {
                     onTap: () => onBlockTap(s.block),
                     child: ClipRect(
                       child: InkCard(
-                        project: tasks
-                            .where((t) => t['id'] == s.block['task_id'])
-                            .firstOrNull?['project_id'],
+                        mark: markOf?.call(s.block),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
                           vertical: 4,

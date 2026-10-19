@@ -5,6 +5,7 @@ extension _EditTaskSheet on _PlannerHomeState {
     final title = TextEditingController(text: t['title']),
         goal = TextEditingController(text: t['outcome_criteria']);
     String? error;
+    String? project = t['project_id'] as String?;
     await showOwnedDialog(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -26,6 +27,14 @@ extension _EditTaskSheet on _PlannerHomeState {
                   maxLines: 3,
                   maxLength: 2000,
                   decoration: const InputDecoration(labelText: '完成标准'),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: categoryChips(
+                    project,
+                    (value) => setDialog(() => project = value),
+                  ),
                 ),
                 if (error != null) Text(error!),
               ],
@@ -67,6 +76,7 @@ extension _EditTaskSheet on _PlannerHomeState {
                     'version': t['version'],
                     'title': title.text.trim(),
                     'outcome_criteria': goal.text.trim(),
+                    if (project != t['project_id']) 'project_id': project,
                   });
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
                 } catch (e) {

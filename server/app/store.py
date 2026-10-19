@@ -23,12 +23,8 @@ def digest(value):
 def initial_state():
     return {
         "revision": 0,
-        "projects": [
-            {"id": "code", "name": "毕业 · 实验代码", "color": "#2c7050"},
-            {"id": "learn", "name": "秋招 · 转行自学", "color": "#a95e32"},
-            {"id": "fab", "name": "Fab · 工艺实验", "color": "#536b88"},
-            {"id": "personal", "name": "个人安排", "color": "#71658a"},
-        ],
+        # Categories are the user's own; nothing is pre-filled.
+        "projects": [], "sleeps": [],
         "settings": {"timezone": "America/Los_Angeles", "day_start": "09:00", "day_end": "22:00", "daily_review_time": "21:30"},
         "tasks": [], "blocks": [], "sessions": [], "feedbacks": [],
         "waiting_checks": [], "reviews": [], "proposals": [], "jobs": [],

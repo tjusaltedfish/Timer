@@ -20,7 +20,7 @@ class TaskCreate(Input):
     id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,80}$")
     title: str = Field(min_length=1, max_length=200)
     outcome_criteria: str = Field(min_length=1, max_length=2000)
-    project_id: Literal["code", "learn", "fab", "personal"] = "personal"
+    project_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,80}$")
     remaining_minutes: int = Field(ge=1, le=100000)
     min_chunk_minutes: int = Field(default=15, ge=5, le=480)
     splittable: bool = True
@@ -45,13 +45,14 @@ class TaskUpdate(Input):
     priority: int | None = Field(default=None, ge=1, le=3)
     state: Literal["ready", "cancelled", "review"] | None = None
     deadline: datetime | None = None
+    project_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,80}$")
 
     _aware_deadline = field_validator("deadline")(TaskCreate.aware.__func__)
 
     @model_validator(mode="after")
     def explicit_nulls(self):
-        if any(getattr(self, key) is None for key in self.model_fields_set - {"deadline"}):
-            raise ValueError("任务字段不能显式清空；截止时间可清除")
+        if any(getattr(self, key) is None for key in self.model_fields_set - {"deadline", "project_id"}):
+            raise ValueError("任务字段不能显式清空；截止时间和分类可清除")
         return self
 
 
@@ -193,6 +194,40 @@ class PlanAction(Input):
     proposal_id: str
 
 
+class ProjectCreate(Input):
+    id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,80}$")
+    name: str = Field(min_length=1, max_length=30)
+
+
+class ProjectUpdate(Input):
+    id: str
+    name: str | None = Field(default=None, min_length=1, max_length=30)
+    archived: bool | None = None
+
+
+class SleepLog(Input):
+    """Create or replace one night (or nap). An open entry has no woke_at yet."""
+    id: str = Field(pattern=r"^[a-zA-Z0-9-]{1,80}$")
+    slept_at: datetime
+    woke_at: datetime | None = None
+    quality: int | None = Field(default=None, ge=1, le=5)
+    note: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def valid_night(self):
+        if self.slept_at.tzinfo is None or (self.woke_at is not None and self.woke_at.tzinfo is None):
+            raise ValueError("睡眠时间需要包含时区")
+        if self.woke_at is not None:
+            hours = (self.woke_at - self.slept_at).total_seconds() / 3600
+            if hours <= 0 or hours > 20:
+                raise ValueError("醒来时间要晚于入睡时间，且一次睡眠不超过 20 小时")
+        return self
+
+
+class SleepDelete(Input):
+    id: str
+
+
 class PairConfirm(Input):
     code: str = Field(pattern=r"^[A-Z2-9]{8}$")
     name: str = Field(min_length=1, max_length=80)
@@ -207,4 +242,6 @@ MODELS = {
     "settings.update": SettingsUpdate,
     "plan.apply": PlanAction, "plan.undo": PlanAction,
     "waiting.resolve": WaitingResolve,
+    "project.create": ProjectCreate, "project.update": ProjectUpdate,
+    "sleep.log": SleepLog, "sleep.delete": SleepDelete,
 }

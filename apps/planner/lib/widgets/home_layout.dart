@@ -24,21 +24,9 @@ extension _HomeLayout on _PlannerHomeState {
       ),
     ),
   );
-  Widget panel(Widget child, {Color? color}) => SizedBox(
+  Widget panel(Widget child) => SizedBox(
     width: double.infinity,
     child: InkCard(child: child),
-  );
-  Widget chip(String text, String? id) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Container(
-        width: 2,
-        height: 16,
-        color: palette.projects[id] ?? palette.inkQing,
-      ),
-      const SizedBox(width: 8),
-      Text(text, style: Theme.of(context).textTheme.bodySmall),
-    ],
   );
   void selectDate(DateTime date) => update(() {
     selectedDay = DateTime(date.year, date.month, date.day);
@@ -58,32 +46,7 @@ extension _HomeLayout on _PlannerHomeState {
     },
     child: Column(
       children: [
-        Row(
-          children: [
-            IconButton(
-              tooltip: '上一周',
-              onPressed: () =>
-                  selectDate(monday.subtract(const Duration(days: 7))),
-              icon: const Icon(Icons.chevron_left),
-            ),
-            Expanded(
-              child: Text(
-                '${monday.month}月${monday.day}日 — ${monday.add(const Duration(days: 6)).month}月${monday.add(const Duration(days: 6)).day}日',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-            TextButton(
-              onPressed: () => selectDate(now),
-              child: const Text('今天'),
-            ),
-            IconButton(
-              tooltip: '下一周',
-              onPressed: () => selectDate(monday.add(const Duration(days: 7))),
-              icon: const Icon(Icons.chevron_right),
-            ),
-          ],
-        ),
+        weekNav(),
         Row(
           children: List.generate(7, (i) {
             final date = monday.add(Duration(days: i));
@@ -132,5 +95,28 @@ extension _HomeLayout on _PlannerHomeState {
         ),
       ],
     ),
+  );
+
+  Widget weekNav() => Row(
+    children: [
+      IconButton(
+        tooltip: '上一周',
+        onPressed: () => selectDate(monday.subtract(const Duration(days: 7))),
+        icon: const Icon(Icons.chevron_left),
+      ),
+      Expanded(
+        child: Text(
+          '${monday.month}月${monday.day}日 — ${monday.add(const Duration(days: 6)).month}月${monday.add(const Duration(days: 6)).day}日',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+      TextButton(onPressed: () => selectDate(now), child: const Text('今天')),
+      IconButton(
+        tooltip: '下一周',
+        onPressed: () => selectDate(monday.add(const Duration(days: 7))),
+        icon: const Icon(Icons.chevron_right),
+      ),
+    ],
   );
 }

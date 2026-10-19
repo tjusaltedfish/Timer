@@ -78,7 +78,18 @@ def apply(state, operation, device_id, now):
     # Defaults are needed on creation, but omitted PATCH fields must remain untouched.
     if kind in ("task.create", "block.create", "feedback.create"):
         data = MODELS[kind].model_validate(operation.payload).model_dump(mode="json")
+    state.setdefault("sleeps", [])
+    state.setdefault("projects", [])
+
+    def usable_project(project_id):
+        if project_id is None:
+            return
+        project = next((p for p in state["projects"] if p["id"] == project_id), None)
+        if project is None or project.get("archived"):
+            raise DomainError("这个分类不存在或已归档", "NOT_FOUND", 404)
+
     if kind == "task.create":
+        usable_project(data.get("project_id"))
         entity = {**data, "id": data.get("id") or identifier(), "state": "ready", "version": 1, "created_at": stamp(now)}
         if any(t["id"] == entity["id"] for t in state["tasks"]):
             raise DomainError("任务标识已经存在")
@@ -94,6 +105,8 @@ def apply(state, operation, device_id, now):
             raise DomainError("请先结束当前投入")
         if data.get("title") is None and "title" in data or data.get("outcome_criteria") is None and "outcome_criteria" in data:
             raise DomainError("标题和完成标准不能为空", status=422)
+        if data.get("project_id"):
+            usable_project(data["project_id"])
         entity.update(data)
         entity["version"] += 1
         if entity["state"] == "cancelled":
@@ -245,6 +258,43 @@ def apply(state, operation, device_id, now):
                   "created_at": stamp(now), "archive_status": "pending"}
         state["reviews"].append(entity)
         state["jobs"].append({"id": identifier(), "kind": "archive", "review_id": entity["id"], "status": "pending", "attempts": 0})
+    elif kind == "project.create":
+        name = data["name"]
+        if any(p["name"] == name and not p.get("archived") for p in state["projects"]):
+            raise DomainError("已经有同名的分类了")
+        entity = {"id": data.get("id") or identifier(), "name": name, "archived": False, "created_at": stamp(now)}
+        if any(p["id"] == entity["id"] for p in state["projects"]):
+            raise DomainError("分类标识已经存在")
+        state["projects"].append(entity)
+    elif kind == "project.update":
+        entity = find(state, "projects", data["id"])
+        if data.get("name") and any(p["name"] == data["name"] and p["id"] != entity["id"] and not p.get("archived")
+                                    for p in state["projects"]):
+            raise DomainError("已经有同名的分类了")
+        entity.update({k: v for k, v in data.items() if k != "id" and v is not None})
+    elif kind == "sleep.log":
+        slept, woke = parse(data["slept_at"]), parse(data["woke_at"]) if data.get("woke_at") else None
+        if slept > now + timedelta(minutes=5) or (woke and woke > now + timedelta(minutes=5)):
+            raise DomainError("睡眠时间不能在未来", "INVALID_TIME", 422)
+        for other in state["sleeps"]:
+            if other["id"] == data["id"]:
+                continue
+            if woke is None and other.get("woke_at") is None:
+                raise DomainError("已经有一段正在记录的睡眠了")
+            other_end = parse(other["woke_at"]) if other.get("woke_at") else now
+            if slept < other_end and (woke or now) > parse(other["slept_at"]):
+                raise DomainError("和另一段睡眠记录重叠了", "TIME_CONFLICT")
+        entity = {"id": data["id"], "slept_at": stamp(slept), "woke_at": stamp(woke) if woke else None,
+                  "quality": data.get("quality"), "note": data.get("note", ""), "updated_at": stamp(now)}
+        existing = next((s for s in state["sleeps"] if s["id"] == data["id"]), None)
+        if existing:
+            existing.clear()
+            existing.update(entity)
+        else:
+            state["sleeps"].append(entity)
+    elif kind == "sleep.delete":
+        entity = find(state, "sleeps", data["id"])
+        state["sleeps"].remove(entity)
     elif kind == "settings.update":
         entity = state["settings"]
         candidate = {**entity, **data}

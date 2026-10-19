@@ -53,7 +53,7 @@ extension _BlockCard on _PlannerHomeState {
       label:
           '${hm(local(block['start_at']))}至${hm(local(block['end_at']))}，${block['title']}，${blockStatus(block)}',
       child: InkCard(
-        project: t?['project_id'],
+        mark: markOf(t?['project_id']),
         focused: focused,
         inquiry: state == 'awaiting_feedback',
         padding: const EdgeInsets.all(20),

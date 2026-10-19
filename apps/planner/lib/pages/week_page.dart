@@ -6,14 +6,17 @@ extension _WeekPage on _PlannerHomeState {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          heading('一周，有安排也有留白。', '点击时间块查看结果标准。固定预约与保护时段会保留。'),
-          dateStrip(),
-          const SizedBox(height: 24),
+          weekNav(),
+          const SizedBox(height: 8),
           WeekCalendar(
             blocks: c.blocks,
             tasks: c.tasks,
             zone: zone,
             selectedDay: selectedDay,
+            now: now,
+            markOf: blockMark,
+            onSlotPicked: (start, minutes) =>
+                taskDialog(start: start, minutes: minutes),
             dayStart: c.settings['day_start'],
             dayEnd: c.settings['day_end'],
             onSelectDay: selectDate,

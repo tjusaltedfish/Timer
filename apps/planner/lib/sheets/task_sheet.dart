@@ -1,119 +1,156 @@
 part of '../home.dart';
 
 extension _TaskSheet on _PlannerHomeState {
-  Future<void> taskDialog({Json? existing}) async {
+  /// New task (or another segment of [existing]). [start]/[minutes] come from
+  /// a slot picked on the calendar; past moments are never accepted.
+  Future<void> taskDialog({
+    Json? existing,
+    DateTime? start,
+    int? minutes,
+  }) async {
     final name = TextEditingController(text: existing?['title'] ?? '');
     final goal = TextEditingController(
       text: existing?['outcome_criteria'] ?? '',
     );
-    var date = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
-    var start = const TimeOfDay(hour: 9, minute: 0);
-    var minutes = 60, project = existing?['project_id'] as String? ?? 'code';
+    final current = now;
+    final earliest = InkDateTimeWheel.ceilTo(current, 5);
+    DateTime initial;
+    if (start != null) {
+      final wall = tz.TZDateTime.from(start, zone);
+      initial = DateTime(
+        wall.year,
+        wall.month,
+        wall.day,
+        wall.hour,
+        wall.minute,
+      );
+    } else if (dateKey(selectedDay).compareTo(dateKey(current)) > 0) {
+      final parts = (c.settings['day_start'] as String).split(':');
+      initial = DateTime(
+        selectedDay.year,
+        selectedDay.month,
+        selectedDay.day,
+        int.parse(parts[0]),
+        int.parse(parts[1]),
+      );
+    } else {
+      initial = earliest;
+    }
+    if (initial.isBefore(earliest)) initial = earliest;
+    var day = DateTime(initial.year, initial.month, initial.day);
+    var hour = initial.hour, minute = initial.minute;
+    const durations = [15, 30, 45, 60, 90, 120, 180];
+    var length = minutes ?? 60;
+    String? project = existing?['project_id'] as String?;
     var fixed = false, protected = false, saving = false;
     String? error;
+    final p = palette;
+    Widget label(String text) => Padding(
+      padding: const EdgeInsets.only(top: 18, bottom: 10),
+      child: Text(text, style: Theme.of(context).textTheme.titleSmall),
+    );
     await showOwnedDialog(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialog) => AlertDialog(
-          title: Text(existing == null ? '安排一件有结果的事' : '继续安排这项任务'),
+          title: Text(
+            existing == null ? '落一笔有结果的事' : '再为「${existing['title']}」留一段',
+          ),
           content: SizedBox(
-            width: 450,
+            width: 460,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (existing == null) ...[
                     TextField(
                       controller: name,
                       maxLength: 200,
-                      decoration: const InputDecoration(labelText: '任务名称'),
+                      decoration: InputDecoration(
+                        labelText: protected ? '这段时间留给' : '要做的事',
+                        hintText: protected ? '午饭、散步、小憩…' : '例如：整理参数扫描脚本',
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: goal,
-                      maxLines: 2,
-                      maxLength: 2000,
-                      decoration: const InputDecoration(labelText: '完成标准'),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: project,
-                      decoration: const InputDecoration(labelText: '项目'),
-                      items: c.projects
-                          .map(
-                            (p) => DropdownMenuItem(
-                              value: p['id'] as String,
-                              child: Text(p['name']),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (v) => project = v!,
-                    ),
-                  ],
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () async {
-                            final value = await showDatePicker(
-                              context: context,
-                              initialDate: date,
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime(2100),
-                            );
-                            if (value != null) setDialog(() => date = value);
-                          },
-                          child: Text('${date.month}/${date.day}'),
+                    if (!protected) ...[
+                      const SizedBox(height: 4),
+                      TextField(
+                        controller: goal,
+                        maxLines: 2,
+                        maxLength: 2000,
+                        decoration: const InputDecoration(
+                          labelText: '做到什么程度算完成',
+                          hintText: '可以检验的结果，例如：输出一份可复现的 CSV',
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () async {
-                            final value = await showTimePicker(
-                              context: context,
-                              initialTime: start,
-                            );
-                            if (value != null) setDialog(() => start = value);
-                          },
-                          child: Text(start.format(context)),
-                        ),
+                      label('归到哪一类（可不选）'),
+                      categoryChips(
+                        project,
+                        (value) => setDialog(() => project = value),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    initialValue: minutes,
-                    decoration: const InputDecoration(labelText: '本次投入'),
-                    items: [15, 30, 45, 60, 90, 120, 180]
-                        .map(
-                          (m) =>
-                              DropdownMenuItem(value: m, child: Text('$m 分钟')),
-                        )
-                        .toList(),
-                    onChanged: (v) => minutes = v!,
-                  ),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: fixed,
-                    title: const Text('固定预约'),
-                    onChanged: protected
-                        ? null
-                        : (v) => setDialog(() => fixed = v!),
-                  ),
-                  if (existing == null)
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: protected,
-                      title: const Text('这是用餐、休息等保护时段'),
-                      onChanged: (v) => setDialog(() {
-                        protected = v!;
-                        if (protected) fixed = false;
-                      }),
+                  ],
+                  label('何时开始'),
+                  Center(
+                    child: InkDateTimeWheel(
+                      key: const Key('task.when'),
+                      initial: initial,
+                      today: current,
+                      minimum: current,
+                      onChanged: (d, h, m) {
+                        day = d;
+                        hour = h;
+                        minute = m;
+                      },
                     ),
+                  ),
+                  label('留多久'),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final m in {...durations, length}.toList()..sort())
+                        ChoiceChip(
+                          label: Text(
+                            m < 60 || m % 60 != 0
+                                ? m >= 60
+                                      ? '${m ~/ 60} 小时 ${m % 60} 分'
+                                      : '$m 分钟'
+                                : '${m ~/ 60} 小时',
+                          ),
+                          selected: length == m,
+                          onSelected: (_) => setDialog(() => length = m),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilterChip(
+                        label: const Text('固定预约 · 不会被挪动'),
+                        selected: fixed,
+                        onSelected: protected
+                            ? null
+                            : (v) => setDialog(() => fixed = v),
+                      ),
+                      if (existing == null)
+                        FilterChip(
+                          label: const Text('留给吃饭、休息'),
+                          selected: protected,
+                          onSelected: (v) => setDialog(() {
+                            protected = v;
+                            if (protected) fixed = false;
+                          }),
+                        ),
+                    ],
+                  ),
                   if (error != null)
-                    Text(error!, style: TextStyle(color: palette.accent)),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 14),
+                      child: Text(error!, style: TextStyle(color: p.accent)),
+                    ),
                 ],
               ),
             ),
@@ -121,7 +158,7 @@ extension _TaskSheet on _PlannerHomeState {
           actions: [
             TextButton(
               onPressed: saving ? null : () => Navigator.pop(dialogContext),
-              child: const Text('取消'),
+              child: const Text('先不了'),
             ),
             FilledButton(
               key: const Key('action.save-task'),
@@ -131,7 +168,11 @@ extension _TaskSheet on _PlannerHomeState {
                       if (existing == null &&
                           (name.text.trim().isEmpty ||
                               (!protected && goal.text.trim().isEmpty))) {
-                        setDialog(() => error = '请填写名称和完成标准。');
+                        setDialog(
+                          () => error = protected
+                              ? '给这段时间起个名字吧。'
+                              : '写下要做的事，和做到什么程度算完成。',
+                        );
                         return;
                       }
                       setDialog(() {
@@ -139,15 +180,21 @@ extension _TaskSheet on _PlannerHomeState {
                         error = null;
                       });
                       try {
-                        final begin = await resolvePlannedTime(date, start);
-                        final end = begin.add(Duration(minutes: minutes));
+                        final begin = await resolvePlannedTime(
+                          day,
+                          TimeOfDay(hour: hour, minute: minute),
+                        );
+                        if (!begin.isAfter(now)) {
+                          throw ApiFailure('这个时刻已经过去了，换一个还没到来的时间吧。', 422);
+                        }
+                        final end = begin.add(Duration(minutes: length));
                         if (c.blocks.any(
                           (b) =>
                               b['status'] == 'scheduled' &&
                               begin.isBefore(DateTime.parse(b['end_at'])) &&
                               end.isAfter(DateTime.parse(b['start_at'])),
                         )) {
-                          throw ApiFailure('与已有安排冲突，请换一个时间。', 409);
+                          throw ApiFailure('这段时间已经有安排了，换一个时间吧。', 409);
                         }
                         final taskId = protected
                             ? null
@@ -158,7 +205,7 @@ extension _TaskSheet on _PlannerHomeState {
                             'title': name.text.trim(),
                             'outcome_criteria': goal.text.trim(),
                             'project_id': project,
-                            'remaining_minutes': minutes,
+                            'remaining_minutes': length,
                           });
                         }
                         await c.submit('block.create', {
@@ -176,7 +223,7 @@ extension _TaskSheet on _PlannerHomeState {
                               ? 'fixed'
                               : 'flexible',
                         });
-                        if (mounted) selectDate(date);
+                        if (mounted) selectDate(day);
                         if (dialogContext.mounted) Navigator.pop(dialogContext);
                       } catch (value) {
                         if (context.mounted) {
@@ -187,7 +234,7 @@ extension _TaskSheet on _PlannerHomeState {
                         }
                       }
                     },
-              child: Text(saving ? '保存中…' : '保存安排'),
+              child: Text(saving ? '落笔中…' : '保存安排'),
             ),
           ],
         ),

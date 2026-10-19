@@ -77,12 +77,8 @@ Json blankState() => {
   'feedbacks': <Json>[],
   'waiting_checks': <Json>[],
   'reviews': <Json>[],
-  'projects': [
-    {'id': 'code', 'name': '毕业 · 实验代码', 'color': '#2c7050'},
-    {'id': 'learn', 'name': '秋招 · 转行自学', 'color': '#a95e32'},
-    {'id': 'fab', 'name': 'Fab · 工艺实验', 'color': '#536b88'},
-    {'id': 'personal', 'name': '个人安排', 'color': '#71658a'},
-  ],
+  'projects': <Json>[],
+  'sleeps': <Json>[],
   'settings': {
     'timezone': 'America/Los_Angeles',
     'day_start': '09:00',
@@ -116,8 +112,11 @@ class PlannerController extends ChangeNotifier {
   List<Json> get sessions => (state['sessions'] as List).cast<Json>();
   List<Json> get feedbacks => (state['feedbacks'] as List).cast<Json>();
   List<Json> get reviews => (state['reviews'] as List).cast<Json>();
-  List<Json> get projects =>
-      (state['projects'] as List? ?? blankState()['projects']).cast<Json>();
+  List<Json> get projects => (state['projects'] as List? ?? []).cast<Json>();
+  List<Json> get activeProjects =>
+      projects.where((p) => p['archived'] != true).toList();
+  List<Json> get sleeps => (state['sleeps'] as List? ?? []).cast<Json>();
+  Json? get openSleep => sleeps.where((s) => s['woke_at'] == null).firstOrNull;
   Json get settings => state['settings'] as Json;
   bool get configured => _token.isNotEmpty;
   Json? get activeSession => sessions
@@ -183,6 +182,7 @@ class PlannerController extends ChangeNotifier {
     String path, [
     Json? body,
     bool authenticated = true,
+    Duration timeout = const Duration(seconds: 10),
   ]) async {
     final uri = Uri.parse('$serverUrl$path');
     final headers = {
@@ -193,7 +193,7 @@ class PlannerController extends ChangeNotifier {
         await (method == 'GET'
                 ? transport.get(uri, headers: headers)
                 : transport.post(uri, headers: headers, body: jsonEncode(body)))
-            .timeout(const Duration(seconds: 10));
+            .timeout(timeout);
     Json value;
     try {
       value = jsonDecode(utf8.decode(response.bodyBytes)) as Json;
@@ -297,6 +297,44 @@ class PlannerController extends ChangeNotifier {
     return request(body == null ? 'GET' : 'POST', path, body);
   }
 
+  // ---- Assistant (lives on the computer; needs a connection) ----------
+
+  Future<Json> _assistant(String method, String path, [Json? body]) async {
+    if (!configured) {
+      throw ApiFailure('助手在电脑上运行，请先在设置里连接电脑。', 409);
+    }
+    return request(
+      method,
+      '/api/v1/assistant$path',
+      body,
+      true,
+      const Duration(seconds: 120),
+    );
+  }
+
+  Future<Json> assistantConfig() => _assistant('GET', '/config');
+  Future<Json> saveAssistantConfig(Json body) =>
+      _assistant('POST', '/config', body);
+  Future<Json> testAssistant() => _assistant('POST', '/test', {});
+  Future<List<Json>> assistantMessages() async =>
+      ((await _assistant('GET', '/messages'))['messages'] as List).cast<Json>();
+  Future<List<Json>> sendAssistant(String text) async =>
+      ((await _assistant('POST', '/messages', {'text': text}))['messages']
+              as List)
+          .cast<Json>();
+  Future<void> dismissDraft(String id) =>
+      _assistant('POST', '/drafts/$id/dismiss', {});
+
+  /// Confirmed drafts change the schedule on the computer; pull it back here.
+  Future<void> applyDraft(String id) async {
+    await sync();
+    if (pending.isNotEmpty) {
+      throw ApiFailure('还有本地记录没同步，同步完成后再确认拟办。', 409);
+    }
+    await _assistant('POST', '/drafts/$id/apply', {});
+    await sync();
+  }
+
   Future<void> applyProposal(String id, {bool undo = false}) async {
     await sync();
     if (!connected || pending.isNotEmpty) {
@@ -352,7 +390,7 @@ void _optimistic(Json state, Json operation) {
     tasks.add({
       'state': 'ready',
       'version': 1,
-      'project_id': 'personal',
+      'project_id': null,
       'min_chunk_minutes': 15,
       'splittable': true,
       'priority': 2,
@@ -557,6 +595,36 @@ void _optimistic(Json state, Json operation) {
     });
   } else if (kind == 'settings.update') {
     (state['settings'] as Json).addAll(p);
+  } else if (kind == 'project.create') {
+    final projects = state.putIfAbsent('projects', () => <dynamic>[]) as List;
+    if (projects.any((x) => x['id'] == p['id'])) return;
+    if (projects.any((x) => x['name'] == p['name'] && x['archived'] != true)) {
+      throw ApiFailure('已经有同名的分类了', 409);
+    }
+    projects.add({'archived': false, ...p});
+  } else if (kind == 'project.update') {
+    final projects = (state['projects'] as List).cast<Json>();
+    find(projects, p['id']).addAll({
+      for (final e in p.entries)
+        if (e.key != 'id' && e.value != null) e.key: e.value,
+    });
+  } else if (kind == 'sleep.log') {
+    final sleeps = (state.putIfAbsent('sleeps', () => <dynamic>[]) as List)
+        .cast<Json>();
+    final existing = sleeps.where((s) => s['id'] == p['id']).firstOrNull;
+    if (existing == null &&
+        p['woke_at'] == null &&
+        sleeps.any((s) => s['woke_at'] == null)) {
+      throw ApiFailure('已经有一段正在记录的睡眠了', 409);
+    }
+    final entry = {'woke_at': null, 'quality': null, 'note': '', ...p};
+    existing == null
+        ? (state['sleeps'] as List).add(entry)
+        : (existing
+            ..clear()
+            ..addAll(entry));
+  } else if (kind == 'sleep.delete') {
+    (state['sleeps'] as List? ?? []).removeWhere((s) => s['id'] == p['id']);
   } else if (kind == 'plan.apply' || kind == 'plan.undo') {
     // The proposal is stored before sending; the canonical snapshot supplies the result.
     return;

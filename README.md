@@ -2,7 +2,7 @@
 
 让秋招自学、毕业实验代码与 Fab 工艺工作形成「计划 → 执行 → 结果反馈 → 调整 → 归档」的闭环。
 
-当前已进入正式实现：Flutter Android/Windows 客户端与 Python 电脑后台已有任务、执行和反馈闭环。界面采用[黑白简约水墨](docs/design/ink-system.md)，支持卡片轮盘与桌面时间轴。Windows 原生闭环测试、Android 调试 APK 构建通过；完整初版仍在推进，详见[当前状态](docs/STATUS.md)。
+当前已进入正式实现：Flutter Android/Windows 客户端与 Python 电脑后台已有任务、执行和反馈闭环。界面采用[墨晕白纸](docs/design/ink-system.md)风格，支持卡片轮盘、点选时段新建、滚轮选时、Windows 桌面置顶挂件、睡眠记录和可配置的 AI 助手（OpenAI 中转站或 DeepSeek，Key 只存在电脑上）。日终复盘与知识回忆见[设计稿](docs/design/daily-review.md)。完整初版仍在推进，详见[当前状态](docs/STATUS.md)。
 
 - [接手开发指导（技术 + 水墨审美，优先阅读）](docs/HANDOFF.md)
 - [蓝图入口](docs/vibe-blueprint/00-index.md)

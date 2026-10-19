@@ -43,6 +43,13 @@ extension _SettingsPage on _PlannerHomeState {
             ),
           ),
           const SizedBox(height: 18),
+          categoriesPanel(),
+          const SizedBox(height: 18),
+          AssistantSettingsPanel(
+            key: ValueKey('assistant-settings-${c.configured}'),
+            controller: c,
+          ),
+          const SizedBox(height: 18),
           if (widget.reminders != null) ...[
             panel(
               Column(
@@ -159,9 +166,14 @@ extension _SettingsPage on _PlannerHomeState {
         .split(':')
         .map(int.parse)
         .toList();
-    final value = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: parts[0], minute: parts[1]),
+    final value = await pickWheelTime(
+      context,
+      initial: TimeOfDay(hour: parts[0], minute: parts[1]),
+      title: const {
+        'day_start': '一天从几点开始安排',
+        'day_end': '几点之后不再安排',
+        'daily_review_time': '几点做日终回顾',
+      }[field]!,
     );
     if (value == null) return;
     await attempt(() async {

@@ -27,7 +27,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"time_planner", origin, size)) {
+  // Title is the Chinese app name, escaped so this source stays ASCII.
+  if (!window.Create(L"\x65e5\x7a0b\x4e4b\x95f4", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

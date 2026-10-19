@@ -11,7 +11,18 @@ def report_for(state, day):
     blocks = [b for b in state["blocks"] if datetime.fromisoformat(b["start_at"]).astimezone(zone).date().isoformat() == day]
     feedback_by_block = {f["block_id"]: f for f in state["feedbacks"]}
     labels = {"done": "用户确认完成", "partial": "部分完成", "waiting": "等待结果", "interrupted": "被打断", "not_started": "未开始"}
-    lines = [f"# {day} 日终回顾", "", "## 你的原文", "", original, "", "## 安排与结果", ""]
+    lines = [f"# {day} 日终回顾", "", "## 你的原文", "", original, "", "## 睡眠", ""]
+    nights = [s for s in state.get("sleeps", []) if s.get("woke_at")
+              and datetime.fromisoformat(s["woke_at"]).astimezone(zone).date().isoformat() == day]
+    for night in nights:
+        slept = datetime.fromisoformat(night["slept_at"]).astimezone(zone)
+        woke = datetime.fromisoformat(night["woke_at"]).astimezone(zone)
+        minutes = int((woke - slept).total_seconds() // 60)
+        quality = f"，自评 {night['quality']}/5" if night.get("quality") else ""
+        lines.append(f"- {slept:%m-%d %H:%M} 入睡，{woke:%H:%M} 醒来，共 {minutes // 60} 小时 {minutes % 60} 分{quality}")
+    if not nights:
+        lines.append("没有记录。")
+    lines += ["", "## 安排与结果", ""]
     for block in blocks:
         feedback = feedback_by_block.get(block["id"])
         status = labels[feedback["choice"]] if feedback else "未确认"
@@ -21,7 +32,7 @@ def report_for(state, day):
     if not blocks:
         lines.append("当天没有安排记录。现有任务结果仍未确认。")
     lines += ["", "计时记录、用户反馈与实际交付分别保存；沉默不推定完成。", ""]
-    return {"date": day, "original": original, "markdown": "\n".join(lines), "blocks": blocks,
+    return {"date": day, "original": original, "markdown": "\n".join(lines), "blocks": blocks, "sleeps": nights,
             "feedbacks": [feedback_by_block[b["id"]] for b in blocks if b["id"] in feedback_by_block],
             "version": reviews[-1]["version"] if reviews else 0}
 

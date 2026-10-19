@@ -42,6 +42,8 @@ dependencies:
   uuid: ^4.6.0
   flutter_localizations:
     sdk: flutter
+  window_manager: ^0.5.2
+  screen_retriever: ^0.2.2
 
 dev_dependencies:
   flutter_test:

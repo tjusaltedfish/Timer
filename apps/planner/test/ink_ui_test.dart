@@ -9,39 +9,41 @@ import 'package:time_planner/theme/tokens.dart';
 import 'package:time_planner/widgets/card_wheel.dart';
 
 void main() {
-  test(
-    'the ink system uses only black, white and grey, including project marks',
-    () {
-      for (final p in [InkPalette.light, InkPalette.dark]) {
-        final scheme = buildInkTheme(
-          p == InkPalette.light ? Brightness.light : Brightness.dark,
-        ).colorScheme;
-        for (final color in [
-          p.paper,
-          p.paperRaised,
-          p.inkJiao,
-          p.inkNong,
-          p.inkZhong,
-          p.inkDan,
-          p.inkQing,
-          p.line,
-          p.accent,
-          ...p.projects.values,
-          scheme.primary,
-          scheme.secondary,
-          scheme.tertiary,
-          scheme.error,
-          scheme.primaryFixed,
-          scheme.tertiaryContainer,
-          scheme.surfaceContainerLow,
-        ]) {
-          final value = color.toARGB32();
-          expect((value >> 16) & 255, (value >> 8) & 255);
-          expect((value >> 8) & 255, value & 255);
-        }
+  test('the ink system stays black, white and near-neutral grey', () {
+    for (final p in [InkPalette.light, InkPalette.dark]) {
+      final scheme = buildInkTheme(
+        p == InkPalette.light ? Brightness.light : Brightness.dark,
+      ).colorScheme;
+      for (final color in [
+        p.paper,
+        p.paperRaised,
+        p.inkJiao,
+        p.inkNong,
+        p.inkZhong,
+        p.inkDan,
+        p.inkQing,
+        p.line,
+        p.accent,
+        ...p.marks,
+        scheme.primary,
+        scheme.secondary,
+        scheme.tertiary,
+        scheme.error,
+        scheme.primaryFixed,
+        scheme.tertiaryContainer,
+        scheme.surfaceContainerLow,
+      ]) {
+        // Near-neutral: a faint pine-soot warmth, never a visible hue.
+        final value = color.toARGB32();
+        final channels = [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+        expect(
+          channels.reduce((a, b) => a > b ? a : b) -
+              channels.reduce((a, b) => a < b ? a : b),
+          lessThanOrEqualTo(6),
+        );
       }
-    },
-  );
+    }
+  });
   test('paper and night palettes keep body text readable', () {
     for (final p in [InkPalette.light, InkPalette.dark]) {
       for (final surface in [p.paper, p.paperRaised]) {
