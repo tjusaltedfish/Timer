@@ -215,7 +215,7 @@ extension _BlockCard on _PlannerHomeState {
         key: ValueKey('action.extend.$minutes'),
         onPressed: () => attempt(() async {
           await c.extendSession(s, minutes);
-          message('已增加 $minutes 分钟。后续安排将在同步后检查。');
+          if (!c.connected) message('已增加 $minutes 分钟。后续安排将在同步后检查。');
         }),
         child: Text('再给我 $minutes 分钟'),
       ),

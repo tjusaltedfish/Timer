@@ -129,6 +129,18 @@ extension _SettingsPage on _PlannerHomeState {
                 Text(
                   '可安排范围 ${c.settings['day_start']}—${c.settings['day_end']}。用餐和休息可通过新建「保护时段」设置。',
                 ),
+                SwitchListTile(
+                  key: const Key('settings.auto-adjust'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('允许同日小幅顺延'),
+                  subtitle: const Text(
+                    '后续弹性段每段最多 30 分钟；遇到固定预约、保护时段或约束时先保留原安排。',
+                  ),
+                  value: c.settings['auto_adjust'] as bool? ?? true,
+                  onChanged: (value) => attempt(
+                    () => c.submit('settings.update', {'auto_adjust': value}),
+                  ),
+                ),
                 const SizedBox(height: 14),
                 Wrap(
                   spacing: 8,

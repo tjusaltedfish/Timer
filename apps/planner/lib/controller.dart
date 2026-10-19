@@ -36,6 +36,7 @@ Json blankState() => {
     'day_start': '09:00',
     'day_end': '22:00',
     'daily_review_time': '21:30',
+    'auto_adjust': true,
   },
 };
 
@@ -172,6 +173,7 @@ class PlannerController extends ChangeNotifier {
         'id': const Uuid().v4(),
         'block_id': block['id'],
         'mode': mode,
+        'defer_adjustment': !connected || pending.isNotEmpty,
         'occurred_at': nowUtc.toIso8601String(),
       });
   Future<void> controlSession(Json session, String action) {
@@ -179,6 +181,7 @@ class PlannerController extends ChangeNotifier {
       throw ApiFailure('未知执行操作', 422);
     }
     return submit('session.$action', {
+      'defer_adjustment': !connected || pending.isNotEmpty,
       'id': session['id'],
       'occurred_at': nowUtc.toIso8601String(),
     });
@@ -186,6 +189,7 @@ class PlannerController extends ChangeNotifier {
 
   Future<void> extendSession(Json session, int minutes) =>
       submit('session.extend', {
+        'defer_adjustment': !connected || pending.isNotEmpty,
         'id': session['id'],
         'minutes': minutes,
         'occurred_at': nowUtc.toIso8601String(),

@@ -42,6 +42,7 @@ part 'pages/today_page.dart';
 part 'pages/widget_page.dart';
 part 'widgets/home_layout.dart';
 part 'widgets/block_card.dart';
+part 'widgets/adjustment_notice.dart';
 
 class PlannerHome extends StatefulWidget {
   const PlannerHome({super.key, required this.controller, this.reminders});
@@ -88,6 +89,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
   Timer? clock;
   int _clockMinute = -1;
   int _lastReminderSerial = 0;
+  final _seenAdjustments = <String>{};
   tz.Location get zone => tz.getLocation(c.settings['timezone'] as String);
   DateTime get now => tz.TZDateTime.from(c.nowUtc, zone);
   DateTime local(String value) =>
@@ -117,14 +119,17 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
       }
     });
     c.startPolling();
+    c.addListener(_onAdjustment);
     WidgetsBinding.instance.addObserver(this);
     widget.reminders?.addListener(_openReminder);
     WidgetsBinding.instance.addPostFrameCallback((_) => _openReminder());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onAdjustment());
   }
 
   @override
   void dispose() {
     clock?.cancel();
+    c.removeListener(_onAdjustment);
     widget.reminders?.removeListener(_openReminder);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();

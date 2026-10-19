@@ -47,6 +47,7 @@ void main() {
       now.add(const Duration(minutes: 15)).toIso8601String(),
     );
     expect(session['planned_seconds'], 55 * 60);
+    expect(c.pending.last['payload']['defer_adjustment'], isTrue);
     final originalId = c.pending.last['operation_id'];
     final restarted = PlannerController(storage: storage, clock: () => now);
     await restarted.initialize();

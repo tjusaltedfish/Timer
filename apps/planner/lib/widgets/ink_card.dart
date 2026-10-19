@@ -56,26 +56,33 @@ class InkCard extends StatelessWidget {
             border: dark ? Border.all(color: p.line) : null,
             boxShadow: dark ? null : p.halo,
           ),
-          child: Stack(
-            fit: StackFit.passthrough,
-            children: [
-              if (mark != null)
-                Positioned(
-                  top: 22,
-                  left: 0,
-                  child: Container(
-                    width: 3.5,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      color: mark,
-                      borderRadius: const BorderRadius.horizontal(
-                        right: Radius.circular(3),
+          child: Material(
+            type: MaterialType.transparency,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(radius),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              fit: StackFit.passthrough,
+              children: [
+                if (mark != null)
+                  Positioned(
+                    top: 22,
+                    left: 0,
+                    child: Container(
+                      width: 3.5,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: mark,
+                        borderRadius: const BorderRadius.horizontal(
+                          right: Radius.circular(3),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              Padding(padding: padding, child: child),
-            ],
+                Padding(padding: padding, child: child),
+              ],
+            ),
           ),
         ),
       ],
