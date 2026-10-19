@@ -2,7 +2,7 @@
 
 让秋招自学、毕业实验代码与 Fab 工艺工作形成「计划 → 执行 → 结果反馈 → 调整 → 归档」的闭环。
 
-当前已进入正式实现：Flutter Android/Windows 工程与 Python 电脑后台已有任务、执行和反馈闭环，Windows 原生构建及隔离后台端到端测试通过。完整初版仍在推进，提醒、助手和 Android 构建未完成，详见 [当前状态](docs/STATUS.md)。
+当前已进入正式实现：Flutter Android/Windows 客户端与 Python 电脑后台已有任务、执行和反馈闭环。界面采用[黑白简约水墨](docs/design/ink-system.md)，支持卡片轮盘与桌面时间轴。Windows 原生闭环测试、Android 调试 APK 构建通过；完整初版仍在推进，详见[当前状态](docs/STATUS.md)。
 
 - [接手开发指导（技术 + 水墨审美，优先阅读）](docs/HANDOFF.md)
 - [蓝图入口](docs/vibe-blueprint/00-index.md)
@@ -27,6 +27,7 @@
 - 后台在 `server` 目录运行 `.\.venv\Scripts\python.exe -m pytest`。
 - Flutter 在真实 `apps/planner` 路径执行 `flutter test`；当前 Windows 环境的 `flutter analyze` 使用状态文档中的 ASCII 入口，以避开分析服务器的非 ASCII 路径传输问题。
 - 本机原生构建：`tools/build-windows.ps1 -Mode release`。构建脚本使用已准备的用户目录 SDK 与 ATL，不改全局 PATH。
+- Android 验证包：`tools/build-android.ps1 -Mode debug`，OPPO 使用 `apps/planner/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk`。正式个人签名配置仍待完成。
 - `tools/test-desktop.ps1 -Fixture <隔离测试配置>` 用于真实 Windows 原生闭环；测试配置包含临时设备凭证，保存在忽略提交的 `artifacts`，不要共享。
 
 当前没有可直接分发的双端发布包；旧 HTML 草图仍只是流程演示，不连接正式数据库。

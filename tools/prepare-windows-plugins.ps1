@@ -1,5 +1,6 @@
+param([string] $Project = (Join-Path $PSScriptRoot '..\apps\planner'))
 $ErrorActionPreference = 'Stop'
-$taskApp = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\apps\planner'))
+$taskApp = [System.IO.Path]::GetFullPath($Project)
 $taskMetadata = Get-Content -LiteralPath (Join-Path $taskApp '.flutter-plugins-dependencies') -Raw | ConvertFrom-Json
 $taskLinks = Join-Path $taskApp 'windows\flutter\ephemeral\.plugin_symlinks'
 New-Item -ItemType Directory -Force -Path $taskLinks | Out-Null

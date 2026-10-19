@@ -66,7 +66,17 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
-include(flutter/generated_plugins.cmake)
+if(DEFINED ENV{PLANNER_PLUGIN_SOURCE_ROOT})
+  # Release staging can use physical package copies when junction traversal fails.
+  file(TO_CMAKE_PATH "$ENV{PLANNER_PLUGIN_SOURCE_ROOT}" PLANNER_PLUGIN_SOURCE_ROOT)
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/flutter/generated_plugins.cmake" PLANNER_PLUGIN_RULES)
+  string(REPLACE "flutter/ephemeral/.plugin_symlinks/"
+    "${PLANNER_PLUGIN_SOURCE_ROOT}/" PLANNER_PLUGIN_RULES "${PLANNER_PLUGIN_RULES}")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/planner_plugins.cmake" "${PLANNER_PLUGIN_RULES}")
+  include("${CMAKE_CURRENT_BINARY_DIR}/planner_plugins.cmake")
+else()
+  include(flutter/generated_plugins.cmake)
+endif()
 
 
 # === Installation ===

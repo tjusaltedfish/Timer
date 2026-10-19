@@ -4,6 +4,8 @@
 > 本文件是**唯一的开发入口**：先读完本文，再读 `docs/STATUS.md` 与 `docs/vibe-blueprint/` 中被引用的章节。
 > 本文与旧蓝图冲突时，以本文为准（尤其是视觉部分：旧蓝图的「暖白 + 墨绿」方案已被「简约水墨」替代）。
 
+> **最新用户视觉要求（2026-10-19 续接）**：黑白灰的简约水墨风。实际色表以 `docs/design/ink-system.md` 和 `lib/theme/tokens.dart` 为准；本文后续有关朱砂与淡彩的描述由这条要求覆盖。
+
 ---
 
 ## 0. 铁律（违反任何一条都算返工）
@@ -42,15 +44,15 @@
 
 - `server/`：Python FastAPI + SQLite，**14 个 pytest 本次实际运行全部通过**（`server/.venv`）。
 - `apps/planner/`：Flutter 客户端（Android / Windows / Web）。
-- 工作区有**未提交的改动**（提醒、日历切片、过期处理、结果返回等），git status 中的 `M` 与 `??` 文件都是有效进展，不是垃圾。接手第一步：恢复工具链 → 跑通 Flutter 测试 → 提交这批改动，再开始新工作。
+- 工作区有**未提交的改动**（提醒、日历切片、过期处理、结果返回等），git status 中的 `M` 与 `??` 文件都是有效进展，不是垃圾。这些已有进展已复核并保存为提交 `81c5566`。继续前请以 `docs/STATUS.md` 的最新证据为准。
 
-### 2.2 工具链（重要：已丢失）
+### 2.2 工具链（续接后的实际复核）
 
-`apps/planner/android/local.properties` 指向 `C:\Users\ASUS\AppData\Local\TimePlanner\toolchains\flutter`，但**该目录现在不存在**，整个 `%LOCALAPPDATA%\TimePlanner\` 都不存在（包括 ATL、Android cmdline-tools、ASCII 工作区联接、桌面数据目录）。`STATUS.md` 里「已安装」的描述已过时。
+用户目录工具链实际存在且已使用：Flutter 3.47.7 / Dart 3.13.5、ATL、Android SDK 36.0.0、NDK 28.2.13676358、ASCII 工作区联接。此前缺失的记录已失效。
 
-因此：**Flutter 测试、analyze、Windows/Android 构建本次均无法验证**。接手后先按 §2.3 重建。
+本次 pytest 14 项、Flutter test 20 项、analyze 均通过，Windows 原生闭环回归通过，Android 调试 APK 已生成。详细证据见 `docs/STATUS.md`。
 
-已确认存在：Java Temurin 21.0.9、Git、Python（`server/.venv`）、`~/.android/adbkey`（曾经用过 adb）。
+Android 资产复制在 ASCII 联接路径失败，已实测改用**真实项目路径**加 `--android-project-arg=android.overridePathCheck=true` 成功；使用 `tools/build-android.ps1`。Windows release 的 AOT 编译需使用独立 ASCII 实体目录，当前构建脚本负责准备。
 
 ### 2.3 环境重建步骤
 
