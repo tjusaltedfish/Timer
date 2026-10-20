@@ -54,7 +54,9 @@ HELP = ("我是你的 Timer 助手。\n"
         "· 直接说想安排什么，比如「明晚八点学两小时算法」\n"
         "· 「今天」查看今天的安排\n"
         "· 「确认 编号」照拟办执行，「不必 编号」放下\n"
-        "改动日程前一定会先给你拟办，你确认后才生效。")
+        "· 到点后可回复「完成了」或「再给我15分钟」\n"
+        "· 「今日总结：……」保存原文，「记住：……」保存偏好\n"
+        "AI 提出的日程调整先给拟办；明确的完成、续时和保存指令会直接执行。")
 CONFIRM = re.compile(r"^(确认|照办|照此办理|办|好的?|可以|ok)\s*([0-9a-fA-F]{4})?$", re.IGNORECASE)
 DISMISS = re.compile(r"^(不必|算了|不用了?|放下)\s*([0-9a-fA-F]{4})?$")
 log = logging.getLogger(__name__)
@@ -352,7 +354,7 @@ class WeChatChannel:
         try:
             if accept:
                 result = self.assistant.apply_draft(draft["id"], "wechat")
-                return f"已照此办理：{draft['summary']}（共 {len(result['applied'])} 步）。"
+                return f"已照此办理：{draft['summary']}。"
             self.assistant.dismiss_draft(draft["id"])
             return f"好，放下了：{draft['summary']}。"
         except DomainError as error:

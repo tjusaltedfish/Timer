@@ -111,11 +111,8 @@ class AssistantService:
                 notes.append(error.message if isinstance(error, DomainError) else '安排信息不完整，请补充时间或剩余工作量。')
         drafts = usable
         answer = "拟办已整理好，确认后执行。" if drafts else reply.reply or "收到。"
-        answer = "\n".join([answer, *notes])
-        for short, real_id in refs.items():
-            title = next((v["title"] for group in (state["tasks"], state["blocks"]) for v in group if v["id"] == real_id), None)
-            if title:
-                answer = re.sub(r"\b" + re.escape(short) + r"\b", title, answer)
+        answer = "\n".join([answer, *notes]) if drafts else '\n'.join(notes[:2]) if notes else answer
+        answer = assistant.visible_text(answer, state, refs)
         user_id, reply_id = identifier(), identifier()
         with self.store.connect() as conn:
             assistant.count_call(conn, now, calls)

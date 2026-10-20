@@ -6,6 +6,7 @@ The API key never leaves this computer: it is read from PLANNER_LLM_API_KEY or
 """
 import asyncio
 import json
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal, Union
@@ -248,7 +249,15 @@ class SnoozeWaiting(Loose):
     check_local: str
 
 
-Action = Annotated[Union[ScheduleNew, ScheduleTask, Protect, MoveBlock, Feedback, ControlSession, SnoozeWaiting], Field(discriminator="type")]
+class ResolveWaiting(Loose):
+    type: Literal['resolve_waiting']
+    waiting: str
+    resolution: Literal['done', 'ready']
+    remaining_minutes: int | None = Field(default=None, ge=1, le=100000)
+    outcome_text: str = Field(default='', max_length=4000)
+
+
+Action = Annotated[Union[ScheduleNew, ScheduleTask, Protect, MoveBlock, Feedback, ControlSession, SnoozeWaiting, ResolveWaiting], Field(discriminator="type")]
 
 
 class DraftOut(Loose):
@@ -279,6 +288,7 @@ SYSTEM_PROMPT = """你是用户的私人时间管理助手，帮他把每天的�
 动作只能是以下几种（时间一律用用户时区的 "YYYY-MM-DD HH:MM"）：
 {"type":"control_session","block":"b1","action":"start|pause|resume|end|extend","minutes":15} 开始、暂停、恢复、结束或续时；minutes 只在 extend 必填。结束不是确认完成，之后仍需反馈。
 {"type":"snooze_waiting","waiting":"w1","check_local":"..."} 等待结果尚未回来时，修改同一个检查点，不创建新的完成反馈。
+{"type":"resolve_waiting","waiting":"w1","resolution":"done|ready","remaining_minutes":30,"outcome_text":"..."} 结果已返回，确认完成或仍需投入；ready 必须说明剩余分钟。
 {"type":"schedule_new","title":"...","outcome_criteria":"...","project":"c1（分类编号，可省略）","start_local":"...","minutes":60,"kind":"flexible|fixed"}
 {"type":"schedule_task","task":"t1","start_local":"...","minutes":60}   为已有任务再安排一段
 {"type":"protect","title":"午饭","start_local":"...","minutes":45}       吃饭、休息等保护时段
@@ -384,6 +394,14 @@ def parse_reply(raw):
     return ModelReply.model_validate(json.loads(text))
 
 
+def visible_text(text, state, refs):
+    titles = {v['id']: v['title'] for group in (state.get('tasks', []), state.get('blocks', [])) for v in group}
+    for short, real_id in refs.items():
+        if real_id in titles:
+            text = re.sub(r'(?<![a-zA-Z0-9])' + re.escape(short) + r'(?![a-zA-Z0-9])', lambda _: titles[real_id], text)
+    return text
+
+
 def resolve_drafts(reply, state, refs, now, requested_at=None):
     """Map short ids to real ids and wall times to UTC; drop unusable drafts."""
     zone = ZoneInfo(state["settings"]["timezone"])
@@ -393,7 +411,7 @@ def resolve_drafts(reply, state, refs, now, requested_at=None):
             actions = []
             for action in draft.actions:
                 item = action.model_dump()
-                if item['type'] == 'snooze_waiting':
+                if item['type'] in ('snooze_waiting', 'resolve_waiting'):
                     short = item.pop('waiting')
                     check = next((c for c in state['waiting_checks'] if c['id'] == refs.get(short) and not c.get('resolved_at')), None)
                     if not short.startswith('w') or check is None:
@@ -440,14 +458,20 @@ def resolve_drafts(reply, state, refs, now, requested_at=None):
                 until = item.pop("until_local", None)
                 if until:
                     item["until_at"] = stamp(to_utc(until, zone))
-                    item["minutes"] = min(item["minutes"], int((parse(item["until_at"]) - parse(item["start_at"])).total_seconds() // 60))
-                    if item["minutes"] < 5:
+                    capacity = (parse(item["until_at"]) - parse(item["start_at"])).total_seconds()
+                    item["minutes"] = min(item["minutes"], math.ceil(capacity / 60))
+                    if capacity < 300 or item["minutes"] < 5:
                         raise DomainError("截止前不足 5 分钟，请选择稍后的时段", "DRAFT_PAST", 422)
                 item["label"] = describe(item, state, zone)
                 actions.append(item)
-            resolved.append({"summary": draft.summary, "actions": actions})
+            resolved.append({"summary": visible_text(draft.summary, state, refs), "actions": actions})
         except DomainError as error:
-            notes.append(f"「{draft.summary}」未能整理成可执行的安排（{error.message}）")
+            if error.code == 'DRAFT_PAST':
+                notes.append('这个时刻已经过去了：要补记结果，还是重新安排？')
+            elif '不存在' in error.message:
+                notes.append('对应任务或安排不存在，请明确任务名称。')
+            else:
+                notes.append(error.message)
     return resolved, notes
 
 
@@ -460,6 +484,8 @@ def describe(item, state, zone):
     kind = item["type"]
     if kind == 'snooze_waiting':
         return f"改约结果检查 · {when('check_at')}"
+    if kind == 'resolve_waiting':
+        return '结果已返回 · 确认完成' if item['resolution'] == 'done' else f"结果已返回 · 还需 {item.get('remaining_minutes') or '待确认'} 分钟"
     if kind == 'control_session':
         title = next((b['title'] for b in state['blocks'] if b['id'] == item['block_id']), '当前安排')
         label = {'start': '开始', 'pause': '暂停', 'resume': '继续', 'end': '结束并等待反馈', 'extend': '续时'}[item['action']]
@@ -497,6 +523,11 @@ def draft_operations(state, actions, now):
                     raise DomainError('任务或安排已变化，请按当前状态重新生成', 'STALE_VERSION')
         if kind == 'snooze_waiting':
             operations.append(('waiting.snooze', {'id': item['check_id'], 'version': item['check_version'], 'check_at': future(item['check_at'])}))
+        elif kind == 'resolve_waiting':
+            payload = {'id': item['check_id'], 'resolution': item['resolution'], 'outcome_text': item['outcome_text']}
+            if item.get('remaining_minutes') is not None:
+                payload['remaining_minutes'] = item['remaining_minutes']
+            operations.append(('waiting.resolve', payload))
         elif kind == 'control_session':
             if item['action'] == 'start':
                 operations.append(('session.start', {'id': identifier(), 'block_id': item['block_id']}))

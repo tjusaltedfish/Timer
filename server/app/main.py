@@ -56,7 +56,10 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
             workers.append(asyncio.create_task(wechat_worker()))
             async def review_worker():
                 while True:
-                    await app.state.materials.generate_due()
+                    try:
+                        await app.state.materials.generate_due()
+                    except Exception:
+                        logging.getLogger(__name__).exception('Daily review worker will retry')
                     await asyncio.sleep(60)
             workers.append(asyncio.create_task(review_worker()))
         try:

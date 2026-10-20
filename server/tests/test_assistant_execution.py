@@ -11,17 +11,18 @@ def test_current_minute_becomes_executable_without_missing_the_deadline(client, 
     configure(client)
     task = send(client, 'task.create', title='项目开发', outcome_criteria='可演示版本', remaining_minutes=60)
     model.replies.append((200, {'reply': 't1 剩余60分，你定是否降低标准。', 'drafts': [{
-        'summary': '午前开发', 'actions': [{'type': 'schedule_task', 'task': 't1',
+        'summary': '为 t1 排一段', 'actions': [{'type': 'schedule_task', 'task': 't1',
           'start_local': '2026-10-19 09:00', 'until_local': '2026-10-19 10:00', 'minutes': 60}]}]}))
     reply = client.post('/api/v1/assistant/messages', json={'text': '今天10点前完成项目开发'}).json()['messages'][-1]
     assert len(reply['drafts']) == 1
     assert len(reply['text']) < 40 and 't1' not in reply['text']
     draft = reply['drafts'][0]
+    assert 't1' not in draft['summary'] and '项目开发' in draft['summary']
     assert client.post(f"/api/v1/assistant/drafts/{draft['id']}/apply").status_code == 200
     block = client.get('/api/v1/snapshot').json()['blocks'][0]
     assert block['task_id'] == task['id']
     assert assistant.parse(block['start_at']) > NOW
-    assert assistant.parse(block['end_at']) <= NOW + timedelta(hours=1)
+    assert assistant.parse(block['end_at']) == NOW + timedelta(hours=1)
 
 
 def test_immediate_draft_rebases_on_confirmation_but_absolute_past_is_rejected():
@@ -95,3 +96,18 @@ def test_clock_precision_and_dst_boundaries_are_explicit():
         'start_local': '2026-10-19 09:00', 'until_local': '2026-10-19 10:00', 'minutes': 60}]}]})
     drafts, notes = assistant.resolve_drafts(reply, {'settings': {'timezone': 'America/Los_Angeles'}}, {}, response_at, requested_at=requested)
     assert len(drafts) == 1 and not notes
+
+
+def test_waiting_results_are_resolved_instead_of_duplicating_original_feedback(client, model):
+    configure(client)
+    task = send(client, 'task.create', title='实验', outcome_criteria='输出报告', remaining_minutes=60)
+    b = send(client, 'block.create', task_id=task['id'], start_at=NOW.isoformat(), end_at=(NOW + timedelta(hours=1)).isoformat())
+    session = send(client, 'session.start', block_id=b['id'])
+    send(client, 'session.end', id=session['id'])
+    send(client, 'feedback.create', session_id=session['id'], choice='waiting', check_at=(NOW + timedelta(hours=2)).isoformat())
+    model.replies.append((200, {'reply': '确认结果', 'drafts': [{'summary': '结果返回，确认完成', 'actions': [
+        {'type': 'resolve_waiting', 'waiting': 'w1', 'resolution': 'done', 'outcome_text': '结果已核验'}]}]}))
+    reply = client.post('/api/v1/assistant/messages', json={'text': '结果回来并核验过了，完成了'}).json()['messages'][-1]
+    assert len(reply['drafts']) == 1
+    assert client.post(f"/api/v1/assistant/drafts/{reply['drafts'][0]['id']}/apply").status_code == 200
+    assert client.get('/api/v1/snapshot').json()['tasks'][0]['state'] == 'done'
