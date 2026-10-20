@@ -1,0 +1,47 @@
+# 微信助手接入：需要你本人完成的步骤
+
+适用：公众号接口测试号路线（见 `docs/design/wechat-personal-channel.md` 第 10、11 节）。账号登录、扫码、域名与 DNS 都只能由你本人操作；不要把 appsecret、Key 发到聊天里，直接填进 Timer 电脑端设置。
+
+## 零、电脑上的 Timer
+
+桌面上的「Timer」快捷方式：双击后先确认电脑后台在运行（没有就在后台悄悄启动，日志在 `%LOCALAPPDATA%/TimePlanner/logs`），再打开 Timer 窗口。关掉窗口后台仍在运行，微信回复不中断；重启电脑后需要再双击一次（开机自启尚未做）。
+
+更新：重新打包 `tools/build-windows.ps1 -Mode release` 后，关闭 Timer，运行 `tools/install-timer.ps1`。程序装在 `%USERPROFILE%/Apps/Timer`，数据仍在 `%LOCALAPPDATA%/TimePlanner/data`，更新不会动数据。
+
+## 一、让微信能访问到电脑（域名 + Cloudflare Tunnel）
+
+1. 注册 Cloudflare 免费账号，「添加站点」填你的域名，选 Free 计划。
+2. 到你买域名的注册商后台，把域名的 DNS 服务器（Nameserver）改成 Cloudflare 给你的两个地址；等 Cloudflare 显示「有效」（几分钟到一天不等）。
+3. 告诉我域名已生效，我来在电脑上安装 `cloudflared`；运行 `cloudflared tunnel login` 时会打开浏览器，由你登录 Cloudflare 并选中这个域名授权。
+4. 我会建一条隧道，子域名例如 `timer.你的域名`，**只把 `/wechat/callback` 这一个路径**转到电脑后台（`127.0.0.1:8787`），其他接口一律 404，不对公网开放。
+
+微信要求回调地址使用 80 或 443 端口（以官方说明为准），Cloudflare 提供的 HTTPS 正好是 443。
+
+**已完成（2026-10-19）**：隧道 `timer`（ID `fe2c5622…`）已建，CNAME `timer.studydazi.top` 指向它。`cloudflared` 2026.10.1 来自官方 GitHub 发布并核对 SHA256，装在 `%USERPROFILE%/Apps/cloudflared`；配置 `timer.yml` 只把路径 `^/wechat/callback$` 转到 `127.0.0.1:8787`，其余返回 404。登录凭证 `cert.pem` 与隧道凭证在 `%USERPROFILE%/.cloudflared`，不要分享。外网实测：正确签名回显 200、伪造签名 403、其他接口 404。桌面「Timer」启动时会顺带启动隧道，日志在 `%LOCALAPPDATA%/TimePlanner/logs/tunnel.log`。
+
+
+## 二、申请测试号
+
+5. 浏览器打开 <https://mp.weixin.qq.com/debug/cgi-bin/sandbox?t=sandbox/login>，用微信扫码登录（用哪个号登录都行，它只是测试号的管理者）。
+6. 页面上会看到 **appID** 和 **appsecret**：在 Timer 电脑端「设置 · 微信助手」里填入并保存。
+7. 「测试号二维码」：用**手机大号**扫码关注。以后就在这个测试号的对话里和助手聊。
+8. 「模板消息接口」→ 新增测试模板（可选但建议）：
+   - 模板标题：`Timer 提醒`
+   - 模板内容：`{{content.DATA}}`（必须正好是这个变量名）
+   - 把生成的**模板 ID** 填到 Timer 设置的「提醒模板 ID」。超过 48 小时没跟测试号说话时，提醒会改用模板发送。
+
+## 三、接通并绑定
+
+9. 电脑后台和隧道都在运行时，在测试号页面「接口配置信息」点「修改」：
+   - URL：`https://timer.studydazi.top/wechat/callback`
+   - Token：Timer 设置页「微信助手」里显示的那串（可点复制）
+   - 点「提交」，显示配置成功即通过签名校验。
+10. Timer 设置页点「生成绑定码」，用大号在测试号对话里发送这 6 位数字（10 分钟内）。收到「绑定好了」即完成。之后只回应这个大号。
+11. 点「发一条测试消息」，大号应收到测试消息；设置页下方会显示发送状态。
+12. 若还没做过：在「设置 · 助手」填模型服务地址、模型名和 Key（DeepSeek 或 OpenAI 中转站）。没填时，微信里只能用「今天」「帮助」。
+
+## 日常用法
+
+- 直接说安排：「明晚八点学两小时算法」→ 助手回复【拟办 A1B2】→ 回「确认 A1B2」才会改日程，「不必 A1B2」放下。
+- 「今天」：查看今天的安排；「帮助」：用法。
+- 电脑锁屏不影响收发；电脑关机、后台或隧道没运行时收不到回复。
