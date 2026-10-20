@@ -53,10 +53,11 @@ HINTS = {
 HELP = ("我是你的 Timer 助手。\n"
         "· 直接说想安排什么，比如「明晚八点学两小时算法」\n"
         "· 「今天」查看今天的安排\n"
-        "· 「确认 编号」照拟办执行，「不必 编号」放下\n"
+        "· 我会直接改好日程，不对就回复「撤销」\n"
         "· 到点后可回复「完成了」或「再给我15分钟」\n"
         "· 「今日总结：……」保存原文，「记住：……」保存偏好\n"
-        "AI 提出的日程调整先给拟办；明确的完成、续时和保存指令会直接执行。")
+        "· 「取消 某某」「把午饭挪到一点」也可以直接说")
+UNDO = re.compile(r"^(撤销|撤回|undo)\s*([0-9a-fA-F]{4})?$", re.IGNORECASE)
 CONFIRM = re.compile(r"^(确认|照办|照此办理|办|好的?|可以|ok)\s*([0-9a-fA-F]{4})?$", re.IGNORECASE)
 DISMISS = re.compile(r"^(不必|算了|不用了?|放下)\s*([0-9a-fA-F]{4})?$")
 log = logging.getLogger(__name__)
@@ -313,13 +314,16 @@ class WeChatChannel:
         if compact in ('记忆', '你记住了什么'):
             memories = self.store.state().get('memories', [])
             return '\n'.join(['你明确让我记住的事：', *[m['text'] for m in memories]]) if memories else '目前还没有保存的长期偏好。'
+        undo = UNDO.match(compact)
+        if undo:
+            return self.undo(undo.group(2))
         match = CONFIRM.match(compact) or DISMISS.match(compact)
         if match:
             answer = self.decide(bool(CONFIRM.match(compact)), match.group(2))
             if answer is not None:
                 return answer
         try:
-            rows = await self.assistant.converse(compact, request_id=request_id)
+            rows = await self.assistant.converse(compact, request_id=request_id, device_id="wechat")
         except DomainError as error:
             if error.code == "ASSISTANT_NOT_CONFIGURED":
                 return "模型服务还没在电脑上配置好，我暂时只能回答「今天」「帮助」。"
@@ -328,9 +332,30 @@ class WeChatChannel:
         lines = [reply["text"]]
         for draft in reply["drafts"]:
             code = draft["id"][:4].upper()
-            lines += ["", f"【拟办 {code}】{draft['summary']}", *(f"· {line}" for line in draft["lines"]),
-                      f"回复「确认 {code}」照此办理，「不必 {code}」放下。"]
+            if draft["status"] == "applied":
+                lines += [f"· {line}" for line in draft["lines"]]
+                if draft["undoable"]:
+                    lines.append(f"不对的话回复「撤销 {code}」。")
+            elif draft["status"] == "pending":
+                lines += ["", f"【拟办 {code}】{draft['summary']}", *(f"· {line}" for line in draft["lines"]),
+                          f"回复「确认 {code}」照此办理，「不必 {code}」放下。"]
         return "\n".join(lines)
+
+    def undo(self, code):
+        with self.store.connect() as conn:
+            rows = conn.execute("SELECT d.id, d.summary, d.created_at FROM assistant_drafts d JOIN assistant_undo u "
+                                "ON u.draft_id=d.id WHERE d.status='applied' ORDER BY d.created_at DESC").fetchall()
+        if code:
+            matches = [r for r in rows if r["id"][:4].lower() == code.lower()]
+        else:  # A bare "撤销" means the assistant's latest change, if it is recent.
+            matches = [r for r in rows[:1] if parse(r["created_at"]) >= self.clock() - timedelta(minutes=30)]
+        if len(matches) != 1:
+            return "没有找到可以撤销的这条改动，可能已经撤销过了。请到 Timer 的助手页查看。"
+        try:
+            self.assistant.undo_draft(matches[0]["id"], "wechat")
+        except DomainError as error:
+            return error.message
+        return f"已撤销：{matches[0]['summary']}。"
 
     def decide(self, accept, code):
         with self.store.connect() as conn:

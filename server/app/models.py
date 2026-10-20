@@ -105,6 +105,12 @@ class SessionStart(Input):
     defer_adjustment: bool = False
 
 
+class BlockStatus(Input):
+    """Withdraw one planned block, or put a withdrawn future block back."""
+    id: str
+    version: int = Field(ge=1)
+
+
 class SessionAction(Input):
     id: str
     occurred_at: datetime | None = None
@@ -258,6 +264,7 @@ class PairConfirm(Input):
 class MemorySave(Input):
     id: str = Field(pattern=r"^[a-zA-Z0-9-]{1,80}$")
     text: str = Field(min_length=1, max_length=1000)
+    source: Literal["user", "assistant"] = "user"
 
 
 class MemoryDelete(Input):
@@ -295,6 +302,7 @@ MODELS = {
     "memory.save": MemorySave, "memory.delete": MemoryDelete,
     "task.create": TaskCreate, "task.update": TaskUpdate,
     "block.create": BlockCreate, "block.move": BlockMove,
+    "block.cancel": BlockStatus, "block.restore": BlockStatus,
     "session.start": SessionStart, "session.pause": SessionAction,
     "session.resume": SessionAction, "session.end": SessionAction,
     "session.extend": SessionExtend,

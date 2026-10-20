@@ -162,7 +162,8 @@ def test_retried_pushes_are_processed_once(env):
 def test_conversation_drafts_and_confirmation(env):
     client, app, wechat, model = env
     token = configure(client)["token"]
-    client.post("/api/v1/assistant/config", json={"base_url": "https://llm.example/v1", "model": "m", "api_key": "sk-test-1234567890"})
+    client.post("/api/v1/assistant/config", json={"base_url": "https://llm.example/v1", "model": "m", "api_key": "sk-test-1234567890",
+                                                     "confirm_first": True})
     bind(client, app, token)
     model.replies.append({"reply": "拟办如下。", "drafts": [{"summary": "明早写扫描脚本", "actions": [
         {"type": "schedule_new", "title": "参数扫描脚本", "outcome_criteria": "输出可复现 CSV",
@@ -298,3 +299,26 @@ def test_bind_code_survives_a_backend_restart_and_bad_codes_get_an_answer(tmp_pa
         push(client, token, STRANGER, fresh, msg_id="r4")
         run(client, restarted)
         assert client.get("/api/v1/wechat/config").json()["bound_hint"] == "····9999"
+
+
+def test_assistant_changes_apply_at_once_and_undo_by_reply(env):
+    client, app, wechat, model = env
+    token = configure(client)["token"]
+    client.post("/api/v1/assistant/config", json={"base_url": "https://llm.example/v1", "model": "m", "api_key": "sk-test-1234567890"})
+    bind(client, app, token)
+    model.replies.append({"reply": "已排明早 10:00 写扫描脚本。", "drafts": [{"summary": "明早写扫描脚本", "actions": [
+        {"type": "schedule_new", "title": "参数扫描脚本", "outcome_criteria": "输出可复现 CSV",
+         "start_local": "2026-10-20 10:00", "minutes": 90}]}]})
+    push(client, token, OWNER, "明早十点写扫描脚本", msg_id="a1")
+    run(client, app)
+    reply = wechat.custom[-1][1]["text"]["content"]
+    assert reply.startswith("已排明早 10:00 写扫描脚本。") and "10:00–11:30" in reply and "确认" not in reply
+    assert "撤销 " in reply
+    assert [b["status"] for b in client.get("/api/v1/snapshot").json()["blocks"]] == ["scheduled"]
+    push(client, token, OWNER, "撤销", msg_id="a2")
+    run(client, app)
+    assert wechat.custom[-1][1]["text"]["content"] == "已撤销：明早写扫描脚本。"
+    assert [b["status"] for b in client.get("/api/v1/snapshot").json()["blocks"]] == ["cancelled"]
+    push(client, token, OWNER, "撤销", msg_id="a3")
+    run(client, app)
+    assert "没有找到可以撤销" in wechat.custom[-1][1]["text"]["content"]

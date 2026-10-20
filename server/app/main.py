@@ -284,6 +284,10 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     def assistant_dismiss(draft_id: str, device=Depends(authenticated)):
         return service.dismiss_draft(draft_id)
 
+    @app.post("/api/v1/assistant/drafts/{draft_id}/undo")
+    def assistant_undo(draft_id: str, device=Depends(authenticated)):
+        return service.undo_draft(draft_id, device["id"])
+
     # ---- WeChat official-account channel --------------------------------
     channel = WeChatChannel(store, clock, service, lambda: app.state.wechat_transport)
     app.state.wechat = channel

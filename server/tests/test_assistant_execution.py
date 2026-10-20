@@ -25,6 +25,30 @@ def test_current_minute_becomes_executable_without_missing_the_deadline(client, 
     assert assistant.parse(block['end_at']) == NOW + timedelta(hours=1)
 
 
+def test_user_noon_deadline_example_survives_model_latency_and_confirmation(client, model):
+    configure(client)
+    task = send(client, 'task.create', title='完成时间表开发', outcome_criteria='可运行且通过复核', remaining_minutes=60)
+    current = [NOW + timedelta(hours=2, minutes=10, seconds=35)]
+    client.app.state.assistant.clock = lambda: current[0]
+    model.replies.append((200, {'reply': '还剩60分钟，是否降低标准？', 'drafts': [{
+        'summary': '在12点前为 t1 安排开发', 'actions': [{'type': 'schedule_task', 'task': 't1',
+          'start_local': '2026-10-19 11:10', 'until_local': '2026-10-19 12:00', 'minutes': 60}]}]}))
+    reply = client.post('/api/v1/assistant/messages', json={'text': '今天上午12点之前完成这个项目的开发'}).json()['messages'][-1]
+    assert len(reply['drafts']) == 1
+    assert len(reply['text']) < 40 and '降低' not in reply['text'] and 't1' not in reply['text']
+    # A delayed confirmation must consume the remaining window, not move noon.
+    current[0] += timedelta(minutes=3)
+    response = client.post(f"/api/v1/assistant/drafts/{reply['drafts'][0]['id']}/apply")
+    assert response.status_code == 200, response.text
+    state = client.get('/api/v1/snapshot').json()
+    block = state['blocks'][0]
+    assert assistant.parse(block['start_at']) > current[0]
+    assert assistant.parse(block['end_at']) == NOW + timedelta(hours=3)
+    assert timedelta(minutes=46) < assistant.parse(block['end_at']) - assistant.parse(block['start_at']) < timedelta(minutes=47)
+    assert state['tasks'][0]['id'] == task['id']
+    assert state['tasks'][0]['remaining_minutes'] == 60 and state['tasks'][0]['state'] == 'ready'
+
+
 def test_immediate_draft_rebases_on_confirmation_but_absolute_past_is_rejected():
     state = {'settings': {'timezone': 'UTC'}, 'tasks': [], 'blocks': []}
     reply = assistant.ModelReply.model_validate({'reply': '', 'drafts': [{'summary': '现在', 'actions': [

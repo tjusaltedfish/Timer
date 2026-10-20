@@ -43,7 +43,8 @@ def client(tmp_path, model):
 
 
 def configure(client, **extra):
-    body = {"base_url": "https://relay.example/v1/", "model": "deepseek-chat", "api_key": SECRET, **extra}
+    body = {"base_url": "https://relay.example/v1/", "model": "deepseek-chat", "api_key": SECRET,
+            "confirm_first": True, **extra}
     response = client.post("/api/v1/assistant/config", json=body)
     assert response.status_code == 200, response.text
     return response.json()

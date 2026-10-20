@@ -22,11 +22,12 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS assistant_messages (id TEXT PRIMARY KEY, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assistant_drafts (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, summary TEXT NOT NULL, actions TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assistant_usage (day TEXT PRIMARY KEY, calls INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS assistant_undo (draft_id TEXT PRIMARY KEY, operations TEXT NOT NULL, created_at TEXT NOT NULL);
 """
 
 RETRY_DELAYS = (0, 1.5, 4.0)
 WEEKDAYS = "一二三四五六日"
-DEFAULTS = {"base_url": "", "model": "", "daily_limit": 200, "timeout_seconds": 45}
+DEFAULTS = {"base_url": "", "model": "", "daily_limit": 200, "timeout_seconds": 45, "confirm_first": False}
 
 
 class Strict(BaseModel):
@@ -39,6 +40,7 @@ class AssistantConfigIn(Strict):
     api_key: str | None = Field(default=None, max_length=400)
     clear_key: bool = False
     daily_limit: int | None = Field(default=None, ge=1, le=5000)
+    confirm_first: bool | None = None
 
     @field_validator("base_url")
     @classmethod
@@ -93,11 +95,12 @@ class AssistantSettings:
         return {"configured": bool(conf["base_url"] and conf["model"] and key),
                 "base_url": conf["base_url"], "model": conf["model"],
                 "daily_limit": conf["daily_limit"], "used_today": used_today,
+                "confirm_first": bool(conf["confirm_first"]),
                 "key_source": source, "key_hint": ("····" + key[-4:]) if len(key) >= 8 else ("已设置" if key else "")}
 
     def update(self, data: AssistantConfigIn):
         conf = self.load()
-        for field in ("base_url", "model", "daily_limit"):
+        for field in ("base_url", "model", "daily_limit", "confirm_first"):
             value = getattr(data, field)
             if value is not None:
                 conf[field] = value
@@ -226,6 +229,17 @@ class MoveBlock(Loose):
     type: Literal["move_block"]
     block: str
     start_local: str
+    minutes: int | None = Field(default=None, ge=5, le=600)
+
+
+class CancelBlock(Loose):
+    type: Literal["cancel_block"]
+    block: str
+
+
+class CancelTask(Loose):
+    type: Literal["cancel_task"]
+    task: str
 
 
 class Feedback(Loose):
@@ -258,7 +272,8 @@ class ResolveWaiting(Loose):
     outcome_text: str = Field(default='', max_length=4000)
 
 
-Action = Annotated[Union[ScheduleNew, ScheduleTask, Protect, MoveBlock, Feedback, ControlSession, SnoozeWaiting, ResolveWaiting], Field(discriminator="type")]
+Action = Annotated[Union[ScheduleNew, ScheduleTask, Protect, MoveBlock, CancelBlock, CancelTask, Feedback,
+                         ControlSession, SnoozeWaiting, ResolveWaiting], Field(discriminator="type")]
 
 
 class DraftOut(Loose):
@@ -269,34 +284,50 @@ class DraftOut(Loose):
 class ModelReply(Loose):
     reply: str = Field(default="", max_length=3000)
     drafts: list[DraftOut] = Field(default_factory=list, max_length=5)
+    remember: list[str] = Field(default_factory=list, max_length=3)
 
 
-SYSTEM_PROMPT = """你是用户的私人时间管理助手，帮他把每天的时间安排得有结果、有弹性。
-原则：
-- 每件事都要有可检验的结果（outcome_criteria）；用户没说清楚时，先追问一句，不要替他编造。
-- 只安排在作息范围内，不要占用固定预约(fixed)和保护时段(protected)，不要与已有安排重叠，给休息留空。
-- 任务已有未来安排时优先复用或改期，不要重复创建相同时间段。
-- 不能安排已经过去的时间。
-- 过去的时间只可明确补记结果或重新安排，不能偷偷改成明天。当前以实际执行状态为准，不能同时开始两段。未来计划尊重预约、保护、依赖和截止。用户只说「推迟」时，分清续时、改期还是剩余工作量；必要时只问一句。
-- 用户描述迟到、没做完、在等结果等变化时，先确认事实，再提出调整。
-- 你不能直接修改日程。需要修改时，在 drafts 里给出「拟办」，用户确认后才会生效。绝不说"已经帮你改好了"。
-- 语气平静、温和、简短，不说教、不鸡汤、不用 emoji。reply 通常不超过 60 字。你叫 Timer，是直接、可靠的执行助手。先给可执行安排，必要时只追问一个关键问题。
-- 估时是估计，不是拒绝安排的理由；临近截止先安排可用窗口，不擅自降低验收标准，不长篇讨论。不向用户展示 t1/b1 等内部编号。
-- 用户说现在、马上，start_local 写 "now"。用户说几点之前，额外给 until_local；把用户所说的截止和估计工作量区分，不能承诺已经完成。
-- 长期记忆只来自用户明确保存的偏好，事实以当前日程与带出处的材料/回顾为准，不能从闲聊猜造用户特征。
-只输出一个 JSON 对象，格式：
-{"reply": "给用户看的话", "drafts": [{"summary": "一句话说明这组变化", "actions": [动作...]}]}
-动作只能是以下几种（时间一律用用户时区的 "YYYY-MM-DD HH:MM"）：
-{"type":"control_session","block":"b1","action":"start|pause|resume|end|extend","minutes":15} 开始、暂停、恢复、结束或续时；minutes 只在 extend 必填。结束不是确认完成，之后仍需反馈。
-{"type":"snooze_waiting","waiting":"w1","check_local":"..."} 等待结果尚未回来时，修改同一个检查点，不创建新的完成反馈。
-{"type":"resolve_waiting","waiting":"w1","resolution":"done|ready","remaining_minutes":30,"outcome_text":"..."} 结果已返回，确认完成或仍需投入；ready 必须说明剩余分钟。
-{"type":"schedule_new","title":"...","outcome_criteria":"...","project":"c1（分类编号，可省略）","start_local":"...","minutes":60,"kind":"flexible|fixed"}
-{"type":"schedule_task","task":"t1","start_local":"...","minutes":60}   为已有任务再安排一段
+SYSTEM_PROMPT = """你是 Timer：用户本人的日程执行助理。你的价值是把一句话立刻变成日程上的改动，而不是讨论它。
+
+【性格】干脆、平静、可靠，像跟了他很久的私人助理。只说中文，不寒暄、不说教、不鸡汤、不用 emoji，不复述用户的话，不展示计算过程。
+
+【怎么做事】
+- 指令能看懂就直接给出动作（drafts），并用一句话说明结果，例如「已排 11:10–12:00 做时间表开发，还差约 10 分钟的量。」reply 一般不超过 40 字。
+- 缺的信息能合理推断就用默认值，不要追问：时长默认 60 分钟；没说结果标准时，outcome_criteria 写「完成：标题」；「现在/马上/这就」写 start_local "now"；只说「上午/下午/晚上」就挑该时段第一个空档。
+- 只有在无法推断、而且猜错代价大时才追问，一次只问一个短问题，不给选择题，不要说「你定」。
+- 估时只是参考：截止前时间不够，就把截止前能用的时间排满，用半句话说还差多少；不降低验收标准，不把估时当成不安排的理由。
+- 「取消/删掉/关了/不要了」某段安排用 cancel_block；整件事不做了用 cancel_task。「推迟/挪到」用 move_block，要改时长就带 minutes。
+- 用户说正在做的事做完了、要续时、要暂停，用 control_session / feedback；完成情况以用户的话为准，不替他宣布完成。
+- 过去的时间不能新排；用户补充过去发生的事，用 feedback 记录。不要把过去的时刻偷偷改成明天。
+- 只安排在作息范围内，不与已有安排、固定预约(fixed)和保护时段(protected)重叠；任务已有未来安排时优先改期而不是重复创建。
+- 只用名称称呼任务和安排，绝不向用户展示 t1、b2、c1 这类编号。
+
+【记忆】
+- 上下文里「用户明确保存的偏好」是长期记忆，安排时要遵守（比如「上午做实验」就优先排上午）。
+- 用户在对话中说出关于自己的长期习惯或偏好（作息、擅长的时段、固定安排、称呼、做事方式），把它写成一句话放进 remember，最多 3 条；一次性的安排、情绪、闲聊不要记。
+- 事实以当前日程、执行记录和带出处的回顾/材料为准，不从闲聊猜测用户特征。
+
+只输出一个 JSON 对象：
+{"reply": "给用户看的一句话", "drafts": [{"summary": "这组变化的一句话说明", "actions": [动作...]}], "remember": []}
+动作只能是以下几种（时间一律用用户时区的 "YYYY-MM-DD HH:MM"，或 "now"）：
+{"type":"schedule_new","title":"...","outcome_criteria":"...","project":"c1（分类编号，可省略）","start_local":"...","until_local":"截止时刻，可省略","minutes":60,"kind":"flexible|fixed"}  新建一件事并排上
+{"type":"schedule_task","task":"t1","start_local":"...","until_local":"可省略","minutes":60}   为已有任务排一段
 {"type":"protect","title":"午饭","start_local":"...","minutes":45}       吃饭、休息等保护时段
-{"type":"move_block","block":"b2","start_local":"..."}                 改期，时长不变
+{"type":"move_block","block":"b2","start_local":"...","minutes":90}     改期；minutes 省略则时长不变
+{"type":"cancel_block","block":"b2"}                                     撤下一段尚未开始的安排
+{"type":"cancel_task","task":"t1"}                                       整件事不做了（连同未来安排）
+{"type":"control_session","block":"b1","action":"start|pause|resume|end|extend","minutes":15} 开始、暂停、恢复、结束或续时；minutes 只在 extend 必填。结束不等于完成，之后仍需反馈。
 {"type":"feedback","block":"b2","choice":"done|partial|waiting|interrupted|not_started","outcome_text":"...","remaining_minutes":30,"check_local":"..."}
   partial 和 interrupted 需要 remaining_minutes；waiting 需要 check_local。
-task / block / 分类只能使用下方上下文里出现的编号；没有合适的分类就省略 project。不需要改动时 drafts 为空数组。"""
+{"type":"snooze_waiting","waiting":"w1","check_local":"..."} 等待的结果还没回来，改约同一个检查点。
+{"type":"resolve_waiting","waiting":"w1","resolution":"done|ready","remaining_minutes":30,"outcome_text":"..."} 结果已返回；ready 必须给剩余分钟。
+用户说「几点之前」时，额外给 until_local（截止时刻），minutes 写估计工作量。
+task / block / waiting / 分类只能使用下方上下文里出现的编号；没有合适的分类就省略 project。不需要改动时 drafts 为空数组。"""
+
+MODES = {
+    "auto": "【执行方式】drafts 会被系统立即执行，用户可以一键撤销。reply 用完成时说明做了什么，不要问「确认吗」。",
+    "confirm": "【执行方式】drafts 会作为拟办等用户确认后才生效。reply 说明拟办内容，不要说已经改好了。",
+}
 
 
 def _local(value, zone):
@@ -476,6 +507,13 @@ def resolve_drafts(reply, state, refs, now, requested_at=None):
     return resolved, notes
 
 
+def when_block(block, zone):
+    if "start_at" not in block:
+        return ""
+    at, end = parse(block["start_at"]).astimezone(zone), parse(block["end_at"]).astimezone(zone)
+    return f"{at:%m/%d} 周{WEEKDAYS[at.weekday()]} {at:%H:%M}–{end:%H:%M}"
+
+
 def describe(item, state, zone):
     def when(key, minutes=None):
         at = parse(item[key]).astimezone(zone)
@@ -498,9 +536,14 @@ def describe(item, state, zone):
         return f"再安排 · {when('start_at', item['minutes'])} {title}"
     if kind == "protect":
         return f"留白 · {when('start_at', item['minutes'])} {item['title']}"
+    if kind == "cancel_task":
+        title = next((t["title"] for t in state["tasks"] if t["id"] == item["task_id"]), "任务")
+        return f"不做了 · {title}（未来安排一并撤下）"
     block = next((b for b in state["blocks"] if b["id"] == item["block_id"]), {"title": "时间块"})
     if kind == "move_block":
-        return f"改期 · {block['title']} → {when('start_at')}"
+        return f"改期 · {block['title']} → {when('start_at', item.get('minutes'))}"
+    if kind == "cancel_block":
+        return f"撤下 · {when_block(block, zone)} {block['title']}"
     labels = {"done": "完成了", "partial": "部分完成", "waiting": "等待结果", "interrupted": "被打断", "not_started": "没有开始"}
     return f"记录 · {block['title']}：{labels[item['choice']]}"
 
@@ -561,9 +604,18 @@ def draft_operations(state, actions, now):
         elif kind == "move_block":
             block = find(state, "blocks", item["block_id"])
             start = parse(future(item["start_at"]))
-            length = parse(block["end_at"]) - parse(block["start_at"])
+            length = (timedelta(minutes=item["minutes"]) if item.get("minutes")
+                      else parse(block["end_at"]) - parse(block["start_at"]))
+            # The user named this block, so moving their own fixed or protected time is intended.
             operations.append(("block.move", {"id": block["id"], "version": block["version"],
-                                              "start_at": stamp(start), "end_at": stamp(start + length)}))
+                                              "start_at": stamp(start), "end_at": stamp(start + length),
+                                              "allow_fixed": True}))
+        elif kind == "cancel_block":
+            block = find(state, "blocks", item["block_id"])
+            operations.append(("block.cancel", {"id": block["id"], "version": block["version"]}))
+        elif kind == "cancel_task":
+            task = find(state, "tasks", item["task_id"])
+            operations.append(("task.update", {"id": task["id"], "version": task["version"], "state": "cancelled"}))
         elif kind == "feedback":
             block = find(state, "blocks", item["block_id"])
             session = next((s for s in state["sessions"] if s["block_id"] == block["id"]), None)
@@ -596,12 +648,14 @@ def message_rows(conn, limit=60):
     rows = conn.execute("SELECT * FROM assistant_messages ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,)).fetchall()
     result = []
     for row in reversed(rows):
-        drafts = conn.execute("SELECT * FROM assistant_drafts WHERE message_id=? ORDER BY rowid", (row["id"],)).fetchall()
-        result.append({**dict(row), "drafts": [public_draft(d) for d in drafts]})
+        drafts = conn.execute("SELECT d.*, u.draft_id AS undo FROM assistant_drafts d LEFT JOIN assistant_undo u "
+                              "ON u.draft_id=d.id WHERE d.message_id=? ORDER BY d.rowid", (row["id"],)).fetchall()
+        result.append({**dict(row), "drafts": [public_draft(d, d["status"] == "applied" and d["undo"] is not None)
+                                               for d in drafts]})
     return result
 
 
-def public_draft(row):
+def public_draft(row, undoable=False):
     actions = json.loads(row["actions"])
     return {"id": row["id"], "summary": row["summary"], "status": row["status"],
-            "lines": [a["label"] for a in actions]}
+            "lines": [a["label"] for a in actions], "undoable": undoable}

@@ -165,6 +165,21 @@ def apply(state, operation, device_id, now):
         validate_block(state, candidate, entity["id"], now=now)
         entity.update(candidate)
         entity["version"] += 1
+    elif kind == "block.cancel":
+        entity = find(state, "blocks", data["id"])
+        check_version(entity, data["version"])
+        if entity["status"] != "scheduled" or any(s["block_id"] == entity["id"] for s in state["sessions"]):
+            raise DomainError("这一段已经开始或有记录，不能撤下")
+        entity["status"] = "cancelled"
+        entity["version"] += 1
+    elif kind == "block.restore":
+        entity = find(state, "blocks", data["id"])
+        check_version(entity, data["version"])
+        if entity["status"] != "cancelled" or parse(entity["start_at"]) <= now:
+            raise DomainError("只能恢复尚未开始的已撤下安排")
+        validate_block(state, entity, entity["id"], now=now)
+        entity["status"] = "scheduled"
+        entity["version"] += 1
     elif kind == "session.start":
         block = find(state, "blocks", data["block_id"])
         task = find(state, "tasks", block["task_id"])
@@ -378,7 +393,7 @@ def apply(state, operation, device_id, now):
             raise DomainError("最多保留 50 条偏好，请先整理或删除旧记忆", status=422)
         if any(m["id"] == data["id"] for m in memories):
             raise DomainError("记忆标识已存在")
-        entity = {**data, "source": "user", "created_at": stamp(now)}
+        entity = {**data, "source": data.get("source") or "user", "created_at": stamp(now)}
         memories.append(entity)
     elif kind == "memory.delete":
         entity = find(state, "memories", data["id"])
