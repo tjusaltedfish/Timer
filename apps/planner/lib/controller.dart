@@ -319,6 +319,8 @@ class PlannerController extends ChangeNotifier {
   Future<Json> saveAssistantConfig(Json body) =>
       _assistant('POST', '/config', body);
   Future<Json> testAssistant() => _assistant('POST', '/test', {});
+  Future<List<String>> assistantModels() async =>
+      ((await _assistant('GET', '/models'))['models'] as List).cast<String>();
   Future<List<Json>> assistantMessages() async =>
       ((await _assistant('GET', '/messages'))['messages'] as List).cast<Json>();
   Future<List<Json>> sendAssistant(String text) async =>
@@ -337,6 +339,23 @@ class PlannerController extends ChangeNotifier {
     await _assistant('POST', '/drafts/$id/apply', {});
     await sync();
   }
+
+  // ---- WeChat official-account channel (configured on the computer) ----
+
+  Future<Json> _wechat(String method, String path, [Json? body]) async {
+    if (!configured) {
+      throw ApiFailure('微信助手在电脑上运行，请先在设置里连接电脑。', 409);
+    }
+    return request(method, '/api/v1/wechat$path', body);
+  }
+
+  Future<Json> wechatConfig() => _wechat('GET', '/config');
+  Future<Json> saveWechatConfig(Json body) => _wechat('POST', '/config', body);
+  Future<Json> wechatBindCode() => _wechat('POST', '/bind-code', {});
+  Future<Json> wechatUnbind() => _wechat('POST', '/unbind', {});
+  Future<Json> wechatTest() => _wechat('POST', '/test', {});
+  Future<List<Json>> wechatOutbox() async =>
+      ((await _wechat('GET', '/outbox'))['messages'] as List).cast<Json>();
 
   Future<void> applyProposal(String id, {bool undo = false}) async {
     await sync();

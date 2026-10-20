@@ -50,6 +50,11 @@ extension _SettingsPage on _PlannerHomeState {
             controller: c,
           ),
           const SizedBox(height: 18),
+          WechatSettingsPanel(
+            key: ValueKey('wechat-settings-${c.configured}'),
+            controller: c,
+          ),
+          const SizedBox(height: 18),
           if (widget.reminders != null) ...[
             panel(
               Column(

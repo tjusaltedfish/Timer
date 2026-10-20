@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:uuid/uuid.dart';
 
@@ -37,6 +38,7 @@ part 'pages/week_page.dart';
 part 'pages/settings_page.dart';
 part 'pages/assistant_page.dart';
 part 'pages/assistant_settings.dart';
+part 'pages/wechat_settings.dart';
 part 'pages/review_page.dart';
 part 'pages/today_page.dart';
 part 'pages/widget_page.dart';

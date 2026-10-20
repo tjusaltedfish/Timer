@@ -17,6 +17,7 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
   Json? config;
   String? note;
   bool busy = false, loaded = false, showKey = false;
+  List<String> models = [];
   PlannerController get c => widget.controller;
   bool get desktop => c.state['device']?['role'] == 'desktop';
 
@@ -89,12 +90,23 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
 
   Future<void> _test() => _run(() async {
     final value = await c.testAssistant();
-    if (mounted) {
-      setState(
-        () => note =
-            '连上了：${value['model']} 回复「${value['reply']}」，用时 ${value['latency_ms']} 毫秒。',
-      );
-    }
+    if (!mounted) return;
+    final fixed = value['fixed_base_url'] as String?;
+    if (fixed != null) url.text = fixed;
+    setState(
+      () => note =
+          '${fixed == null ? '' : '服务地址缺了 /v1，已自动改为 $fixed。\n'}'
+          '连上了：${value['model']} 回复「${value['reply']}」，用时 ${value['latency_ms']} 毫秒。',
+    );
+  });
+
+  Future<void> _models() => _run(() async {
+    final value = await c.assistantModels();
+    if (!mounted) return;
+    setState(() {
+      models = value;
+      note = value.isEmpty ? '这个服务没有提供模型列表，请按服务商文档填写模型名。' : null;
+    });
   });
 
   @override
@@ -163,11 +175,33 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
               TextField(
                 key: const Key('assistant.model'),
                 controller: model,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: '模型名',
                   hintText: '例如 deepseek-chat，以服务商文档为准',
+                  suffixIcon: TextButton(
+                    onPressed: busy || (config?['key_hint'] ?? '').isEmpty
+                        ? null
+                        : _models,
+                    child: const Text('可用模型'),
+                  ),
                 ),
               ),
+              if (models.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final id in models)
+                        ChoiceChip(
+                          label: Text(id),
+                          selected: model.text == id,
+                          onSelected: (_) => setState(() => model.text = id),
+                        ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 12),
               TextField(
                 key: const Key('assistant.key'),
