@@ -10,10 +10,10 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
-from . import assistant
+from . import assistant, releases
 from .assistant_service import AssistantService
 from .wechat import WeChatChannel, WeChatConfigIn, parse_message, signature_ok
 from .domain import DomainError, apply, stamp, identifier, parse
@@ -60,7 +60,8 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                 with suppress(asyncio.CancelledError):
                     await worker
 
-    app = FastAPI(title="个人弹性日程助手", version="0.1.0", lifespan=lifespan)
+    version = releases.source_version()
+    app = FastAPI(title="个人弹性日程助手", version=version, lifespan=lifespan)
     app.state.store = store
     app.state.desktop_token = store.desktop_token
     pairing_attempts = {}
@@ -96,7 +97,8 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "version": "0.1.0"}
+        latest = releases.read_latest(store.directory)
+        return {"status": "ok", "version": version, "app_latest": latest["version"] if latest else None}
 
     @app.get("/api/v1/snapshot")
     def snapshot(device=Depends(authenticated)):
@@ -104,6 +106,9 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         state = store.state()
         state["server_time"] = stamp(clock())
         state["device"] = device
+        latest = releases.read_latest(store.directory)
+        state["server_version"] = version
+        state["app_latest"] = releases.public(latest)
         return state
 
     @app.post("/api/v1/pairing/code")
@@ -118,7 +123,10 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     @app.post("/api/v1/pairing/confirm")
     def pairing_confirm(data: PairConfirm, request: Request):
         address = request.client.host if request.client else "unknown"
-        attempts = [at for at in pairing_attempts.get(address, []) if clock() - at < timedelta(minutes=1)]
+        if address in ("127.0.0.1", "::1") and request.headers.get("cf-connecting-ip"):
+            # Through the local Cloudflare tunnel every caller looks like localhost.
+            address = request.headers["cf-connecting-ip"]
+        attempts =[at for at in pairing_attempts.get(address, []) if clock() - at < timedelta(minutes=1)]
         if len(attempts) >= 10:
             raise DomainError("尝试过多，请一分钟后重试", "RATE_LIMITED", 429)
         pairing_attempts[address] = [*attempts, clock()]
@@ -314,6 +322,24 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     @app.get("/api/v1/wechat/outbox")
     def wechat_outbox(device=Depends(desktop)):
         return {"messages": channel.outbox()}
+
+    # ---- Phone app releases (published by tools/release.ps1) -------------
+    @app.get("/api/v1/app/latest")
+    def app_latest(device=Depends(authenticated)):
+        latest = releases.read_latest(store.directory)
+        if not latest:
+            raise DomainError("电脑上还没有发布手机版安装包", "NO_RELEASE", 404)
+        return releases.public(latest)
+
+    @app.get("/api/v1/app/download")
+    def app_download(device=Depends(authenticated)):
+        latest = releases.read_latest(store.directory)
+        if not latest:
+            raise DomainError("电脑上还没有发布手机版安装包", "NO_RELEASE", 404)
+        return FileResponse(releases.apk_path(store.directory, latest),
+                            media_type="application/vnd.android.package-archive",
+                            filename=latest["file"],
+                            headers={"X-Timer-Sha256": latest["sha256"], "X-Timer-Version": latest["version"]})
 
     return app
 

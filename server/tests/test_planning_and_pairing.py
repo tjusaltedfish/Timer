@@ -62,3 +62,18 @@ def test_unfinished_dependency_is_not_assumed_done(client):
     assert not response["new_blocks"]
     assert response["unscheduled_items"][0]["reason"]
 
+
+
+def test_pairing_limit_counts_each_tunnel_caller_separately(tmp_path):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    app = create_app(tmp_path, background=False)
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        for _ in range(10):
+            client.post("/api/v1/pairing/confirm", json={"code": "AAAAAAAA", "name": "x"},
+                        headers={"cf-connecting-ip": "203.0.113.5"})
+        blocked = client.post("/api/v1/pairing/confirm", json={"code": "AAAAAAAA", "name": "x"},
+                              headers={"cf-connecting-ip": "203.0.113.5"})
+        other = client.post("/api/v1/pairing/confirm", json={"code": "AAAAAAAA", "name": "x"},
+                            headers={"cf-connecting-ip": "198.51.100.7"})
+        assert blocked.status_code == 429 and other.status_code == 401
