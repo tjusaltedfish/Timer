@@ -13,7 +13,10 @@ extension _TaskSheet on _PlannerHomeState {
       text: existing?['outcome_criteria'] ?? '',
     );
     final current = now;
-    final earliest = InkDateTimeWheel.ceilTo(current, 5);
+    final earliest = InkDateTimeWheel.ceilTo(
+      current.add(const Duration(seconds: 1)),
+      5,
+    );
     DateTime initial;
     if (start != null) {
       final wall = tz.TZDateTime.from(start, zone);

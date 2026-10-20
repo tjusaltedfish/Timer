@@ -77,6 +77,19 @@ extension _BlockCard on _PlannerHomeState {
                           ),
                         ),
                         if (seal != null) Seal(seal, label: blockStatus(block)),
+                        if (focused && t != null)
+                          PopupMenuButton<String>(
+                            tooltip: '待办操作',
+                            onSelected: (value) =>
+                                value == 'edit' ? editTask(t) : deleteTask(t),
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(value: 'edit', child: Text('编辑待办')),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text('删除待办'),
+                              ),
+                            ],
+                          ),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -185,12 +198,18 @@ extension _BlockCard on _PlannerHomeState {
         spacing: 8,
         runSpacing: 8,
         children: [
-          FilledButton.icon(
-            key: const Key('action.start'),
-            onPressed: () => startBlock(block),
-            icon: const Icon(Icons.play_arrow_outlined),
-            label: const Text('开始这一段'),
-          ),
+          if (DateTime.parse(block['end_at']).isAfter(c.nowUtc))
+            FilledButton.icon(
+              key: const Key('action.start'),
+              onPressed: () => startBlock(block),
+              icon: const Icon(Icons.play_arrow_outlined),
+              label: const Text('开始这一段'),
+            ),
+          if (!DateTime.parse(block['end_at']).isAfter(c.nowUtc))
+            FilledButton(
+              onPressed: () => feedbackDialog(block),
+              child: const Text('补记这一段的结果'),
+            ),
           TextButton(
             onPressed: () => attempt(
               () => c.submit('feedback.create', {
@@ -262,7 +281,21 @@ extension _BlockCard on _PlannerHomeState {
       if (chosen == null) return;
       mode = chosen;
     }
-    await attempt(() => c.startBlock(block, mode: mode));
+    await attempt(() async {
+      await c.startBlock(block, mode: mode);
+      if (!mounted) return;
+      update(() {
+        page = 0;
+        selectedBlock = block['id'];
+      });
+      unawaited(HapticFeedback.lightImpact());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text('已进入专注 · ${block['title']}'),
+        ),
+      );
+    });
   }
 
   Widget blockTile(Json block) {

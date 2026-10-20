@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:uuid/uuid.dart';
 
@@ -9,6 +11,7 @@ import 'controller.dart';
 import 'dialogs.dart';
 import 'calendar.dart';
 import 'week_calendar.dart';
+import 'widgets/week_overview.dart';
 import 'reminders.dart';
 import 'updates.dart';
 
@@ -46,6 +49,7 @@ part 'pages/widget_page.dart';
 part 'widgets/home_layout.dart';
 part 'widgets/block_card.dart';
 part 'widgets/adjustment_notice.dart';
+part 'widgets/focus_panel.dart';
 part 'widgets/update_banner.dart';
 
 class PlannerHome extends StatefulWidget {
@@ -67,6 +71,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
   DesktopWindow get desktop => DesktopWindow.instance;
   int page = 0;
   bool listMode = false;
+  bool weekDetail = false;
   InkPalette get palette => context.inkPalette;
   Color get ink => palette.inkJiao;
   Color get green => palette.inkJiao;
@@ -123,7 +128,10 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
     final today = now;
     selectedDay = DateTime(today.year, today.month, today.day);
     clock = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted && (c.activeSession != null || now.minute != _clockMinute)) {
+      if (mounted &&
+          (page == 0 ||
+              c.activeSession != null ||
+              now.minute != _clockMinute)) {
         _clockMinute = now.minute;
         update(() {});
       }
@@ -276,7 +284,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
         settingsPage,
       ][page]();
       final title = page == 0
-          ? '${selectedDay.month}月${selectedDay.day}日 · ${weekdays[selectedDay.weekday - 1]}'
+          ? '日程之间'
           : page == 5
           ? '设置'
           : labels[page];
@@ -306,16 +314,6 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
-                  if (page == 0)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        daySummary,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
                 ],
               ),
             ),

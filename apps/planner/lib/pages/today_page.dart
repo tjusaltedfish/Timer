@@ -69,7 +69,66 @@ extension _TodayPage on _PlannerHomeState {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          dateStrip(),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      hm(now),
+                      key: const Key('home.clock'),
+                      style: TextStyle(
+                        fontFamily: 'WenKai',
+                        fontSize: 64,
+                        height: 1.08,
+                        color: palette.inkJiao,
+                      ),
+                    ),
+                    Text(
+                      '${now.month}月${now.day}日 ${weekdays[now.weekday - 1]} · 此刻',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: '睡眠记录',
+                onPressed: () => sleepDialog(),
+                icon: const Icon(Icons.bedtime_outlined),
+              ),
+              if (dateKey(now) != dateKey(selectedDay))
+                TextButton(
+                  onPressed: () => selectDate(now),
+                  child: const Text('回到今天'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (c.activeSession == null) dateStrip(),
+          if (widget.reminders case final r?
+              when r.driver.schedulesInSystem && !r.enabled)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('reminders.enable'),
+                onPressed: () => attempt(r.enable),
+                icon: const Icon(Icons.notifications_none, size: 18),
+                label: const Text('开启手机开始与结束提醒'),
+              ),
+            ),
+          if (c.activeSession == null && dateKey(now) != dateKey(selectedDay))
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '正在查看 ${selectedDay.month}月${selectedDay.day}日 ${weekdays[selectedDay.weekday - 1]}',
+              ),
+            ),
+          if (c.activeSession != null) ...[
+            const SizedBox(height: 12),
+            Expanded(child: focusPanel(c.activeSession!)),
+          ],
           if (awaiting.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 12),
@@ -91,53 +150,53 @@ extension _TodayPage on _PlannerHomeState {
                 ),
               ),
             ),
-          const SizedBox(height: 10),
-          sleepBar(),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Text('此刻', style: Theme.of(context).textTheme.titleMedium),
-              const Spacer(),
-              _ModeSwitch(
-                list: listMode,
-                onChanged: (value) => update(() => listMode = value),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          const BrushDivider(),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, bounds) {
-                if (MediaQuery.sizeOf(context).width < 1000) {
-                  return listMode ? listing() : wheel();
-                }
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 5, child: listMode ? listing() : wheel()),
-                    const SizedBox(width: 32),
-                    Expanded(
-                      flex: 7,
-                      child: InkTimeline(
-                        blocks: items,
-                        tasks: c.tasks,
-                        zone: zone,
-                        day: selectedDay,
-                        now: now,
-                        dayStart: c.settings['day_start'],
-                        dayEnd: c.settings['day_end'],
-                        onBlockTap: blockDetails,
-                        markOf: blockMark,
-                        onSlotPicked: (start, minutes) =>
-                            taskDialog(start: start, minutes: minutes),
-                      ),
-                    ),
-                  ],
-                );
-              },
+          if (c.activeSession == null) ...[
+            Row(
+              children: [
+                Text('当日安排', style: Theme.of(context).textTheme.titleMedium),
+                const Spacer(),
+                _ModeSwitch(
+                  list: listMode,
+                  onChanged: (value) => update(() => listMode = value),
+                ),
+              ],
             ),
-          ),
+            const SizedBox(height: 4),
+            const BrushDivider(),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, bounds) {
+                  if (MediaQuery.sizeOf(context).width < 1000) {
+                    return listMode ? listing() : wheel();
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 5, child: listMode ? listing() : wheel()),
+                      const SizedBox(width: 32),
+                      Expanded(
+                        flex: 7,
+                        child: InkTimeline(
+                          blocks: items,
+                          tasks: c.tasks,
+                          zone: zone,
+                          day: selectedDay,
+                          now: now,
+                          dayStart: c.settings['day_start'],
+                          dayEnd: c.settings['day_end'],
+                          onBlockTap: blockDetails,
+                          markOf: blockMark,
+                          onSlotPicked: (start, minutes) =>
+                              taskDialog(start: start, minutes: minutes),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ],
       ),
     );

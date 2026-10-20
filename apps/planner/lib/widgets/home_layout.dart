@@ -44,56 +44,55 @@ extension _HomeLayout on _PlannerHomeState {
         );
       }
     },
-    child: Column(
-      children: [
-        weekNav(),
-        Row(
-          children: List.generate(7, (i) {
-            final date = monday.add(Duration(days: i));
-            final selected = dateKey(date) == dateKey(selectedDay);
-            return Expanded(
-              child: Semantics(
-                selected: selected,
-                button: true,
-                label: '${date.month}月${date.day}日 ${weekdays[i]}',
-                child: InkWell(
-                  onTap: () => selectDate(date),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Column(
-                      children: [
-                        Text(
-                          weekdays[i],
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                        Text(
-                          '${date.day}',
-                          style: TextStyle(
-                            fontFamily: 'WenKai',
-                            fontSize: 24,
-                            color: palette.inkJiao,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Container(
-                          width: 4,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: selected
-                                ? palette.accent
-                                : palette.accent.withValues(alpha: 0),
-                          ),
-                        ),
-                      ],
+    child: Row(
+      children: List.generate(7, (i) {
+        final date = DateTime(monday.year, monday.month, monday.day + i);
+        final selected = dateKey(date) == dateKey(selectedDay);
+        final today = dateKey(date) == dateKey(now);
+        return Expanded(
+          child: Semantics(
+            selected: selected,
+            button: true,
+            label:
+                '${date.month}月${date.day}日 ${weekdays[i]}${today ? ' 今天' : ''}${selected ? ' 已选中' : ''}',
+            child: InkWell(
+              key: ValueKey('day.${dateKey(date)}'),
+              onTap: () => selectDate(date),
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+                padding: const EdgeInsets.symmetric(vertical: 7),
+                decoration: BoxDecoration(
+                  color: selected ? palette.inkJiao : null,
+                  borderRadius: BorderRadius.circular(12),
+                  border: today && !selected
+                      ? Border.all(color: palette.inkZhong)
+                      : null,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      today ? '今天' : weekdays[i].replaceFirst('周', ''),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: selected ? palette.paper : palette.inkZhong,
+                      ),
                     ),
-                  ),
+                    Text(
+                      '${date.day}',
+                      style: TextStyle(
+                        fontSize: 18,
+                        color: selected ? palette.paper : palette.inkJiao,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            );
-          }),
-        ),
-      ],
+            ),
+          ),
+        );
+      }),
     ),
   );
 

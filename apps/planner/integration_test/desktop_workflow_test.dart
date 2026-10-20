@@ -25,7 +25,12 @@ void main() {
       );
       final fixture =
           jsonDecode(await File(fixturePath!).readAsString()) as Json;
-      final controller = PlannerController(storage: MemoryStore());
+      final controller = PlannerController(
+        storage: MemoryStore(),
+        clock: fixture['clock'] == null
+            ? null
+            : () => DateTime.parse(fixture['clock']),
+      );
       await controller.initialize();
       await controller.connect(fixture['server_url'], fixture['token']);
       expect(controller.connected, isTrue);
@@ -67,6 +72,8 @@ void main() {
       await controller.sync();
       expect(controller.pending, isEmpty);
       expect(controller.tasks.single['title'], '原生界面验收任务');
+      await tester.pumpAndSettle();
+      await capture('home-desktop');
       final primaryTask = controller.tasks.single['id'];
       final followingStart = DateTime.parse(controller.blocks.single['end_at']);
       await controller.submit('task.create', {
@@ -92,6 +99,11 @@ void main() {
       await controller.sync();
       expect(controller.sessions.single['state'], 'running');
       await tester.pumpAndSettle();
+      if (find.byType(SnackBar).evaluate().isNotEmpty) {
+        await tester.fling(find.byType(SnackBar), const Offset(0, 180), 1000);
+        await tester.pumpAndSettle();
+      }
+      await capture('focus-desktop');
       await tester.tap(find.byKey(const Key('action.extend.15')));
       await tester.pumpAndSettle();
       await controller.sync();
@@ -159,6 +171,74 @@ void main() {
       );
       expect(changed['resolved_at'], isNull);
       expect(changed['version'], 2);
+      if (fixture['review_mock'] == true) {
+        final day = controller.blocks.first['start_at'].substring(0, 10);
+        final material = await controller.uploadMaterial(
+          'notes.md',
+          day,
+          '本次实验结果待验证',
+          true,
+          utf8.encode('已记录偏压参数，侧壁角度需要进一步核验。'),
+        );
+        await controller.generateReview(day, '今天提交运行，还在等待输出。', [
+          material['id'],
+        ], 'native-review-001');
+        expect(
+          (controller.state['analyses'] as List).single['text'],
+          contains('材料'),
+        );
+        for (final offset in [1, 2, 4, 6]) {
+          final start = DateTime.parse(fixture['clock'])
+              .add(Duration(days: offset, hours: offset));
+          await controller.submit('task.create', {
+            'id': 'week-task-$offset',
+            'title': '本周实验 $offset',
+            'outcome_criteria': '记录数据',
+            'remaining_minutes': 60,
+          });
+          await controller.submit('block.create', {
+            'id': 'week-block-$offset',
+            'task_id': 'week-task-$offset',
+            'kind': 'flexible',
+            'start_at': start.toIso8601String(),
+            'end_at': start.add(const Duration(hours: 1)).toIso8601String(),
+            'timezone': controller.settings['timezone'],
+          });
+        }
+        await controller.sync();
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await tester.tap(find.text('今日'));
+        await tester.pumpAndSettle();
+        await capture('home-phone');
+        await tester.tap(find.text('一周'));
+        await tester.pumpAndSettle();
+        await capture('week-phone');
+        await tester.tap(find.text('回顾'));
+        await tester.pumpAndSettle();
+        await capture('review-phone');
+        await tester.ensureVisible(find.textContaining('材料').last);
+        await tester.tap(find.text('诸事'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('task.delete.native-next-task')),
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('task.delete.native-next-task')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('task.confirm-delete')));
+        await tester.pumpAndSettle();
+        await controller.sync();
+        expect(
+          controller.tasks.firstWhere(
+            (t) => t['id'] == 'native-next-task',
+          )['state'],
+          'cancelled',
+        );
+      }
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       controller.dispose();

@@ -1,32 +1,72 @@
 part of '../home.dart';
 
 extension _WeekPage on _PlannerHomeState {
-  Widget weekPage() => SingleChildScrollView(
-    child: padded(
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          weekNav(),
-          const SizedBox(height: 8),
-          WeekCalendar(
-            blocks: c.blocks,
-            tasks: c.tasks,
-            zone: zone,
-            selectedDay: selectedDay,
-            now: now,
-            markOf: blockMark,
-            onSlotPicked: (start, minutes) =>
-                taskDialog(start: start, minutes: minutes),
-            dayStart: c.settings['day_start'],
-            dayEnd: c.settings['day_end'],
-            onSelectDay: selectDate,
-            onBlockTap: blockDetails,
+  Widget weekPage() => MediaQuery.sizeOf(context).width < 600 && !weekDetail
+      ? padded(
+          Column(
+            children: [
+              weekNav(),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '深墨是安排 · 点日期看明细',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => update(() => weekDetail = true),
+                    child: const Text('详细课表'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Expanded(
+                child: WeekOverview(
+                  blocks: c.blocks,
+                  day: selectedDay,
+                  now: now,
+                  zone: zone,
+                  onSelectDay: selectDate,
+                  onBlockTap: blockDetails,
+                  dayStart: c.settings['day_start'],
+                  dayEnd: c.settings['day_end'],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 70),
-        ],
-      ),
-    ),
-  );
+        )
+      : SingleChildScrollView(
+          child: padded(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                weekNav(),
+                if (MediaQuery.sizeOf(context).width < 600)
+                  TextButton(
+                    onPressed: () => update(() => weekDetail = false),
+                    child: const Text('返回整周总览'),
+                  ),
+                const SizedBox(height: 8),
+                WeekCalendar(
+                  blocks: c.blocks,
+                  tasks: c.tasks,
+                  zone: zone,
+                  selectedDay: selectedDay,
+                  now: now,
+                  markOf: blockMark,
+                  onSlotPicked: (start, minutes) =>
+                      taskDialog(start: start, minutes: minutes),
+                  dayStart: c.settings['day_start'],
+                  dayEnd: c.settings['day_end'],
+                  onSelectDay: selectDate,
+                  onBlockTap: blockDetails,
+                ),
+                const SizedBox(height: 70),
+              ],
+            ),
+          ),
+        );
 
   Future<tz.TZDateTime> resolvePlannedTime(
     DateTime date,

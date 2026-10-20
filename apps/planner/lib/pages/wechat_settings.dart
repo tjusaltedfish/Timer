@@ -29,6 +29,7 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
     'failed': '没发出去',
     'unknown': '不确定是否送达',
     'expired': '已过期',
+    'cancelled': '已撤下',
   };
 
   @override
@@ -175,6 +176,20 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
                 ),
               ),
               const SizedBox(height: 14),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('主动提醒与日终收尾'),
+                subtitle: const Text('新增待办、进入专注、到点问结果和等待检查点。超过互动窗口时需要配置模板。'),
+                value: config?['proactive_enabled'] as bool? ?? true,
+                onChanged: busy
+                    ? null
+                    : (value) => _run(() async {
+                        final updated = await c.saveWechatConfig({
+                          'proactive_enabled': value,
+                        });
+                        if (mounted) setState(() => config = updated);
+                      }),
+              ),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,

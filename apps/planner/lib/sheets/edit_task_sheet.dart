@@ -1,6 +1,36 @@
 part of '../home.dart';
 
 extension _EditTaskSheet on _PlannerHomeState {
+  Future<void> deleteTask(Json t) async {
+    final confirmed = await showOwnedDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这项待办？'),
+        content: Text('「${t['title']}」及未来安排将被撤下，相关提醒会取消。已有投入和结果记录仍保留在历史中。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('保留'),
+          ),
+          FilledButton(
+            key: const Key('task.confirm-delete'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除待办'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await attempt(() async {
+      await c.submit('task.update', {
+        'id': t['id'],
+        'version': t['version'],
+        'state': 'cancelled',
+      });
+      message('已删除待办，未来安排和提醒已撤下。');
+    });
+  }
+
   Future<void> editTask(Json t) async {
     final title = TextEditingController(text: t['title']),
         goal = TextEditingController(text: t['outcome_criteria']);
@@ -41,28 +71,39 @@ extension _EditTaskSheet on _PlannerHomeState {
             ),
           ),
           actions: [
+            if (t['state'] == 'done')
+              TextButton(
+                onPressed: () => attempt(() async {
+                  await c.submit('task.update', {
+                    'id': t['id'],
+                    'version': t['version'],
+                    'state': 'ready',
+                  });
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                }),
+                child: const Text('明确重新打开'),
+              ),
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text('返回'),
             ),
             TextButton(
+              key: ValueKey('task.delete.${t['id']}'),
               onPressed: () async {
-                try {
-                  await c.submit('task.update', {
-                    'id': t['id'],
-                    'version': t['version'],
-                    'state': ['done', 'cancelled'].contains(t['state'])
-                        ? 'ready'
-                        : 'cancelled',
-                  });
-                  if (dialogContext.mounted) Navigator.pop(dialogContext);
-                } catch (e) {
-                  setDialog(() => error = e.toString());
+                if (t['state'] == 'cancelled') {
+                  await attempt(
+                    () => c.submit('task.update', {
+                      'id': t['id'],
+                      'version': t['version'],
+                      'state': 'ready',
+                    }),
+                  );
+                } else {
+                  Navigator.pop(dialogContext);
+                  await deleteTask(t);
                 }
               },
-              child: Text(
-                ['done', 'cancelled'].contains(t['state']) ? '明确重新打开' : '取消任务',
-              ),
+              child: Text(t['state'] == 'cancelled' ? '重新打开' : '删除待办'),
             ),
             FilledButton(
               onPressed: () async {

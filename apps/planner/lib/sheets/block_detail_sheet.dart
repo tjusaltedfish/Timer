@@ -32,6 +32,24 @@ extension _BlockDetailSheet on _PlannerHomeState {
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
+                editTask(t);
+              },
+              child: const Text('编辑待办'),
+            ),
+          if (t != null && t['state'] != 'cancelled')
+            TextButton(
+              key: ValueKey('task.delete.${t['id']}'),
+              onPressed: () {
+                Navigator.pop(context);
+                deleteTask(t);
+              },
+              child: const Text('删除待办'),
+            ),
+
+          if (t != null)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
                 replanDialog(t);
               },
               child: const Text('弹性调整'),

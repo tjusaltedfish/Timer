@@ -122,6 +122,83 @@ class _AssistantPanelState extends State<AssistantPanel> {
     }
   }
 
+  Future<void> showMemories() async {
+    final memoryText = TextEditingController();
+    String? error;
+    await showOwnedDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialog) => AlertDialog(
+          title: const Text('助手记住的事'),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('只保存你明确提供的偏好。日程、回顾和材料另作为事实来源。'),
+                  for (final m
+                      in (c.state['memories'] as List? ?? []).cast<Json>())
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(m['text']),
+                      trailing: IconButton(
+                        tooltip: '删除记忆',
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () async {
+                          try {
+                            await c.submit('memory.delete', {'id': m['id']});
+                            if (context.mounted) setDialog(() {});
+                          } catch (e) {
+                            if (context.mounted) {
+                              setDialog(() => error = e.toString());
+                            }
+                          }
+                        },
+                      ),
+                    ),
+                  TextField(
+                    controller: memoryText,
+                    maxLength: 1000,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: '偏好或长期目标',
+                      hintText: '例如：上午优先做实验，回答简短',
+                    ),
+                  ),
+                  if (error != null) Text(error!),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                if (memoryText.text.trim().isEmpty) return;
+                try {
+                  await c.submit('memory.save', {
+                    'id': const Uuid().v4(),
+                    'text': memoryText.text.trim(),
+                  });
+                  memoryText.clear();
+                  if (context.mounted) setDialog(() => error = null);
+                } catch (e) {
+                  if (context.mounted) setDialog(() => error = e.toString());
+                }
+              },
+              child: const Text('记住'),
+            ),
+          ],
+        ),
+      ),
+    );
+    memoryText.dispose();
+  }
+
   Future<void> decide(Json draft, bool accept) async {
     setState(() => busyDrafts.add(draft['id']));
     try {
@@ -200,6 +277,15 @@ class _AssistantPanelState extends State<AssistantPanel> {
         constraints: const BoxConstraints(maxWidth: 760),
         child: Column(
           children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const Key('assistant.memory'),
+                onPressed: showMemories,
+                icon: const Icon(Icons.bookmark_outline, size: 18),
+                label: const Text('记忆'),
+              ),
+            ),
             Expanded(
               child: messages.isEmpty
                   ? ListView(

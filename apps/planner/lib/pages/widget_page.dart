@@ -171,7 +171,21 @@ extension _WidgetPage on _PlannerHomeState {
                 ),
               ),
             ),
-          Text(status, style: theme.textTheme.bodySmall),
+          Row(
+            children: [
+              Expanded(child: Text(status, style: theme.textTheme.bodySmall)),
+              if (t != null)
+                PopupMenuButton<String>(
+                  tooltip: '待办操作',
+                  onSelected: (value) =>
+                      value == 'edit' ? editTask(t) : deleteTask(t),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('编辑待办')),
+                    PopupMenuItem(value: 'delete', child: Text('删除待办')),
+                  ],
+                ),
+            ],
+          ),
           const SizedBox(height: 10),
           blockActions(block),
         ],

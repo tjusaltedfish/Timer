@@ -380,11 +380,24 @@ class ReminderService extends ChangeNotifier {
   Future<void> test() async {
     if (!enabled) await enable();
     if (enabled && driver.supported && await driver.allowed()) {
-      await driver.show(
-        ReminderItem('test', clock(), '日程之间 · 测试提醒', '显示测试成功；定时和后台表现还需实际验证。', {
-          'page': 'today',
-        }),
+      final item = ReminderItem(
+        'test',
+        clock().add(
+          driver.schedulesInSystem
+              ? const Duration(seconds: 15)
+              : Duration.zero,
+        ),
+        '日程之间 · 测试提醒',
+        '这是系统提醒测试。日程到点时也会通知你。',
+        {'page': 'today'},
       );
+      if (driver.schedulesInSystem) {
+        await driver.schedule(item);
+        status = '已安排 15 秒后测试，请切到其他应用或锁屏观察通知。';
+      } else {
+        await driver.show(item);
+      }
+      _notify();
     }
   }
 

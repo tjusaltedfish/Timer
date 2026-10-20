@@ -21,6 +21,28 @@ void main() {
     ],
   };
   final now = DateTime.utc(2026, 10, 19, 15);
+  test(
+    'phone test registers an OS notification fifteen seconds in the future',
+    () async {
+      final c = PlannerController(storage: MemoryStore());
+      await c.initialize();
+      final driver = FakeDriver();
+      final service = ReminderService(
+        controller: c,
+        driver: driver,
+        clock: () => now,
+      );
+      await service.initialize();
+      await service.test();
+      final testReminder = driver.pending.values.singleWhere(
+        (r) => r.key == 'test',
+      );
+      expect(testReminder.at, now.add(const Duration(seconds: 15)));
+      expect(service.status, contains('15 秒'));
+      service.dispose();
+      c.dispose();
+    },
+  );
   test('extension and waiting snooze replace the OS reminder instead of leaving the old alert', () async {
     var current = now;
     final c = PlannerController(storage: MemoryStore(), clock: () => current);

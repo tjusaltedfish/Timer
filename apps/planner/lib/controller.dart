@@ -31,6 +31,9 @@ Json blankState() => {
   'reviews': <Json>[],
   'projects': <Json>[],
   'sleeps': <Json>[],
+  'memories': <Json>[],
+  'materials': <Json>[],
+  'analyses': <Json>[],
   'settings': {
     'timezone': 'America/Los_Angeles',
     'day_start': '09:00',
@@ -337,6 +340,67 @@ class PlannerController extends ChangeNotifier {
   }
 
   Future<Json> assistantConfig() => _assistant('GET', '/config');
+  Future<Json> uploadMaterial(
+    String name,
+    String day,
+    String description,
+    bool externalAllowed,
+    List<int> bytes,
+  ) async {
+    if (!configured) throw ApiFailure('请先连接电脑，材料保存在电脑上。', 409);
+    if (bytes.length > 8 * 1024 * 1024) {
+      throw ApiFailure('文件超过 8 MB，请拆分后上传。', 422);
+    }
+    final uri = Uri.parse('$serverUrl/api/v1/materials/upload').replace(
+      queryParameters: {
+        'name': name,
+        'day': day,
+        'description': description,
+        'external_allowed': '$externalAllowed',
+      },
+    );
+    final response = await transport
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $_token',
+            'Content-Type': 'application/octet-stream',
+          },
+          body: bytes,
+        )
+        .timeout(const Duration(seconds: 120));
+    final result = jsonDecode(utf8.decode(response.bodyBytes)) as Json;
+    if (response.statusCode >= 400) {
+      throw ApiFailure(result['message'] ?? '材料上传失败', response.statusCode);
+    }
+    await sync();
+    return result;
+  }
+
+  Future<Json> generateReview(
+    String day,
+    String text,
+    List<String> materials,
+    String requestId,
+  ) async {
+    await sync();
+    if (!connected || pending.isNotEmpty) throw ApiFailure('请先完成与电脑的同步。', 409);
+    final result = await request(
+      'POST',
+      '/api/v1/reviews/generate',
+      {
+        'date': day,
+        'text': text,
+        'material_ids': materials,
+        'request_id': requestId,
+      },
+      true,
+      const Duration(minutes: 10),
+    );
+    await sync();
+    return result;
+  }
+
   Future<Json> saveAssistantConfig(Json body) =>
       _assistant('POST', '/config', body);
   Future<Json> testAssistant() => _assistant('POST', '/test', {});

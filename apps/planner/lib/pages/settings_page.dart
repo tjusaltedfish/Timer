@@ -6,6 +6,8 @@ extension _SettingsPage on _PlannerHomeState {
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          sleepBar(),
+          const SizedBox(height: 12),
           heading('让手机和电脑接上。', '先保留本地记录，连接恢复后再同步。'),
           panel(
             Column(
@@ -81,7 +83,11 @@ extension _SettingsPage on _PlannerHomeState {
                     children: [
                       OutlinedButton(
                         onPressed: () => attempt(widget.reminders!.test),
-                        child: const Text('启用并发送测试提醒'),
+                        child: Text(
+                          widget.reminders!.driver.schedulesInSystem
+                              ? '15 秒后测试通知'
+                              : '发送测试提醒',
+                        ),
                       ),
                       if (widget.reminders!.driver.schedulesInSystem)
                         OutlinedButton(

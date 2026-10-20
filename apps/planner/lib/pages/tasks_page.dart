@@ -59,6 +59,12 @@ extension _TasksPage on _PlannerHomeState {
                   onPressed: () => editTask(t),
                   child: const Text('编辑'),
                 ),
+                if (t['state'] != 'cancelled')
+                  TextButton(
+                    key: ValueKey('task.delete.${t['id']}'),
+                    onPressed: () => deleteTask(t),
+                    child: const Text('删除'),
+                  ),
               ],
             ),
           ],

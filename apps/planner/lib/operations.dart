@@ -10,7 +10,17 @@ void _optimistic(Json state, Json operation, {required DateTime now}) {
     (v) => v['id'] == id,
     orElse: () => throw ApiFailure('记录不存在，请同步后重试', 404),
   );
-  if (kind == 'task.create') {
+  if (kind == 'material.delete') {
+    (state['materials'] as List? ?? []).removeWhere((m) => m['id'] == p['id']);
+  } else if (kind == 'memory.save') {
+    final memories = state.putIfAbsent('memories', () => <Json>[]) as List;
+    if (memories.length >= 50 || (p['text'] as String).trim().isEmpty) {
+      throw ApiFailure('请填写记忆，最多保留 50 条。', 422);
+    }
+    memories.add({...p, 'source': 'user', 'created_at': now.toIso8601String()});
+  } else if (kind == 'memory.delete') {
+    (state['memories'] as List).removeWhere((m) => m['id'] == p['id']);
+  } else if (kind == 'task.create') {
     if (tasks.any((t) => t['id'] == p['id'])) return;
     tasks.add({
       'state': 'ready',
@@ -34,12 +44,34 @@ void _optimistic(Json state, Json operation, {required DateTime now}) {
       throw ApiFailure('请先结束当前投入。', 409);
     }
     task.addAll({...p, 'version': (task['version'] as int) + 1});
+    if (p['title'] != null) {
+      for (final planned in blocks.where(
+        (b) => b['task_id'] == task['id'] && b['status'] == 'scheduled',
+      )) {
+        planned['title'] = p['title'];
+        planned['version']++;
+      }
+    }
     if (task['state'] == 'cancelled') {
       for (final block in blocks.where(
         (b) => b['task_id'] == task['id'] && b['status'] == 'scheduled',
       )) {
         block['status'] = 'cancelled';
         block['version']++;
+      }
+      for (final session in sessions.where(
+        (s) => s['task_id'] == task['id'] && s['state'] == 'awaiting_feedback',
+      )) {
+        session['state'] = 'closed';
+        session['cancelled_by_task'] = true;
+        session['version']++;
+      }
+      for (final check in (state['waiting_checks'] as List).cast<Json>().where(
+        (v) => v['task_id'] == task['id'] && v['resolved_at'] == null,
+      )) {
+        check['resolved_at'] = now.toUtc().toIso8601String();
+        check['resolution'] = 'cancelled';
+        check['version'] = (check['version'] as int? ?? 1) + 1;
       }
     }
   } else if (kind == 'block.create') {
