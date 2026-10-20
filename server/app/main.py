@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from . import assistant, releases
 from .assistant_service import AssistantService
+from .proactive import Proactive
+from .materials import MaterialService, GenerateReview, MAX_FILE
 from .wechat import WeChatChannel, WeChatConfigIn, parse_message, signature_ok
 from .domain import DomainError, apply, stamp, identifier, parse
 from .models import Operation, PairConfirm, PlanRequest
@@ -32,18 +34,19 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     @asynccontextmanager
     async def lifespan(app):
         expire_due(store, clock())
-        flush_archives(store)
+        flush_archives(store, clock())
         async def maintain():
             while True:
                 await asyncio.sleep(5)
                 try:
                     expire_due(store, clock())
-                    flush_archives(store)
+                    flush_archives(store, clock())
                 except (OSError, RuntimeError):
                     logging.getLogger(__name__).exception("Background maintenance will retry")
         async def wechat_worker():
             while True:
                 try:
+                    app.state.proactive.tick()
                     await app.state.wechat.run_once()
                 except Exception:  # noqa: BLE001 - the queue keeps its evidence; retry next round
                     logging.getLogger(__name__).exception("WeChat worker will retry")
@@ -51,6 +54,11 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         workers = [asyncio.create_task(maintain())]
         if background:
             workers.append(asyncio.create_task(wechat_worker()))
+            async def review_worker():
+                while True:
+                    await app.state.materials.generate_due()
+                    await asyncio.sleep(60)
+            workers.append(asyncio.create_task(review_worker()))
         try:
             yield
         finally:
@@ -187,7 +195,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
             store.save(conn, state)
             conn.execute("INSERT INTO operations VALUES(?,?,?,?)", (operation.operation_id, device["id"], request_hash, serialized))
             conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device["id"], operation.kind, encode(operation.payload), stamp(clock())))
-        flush_archives(store)
+        flush_archives(store, clock())
         return result
 
     @app.get("/api/v1/reports/{day}")
@@ -197,11 +205,13 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
             date.fromisoformat(day)
         except ValueError:
             raise DomainError("日期格式无效", status=422) from None
-        return report_for(store.state(), day)
+        return report_for(store.state(), day, clock())
 
     # ---- Assistant ------------------------------------------------------
     service = AssistantService(store, clock, lambda: app.state.llm_transport)
     app.state.assistant = service
+    materials = MaterialService(service)
+    app.state.materials = materials
     assistant_settings = service.settings
 
     @app.get("/api/v1/assistant/config")
@@ -274,6 +284,8 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     # ---- WeChat official-account channel --------------------------------
     channel = WeChatChannel(store, clock, service, lambda: app.state.wechat_transport)
     app.state.wechat = channel
+    app.state.proactive = Proactive(store, channel, clock)
+    channel.notification_valid = app.state.proactive.valid
 
     @app.get("/wechat/callback")
     def wechat_verify(signature: str = "", timestamp: str = "", nonce: str = "", echostr: str = ""):
@@ -322,6 +334,27 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     @app.get("/api/v1/wechat/outbox")
     def wechat_outbox(device=Depends(desktop)):
         return {"messages": channel.outbox()}
+
+    @app.post('/api/v1/materials/upload')
+    async def upload_material(request: Request, name: str, day: str, description: str = '', external_allowed: bool = True, device=Depends(authenticated)):
+        content = bytearray()
+        async for chunk in request.stream():
+            content.extend(chunk)
+            if len(content) > MAX_FILE:
+                raise DomainError('文件超过 8 MB', status=413)
+        if len(description) > 2000:
+            raise DomainError('说明过长', status=422)
+        try:
+            return await asyncio.to_thread(materials.upload, name, day, description, external_allowed, bytes(content))
+        except ValueError:
+            raise DomainError('日期格式无效', status=422) from None
+
+    @app.post('/api/v1/reviews/generate')
+    async def generate_review(data: GenerateReview, device=Depends(authenticated)):
+        try:
+            return await materials.generate(data)
+        except ValueError:
+            raise DomainError('日期或材料格式无效', status=422) from None
 
     # ---- Phone app releases (published by tools/release.ps1) -------------
     @app.get("/api/v1/app/latest")

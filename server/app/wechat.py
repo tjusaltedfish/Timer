@@ -66,6 +66,7 @@ class WeChatConfigIn(BaseModel):
     app_secret: str | None = Field(default=None, max_length=64)
     template_id: str | None = Field(default=None, max_length=64)
     regenerate_token: bool = False
+    proactive_enabled: bool | None = None
 
     @field_validator("app_id")
     @classmethod
@@ -131,6 +132,8 @@ class WeChatSettings:
             conf["app_id"] = data.app_id
         if data.template_id is not None:
             conf["template_id"] = data.template_id
+        if data.proactive_enabled is not None:
+            conf["proactive_enabled"] = data.proactive_enabled
         self.save(conf)
         if data.app_secret:
             self._write(self.secret_path, data.app_secret)
@@ -145,7 +148,7 @@ class WeChatSettings:
     def public(self, desktop):
         conf, secret = self.load(), self.secret()
         bound = conf["bound_openid"]
-        result = {"configured": bool(conf["app_id"] and secret), "app_id": conf["app_id"],
+        result = {"proactive_enabled": conf.get("proactive_enabled", True), "configured": bool(conf["app_id"] and secret), "app_id": conf["app_id"],
                   "secret_hint": ("····" + secret[-4:]) if secret else "", "template_id": conf["template_id"],
                   "callback_path": "/wechat/callback", "bound": bool(bound),
                   "bound_hint": ("····" + bound[-4:]) if bound else "", "bound_at": conf["bound_at"]}
@@ -262,20 +265,59 @@ class WeChatChannel:
             mark("pending")
             return True
 
-    async def handle(self, text):
+    async def handle(self, text, request_id=None):
         """Reply text for one bound-user message."""
         compact = text.strip()
+        command = re.fullmatch(r"(完成了?|结束并完成|再给我(?:15|30)分钟|续时(?:15|30)分钟)(?:\s+([0-9a-fA-F]{6}))?", compact)
+        review = re.fullmatch(r"今日总结[：:]\s*(.{1,10000})", compact, re.S)
+        operation_id = f"wechat-command:{request_id}" if request_id else None
+        if operation_id:
+            with self.store.connect() as conn:
+                previous = conn.execute('SELECT response FROM operations WHERE id=?', (operation_id,)).fetchone()
+            if previous:
+                return '这条反馈已经记录，日程已同步。'
+        if review:
+            day = self.clock().astimezone(ZoneInfo(self.store.state()['settings']['timezone'])).date().isoformat()
+            self.assistant.apply_operation('review.save', {'date': day, 'text': review.group(1)}, 'wechat', operation_id)
+            return '今日原文已保留并安排电脑归档。材料复盘可在 Timer 的回顾页生成。'
+        if command:
+            from .maintenance import expire_due
+            expire_due(self.store, self.clock())
+            state = self.store.state()
+            candidates = [s for s in state['sessions'] if s['state'] in ('running', 'paused', 'awaiting_feedback')]
+            if command.group(2):
+                candidates = [s for s in candidates if s['id'].startswith(command.group(2).lower())]
+            if len(candidates) != 1:
+                return '请说明是哪一段，或打开 Timer 选择待回话的任务。'
+            session = candidates[0]
+            if command.group(1).startswith(('再给我', '续时')):
+                minutes = int(re.search(r'15|30', command.group(1)).group())
+                try:
+                    changed = self.assistant.apply_operation('session.extend', {'id': session['id'], 'minutes': minutes}, 'wechat', operation_id)['entity']
+                    end = parse(changed['expected_end_at']).astimezone(ZoneInfo(state['settings']['timezone']))
+                    adjustment = changed.get('adjustment', {}).get('status')
+                    tail = '后续弹性安排已顺延。' if adjustment == 'applied' else '后续有冲突或需要确认，请到 Timer 查看调整。' if adjustment in ('proposal', 'blocked') else ''
+                    return f'已增加 {minutes} 分钟，预计 {end:%H:%M} 收尾。{tail}'
+                except DomainError as error:
+                    return error.message
+            if session['state'] in ('running', 'paused'):
+                self.assistant.apply_operation('session.end', {'id': session['id']}, 'wechat', f'wechat-end:{request_id}' if request_id else None)
+            self.assistant.apply_operation('feedback.create', {'session_id': session['id'], 'choice': 'done', 'outcome_text': '用户在微信确认完成'}, 'wechat', operation_id)
+            return '已记录完成，相关追问已停止。'
         if compact in ("帮助", "help", "?", "？"):
             return HELP
         if compact in ("今天", "今日", "今天的安排"):
             return self.today_summary()
+        if compact in ('记忆', '你记住了什么'):
+            memories = self.store.state().get('memories', [])
+            return '\n'.join(['你明确让我记住的事：', *[m['text'] for m in memories]]) if memories else '目前还没有保存的长期偏好。'
         match = CONFIRM.match(compact) or DISMISS.match(compact)
         if match:
             answer = self.decide(bool(CONFIRM.match(compact)), match.group(2))
             if answer is not None:
                 return answer
         try:
-            rows = await self.assistant.converse(compact)
+            rows = await self.assistant.converse(compact, request_id=request_id)
         except DomainError as error:
             if error.code == "ASSISTANT_NOT_CONFIGURED":
                 return "模型服务还没在电脑上配置好，我暂时只能回答「今天」「帮助」。"
@@ -408,6 +450,9 @@ class WeChatChannel:
     async def deliver(self, http, row):
         now = self.clock()
         with self.store.connect() as conn:
+            if not getattr(self, 'notification_valid', lambda _: True)(row['dedup_key']):
+                conn.execute("UPDATE wechat_outbox SET status='cancelled' WHERE id=?", (row['id'],))
+                return
             if row["expires_at"] and parse(row["expires_at"]) <= now:
                 conn.execute("UPDATE wechat_outbox SET status='expired' WHERE id=?", (row["id"],))
                 return
@@ -460,7 +505,7 @@ class WeChatChannel:
                 with self.store.connect() as conn:
                     conn.execute("UPDATE wechat_inbox SET status='processing' WHERE id=?", (row["id"],))
                 try:
-                    reply = await self.handle(row["content"])
+                    reply = await self.handle(row["content"], request_id=row['id'])
                     status = "done"
                 except Exception as error:  # noqa: BLE001 - keep the queue moving, keep the evidence
                     log.exception("WeChat message handling failed")

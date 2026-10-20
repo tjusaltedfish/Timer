@@ -147,6 +147,7 @@ class ReviewSave(Input):
 
 
 class SettingsUpdate(Input):
+    auto_daily_review: bool | None = None
     auto_adjust: bool | None = None
     timezone: str | None = None
     day_start: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -254,7 +255,44 @@ class PairConfirm(Input):
     name: str = Field(min_length=1, max_length=80)
 
 
+class MemorySave(Input):
+    id: str = Field(pattern=r"^[a-zA-Z0-9-]{1,80}$")
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class MemoryDelete(Input):
+    id: str
+
+
+class MaterialAdd(Input):
+    id: str = Field(pattern=r"^[a-zA-Z0-9-]{1,80}$")
+    name: str = Field(min_length=1, max_length=200)
+    date: str
+    description: str = Field(default='', max_length=2000)
+    external_allowed: bool
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    characters: int = Field(ge=1, le=60000)
+
+
+class MaterialSummary(Input):
+    id: str
+    summary: str = Field(min_length=1, max_length=6000)
+
+
+class ReviewAnalysis(Input):
+    id: str = Field(pattern=r'^[a-zA-Z0-9-]{8,80}$')
+    date: str
+    text: str = Field(min_length=1, max_length=12000)
+    material_ids: list[str] = Field(max_length=10)
+    sources: list[dict] = Field(max_length=10)
+    model: str = Field(max_length=200)
+    human_review_id: str
+
+
 MODELS = {
+    'material.add': MaterialAdd, 'material.summary': MaterialSummary, 'material.delete': MemoryDelete,
+    'review.analysis': ReviewAnalysis,
+    "memory.save": MemorySave, "memory.delete": MemoryDelete,
     "task.create": TaskCreate, "task.update": TaskUpdate,
     "block.create": BlockCreate, "block.move": BlockMove,
     "session.start": SessionStart, "session.pause": SessionAction,

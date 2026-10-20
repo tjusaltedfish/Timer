@@ -2,7 +2,7 @@
 name = "time-planner-server"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["fastapi", "uvicorn[standard]", "httpx", "tzdata"]
+dependencies = ["fastapi", "uvicorn[standard]", "httpx", "tzdata", "pypdf==6.21.1", "python-docx==1.2.0"]
 
 [project.optional-dependencies]
 test = ["pytest"]

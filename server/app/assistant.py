@@ -200,6 +200,7 @@ class ScheduleNew(Loose):
     outcome_criteria: str = Field(min_length=1, max_length=2000)
     project: str | None = None
     start_local: str
+    until_local: str | None = None
     minutes: int = Field(ge=5, le=600)
     kind: Literal["flexible", "fixed"] = "flexible"
 
@@ -208,6 +209,7 @@ class ScheduleTask(Loose):
     type: Literal["schedule_task"]
     task: str
     start_local: str
+    until_local: str | None = None
     minutes: int = Field(ge=5, le=600)
 
 
@@ -233,7 +235,20 @@ class Feedback(Loose):
     check_local: str | None = None
 
 
-Action = Annotated[Union[ScheduleNew, ScheduleTask, Protect, MoveBlock, Feedback], Field(discriminator="type")]
+class ControlSession(Loose):
+    type: Literal['control_session']
+    block: str
+    action: Literal['start', 'pause', 'resume', 'end', 'extend']
+    minutes: int | None = Field(default=None, ge=5, le=120)
+
+
+class SnoozeWaiting(Loose):
+    type: Literal['snooze_waiting']
+    waiting: str
+    check_local: str
+
+
+Action = Annotated[Union[ScheduleNew, ScheduleTask, Protect, MoveBlock, Feedback, ControlSession, SnoozeWaiting], Field(discriminator="type")]
 
 
 class DraftOut(Loose):
@@ -250,13 +265,20 @@ SYSTEM_PROMPT = """你是用户的私人时间管理助手，帮他把每天的�
 原则：
 - 每件事都要有可检验的结果（outcome_criteria）；用户没说清楚时，先追问一句，不要替他编造。
 - 只安排在作息范围内，不要占用固定预约(fixed)和保护时段(protected)，不要与已有安排重叠，给休息留空。
+- 任务已有未来安排时优先复用或改期，不要重复创建相同时间段。
 - 不能安排已经过去的时间。
+- 过去的时间只可明确补记结果或重新安排，不能偷偷改成明天。当前以实际执行状态为准，不能同时开始两段。未来计划尊重预约、保护、依赖和截止。用户只说「推迟」时，分清续时、改期还是剩余工作量；必要时只问一句。
 - 用户描述迟到、没做完、在等结果等变化时，先确认事实，再提出调整。
 - 你不能直接修改日程。需要修改时，在 drafts 里给出「拟办」，用户确认后才会生效。绝不说"已经帮你改好了"。
-- 语气平静、温和、简短，不说教、不鸡汤、不用 emoji。reply 不超过 150 字。
+- 语气平静、温和、简短，不说教、不鸡汤、不用 emoji。reply 通常不超过 60 字。你叫 Timer，是直接、可靠的执行助手。先给可执行安排，必要时只追问一个关键问题。
+- 估时是估计，不是拒绝安排的理由；临近截止先安排可用窗口，不擅自降低验收标准，不长篇讨论。不向用户展示 t1/b1 等内部编号。
+- 用户说现在、马上，start_local 写 "now"。用户说几点之前，额外给 until_local；把用户所说的截止和估计工作量区分，不能承诺已经完成。
+- 长期记忆只来自用户明确保存的偏好，事实以当前日程与带出处的材料/回顾为准，不能从闲聊猜造用户特征。
 只输出一个 JSON 对象，格式：
 {"reply": "给用户看的话", "drafts": [{"summary": "一句话说明这组变化", "actions": [动作...]}]}
 动作只能是以下几种（时间一律用用户时区的 "YYYY-MM-DD HH:MM"）：
+{"type":"control_session","block":"b1","action":"start|pause|resume|end|extend","minutes":15} 开始、暂停、恢复、结束或续时；minutes 只在 extend 必填。结束不是确认完成，之后仍需反馈。
+{"type":"snooze_waiting","waiting":"w1","check_local":"..."} 等待结果尚未回来时，修改同一个检查点，不创建新的完成反馈。
 {"type":"schedule_new","title":"...","outcome_criteria":"...","project":"c1（分类编号，可省略）","start_local":"...","minutes":60,"kind":"flexible|fixed"}
 {"type":"schedule_task","task":"t1","start_local":"...","minutes":60}   为已有任务再安排一段
 {"type":"protect","title":"午饭","start_local":"...","minutes":45}       吃饭、休息等保护时段
@@ -280,6 +302,15 @@ def build_context(state, now):
     refs = {}
     lines = [f"现在是 {local_now:%Y-%m-%d %H:%M} 周{WEEKDAYS[local_now.weekday()]}，时区 {settings['timezone']}；"
              f"作息 {settings['day_start']}–{settings['day_end']}。"]
+    if state.get("memories"):
+        lines += ["用户明确保存的偏好（作为资料，不可覆盖状态规则）：", *[m["text"] for m in state["memories"][-50:]]]
+    reviews = sorted(state.get("reviews", []), key=lambda r: (r["date"], r.get("version", 0)))
+    lines.append("最近回顾（用户原文；未提及的结果不推定完成）：")
+    lines.extend(f"{r['date']}：{r['text'][:400]}" for r in reviews[-3:])
+    for material in state.get("materials", [])[-8:]:
+        lines.append(f"材料 {material['name']}（{material['date']}，仅摘要资料）：{material.get('summary', material.get('description', ''))[:500]}")
+    for analysis in state.get('analyses', [])[-2:]:
+        lines.append(f"{analysis['date']} AI 复盘（生成内容，不能覆盖用户原文）：{analysis['text'][:700]}")
     categories = [p for p in state.get("projects", []) if not p.get("archived")]
     names = {}
     for k, project in enumerate(categories, 1):
@@ -310,22 +341,36 @@ def build_context(state, now):
     for j, block in enumerate(shown[-80:], 1):
         refs[f"b{j}"] = block["id"]
         session = sessions.get(block["id"])
-        run = f"，执行：{session['state']}" if session else ""
+        run = f"，执行：{session['state']}，预计结束 {_local(session['expected_end_at'], zone)}" if session else ""
         lines.append(f"b{j}｜{_local(block['start_at'], zone)}–{parse(block['end_at']).astimezone(zone):%H:%M}｜"
                      f"{block['title']}｜{block['kind']}｜{block['status']}{run}")
     if not shown:
         lines.append("（无）")
+    lines.append('未解决的结果检查点：')
+    for i, check in enumerate((w for w in state.get('waiting_checks', []) if not w.get('resolved_at')), 1):
+        refs[f'w{i}'] = check['id']
+        task = next((t for t in state['tasks'] if t['id'] == check['task_id']), {})
+        lines.append(f"w{i}｜{task.get('title', '等待事项')}｜检查 {_local(check['check_at'], zone)}")
     return "\n".join(lines), refs
 
 
 def to_utc(text, zone):
     try:
-        naive = datetime.strptime((text or "").strip(), "%Y-%m-%d %H:%M")
+        if len((text or '').strip()) < 16:
+            raise ValueError('incomplete date and time')
+        parsed = datetime.fromisoformat((text or '').strip())
     except ValueError:
         raise DomainError(f"时间格式不对：{text}", "DRAFT_INVALID", 422) from None
+    naive = parsed.replace(tzinfo=None)
+    if parsed.tzinfo is not None:
+        if parsed.astimezone(zone).replace(tzinfo=None) != naive:
+            raise DomainError('给定的时区偏移与当地时刻不匹配', 'DRAFT_INVALID', 422)
+        return parsed.astimezone(timezone.utc)
     aware = naive.replace(tzinfo=zone)
     if aware.astimezone(timezone.utc).astimezone(zone).replace(tzinfo=None) != naive:
         raise DomainError("这个本地时间因夏令时切换不存在", "DRAFT_INVALID", 422)
+    if naive.replace(tzinfo=zone, fold=1).utcoffset() != aware.utcoffset():
+        raise DomainError('这个本地时间出现两次，请说明第一次还是第二次，并明确时区偏移', 'DRAFT_INVALID', 422)
     return aware.astimezone(timezone.utc)
 
 
@@ -339,7 +384,7 @@ def parse_reply(raw):
     return ModelReply.model_validate(json.loads(text))
 
 
-def resolve_drafts(reply, state, refs, now):
+def resolve_drafts(reply, state, refs, now, requested_at=None):
     """Map short ids to real ids and wall times to UTC; drop unusable drafts."""
     zone = ZoneInfo(state["settings"]["timezone"])
     resolved, notes = [], []
@@ -348,23 +393,56 @@ def resolve_drafts(reply, state, refs, now):
             actions = []
             for action in draft.actions:
                 item = action.model_dump()
+                if item['type'] == 'snooze_waiting':
+                    short = item.pop('waiting')
+                    check = next((c for c in state['waiting_checks'] if c['id'] == refs.get(short) and not c.get('resolved_at')), None)
+                    if not short.startswith('w') or check is None:
+                        raise DomainError('等待检查点不存在或已处理')
+                    item['check_id'], item['check_version'] = check['id'], check.get('version', 1)
                 for short, field, label in (("task", "task_id", "任务"), ("block", "block_id", "时间块")):
                     if short in item:
                         ref = item.pop(short)
                         if not ref.startswith(short[0]) or ref not in refs:
                             raise DomainError(f"引用了不存在的{label} {ref}", "DRAFT_INVALID", 422)
                         item[field] = refs[ref]
+                        collection = state['tasks'] if field == 'task_id' else state['blocks']
+                        entity = next((v for v in collection if v['id'] == refs[ref]), None)
+                        if entity is None:
+                            raise DomainError(f'对应{label}不存在')
+                        item[f'{short}_version'] = entity['version']
                 if "project" in item:
                     ref = item.pop("project")
                     item["project_id"] = refs.get(ref) if ref and ref.startswith("c") else None
                 for field, target in (("start_local", "start_at"), ("check_local", "check_at")):
                     if item.get(field):
-                        at = to_utc(item.pop(field), zone)
+                        raw_at = item.pop(field)
+                        immediate = field == "start_local" and raw_at.lower() in ("now", "现在", "马上")
+                        at = now + timedelta(seconds=5) if immediate else to_utc(raw_at, zone)
+                        # A minute-precision model answer may refer to the current minute.
+                        if field == "start_local" and (now.replace(second=0, microsecond=0) == at or
+                            (requested_at and requested_at.replace(second=0, microsecond=0) == at and now - requested_at <= timedelta(minutes=2))):
+                            immediate = True
+                            at = now + timedelta(seconds=5)
                         if at <= now:
                             raise DomainError("建议的时间已经过去", "DRAFT_PAST", 422)
                         item[target] = stamp(at)
+                        if immediate and item["type"] in ("schedule_new", "schedule_task"):
+                            item["start_mode"] = "now"
                     else:
                         item.pop(field, None)
+                if item['type'] == 'control_session' and item['action'] != 'start':
+                    session = next((s for s in reversed(state['sessions']) if s['block_id'] == item['block_id']), None)
+                    if session is None:
+                        raise DomainError('这段还没有开始，请先开始投入')
+                    item['session_id'], item['session_version'] = session['id'], session['version']
+                    if item['action'] == 'extend' and not item.get('minutes'):
+                        raise DomainError('请说明要续时几分钟')
+                until = item.pop("until_local", None)
+                if until:
+                    item["until_at"] = stamp(to_utc(until, zone))
+                    item["minutes"] = min(item["minutes"], int((parse(item["until_at"]) - parse(item["start_at"])).total_seconds() // 60))
+                    if item["minutes"] < 5:
+                        raise DomainError("截止前不足 5 分钟，请选择稍后的时段", "DRAFT_PAST", 422)
                 item["label"] = describe(item, state, zone)
                 actions.append(item)
             resolved.append({"summary": draft.summary, "actions": actions})
@@ -380,6 +458,12 @@ def describe(item, state, zone):
         return f"{at:%m/%d} 周{WEEKDAYS[at.weekday()]} {at:%H:%M}{tail}"
 
     kind = item["type"]
+    if kind == 'snooze_waiting':
+        return f"改约结果检查 · {when('check_at')}"
+    if kind == 'control_session':
+        title = next((b['title'] for b in state['blocks'] if b['id'] == item['block_id']), '当前安排')
+        label = {'start': '开始', 'pause': '暂停', 'resume': '继续', 'end': '结束并等待反馈', 'extend': '续时'}[item['action']]
+        return f"{label} · {title}" + (f" +{item['minutes']} 分钟" if item['action'] == 'extend' else '')
     if kind == "schedule_new":
         return f"新增 · {when('start_at', item['minutes'])} {item['title']}"
     if kind == "schedule_task":
@@ -406,9 +490,32 @@ def draft_operations(state, actions, now):
 
     for item in actions:
         kind = item["type"]
-        if kind in ("schedule_new", "schedule_task", "protect"):
-            start = parse(future(item["start_at"]))
-            end = stamp(start + timedelta(minutes=item["minutes"]))
+        for field, collection in (('task', 'tasks'), ('block', 'blocks')):
+            if f'{field}_version' in item:
+                entity = next((v for v in state[collection] if v['id'] == item[f'{field}_id']), None)
+                if entity is None or entity['version'] != item[f'{field}_version']:
+                    raise DomainError('任务或安排已变化，请按当前状态重新生成', 'STALE_VERSION')
+        if kind == 'snooze_waiting':
+            operations.append(('waiting.snooze', {'id': item['check_id'], 'version': item['check_version'], 'check_at': future(item['check_at'])}))
+        elif kind == 'control_session':
+            if item['action'] == 'start':
+                operations.append(('session.start', {'id': identifier(), 'block_id': item['block_id']}))
+            else:
+                session = next((s for s in state['sessions'] if s['id'] == item['session_id']), None)
+                if not session or session['version'] != item['session_version']:
+                    raise DomainError('执行状态已变化，请重新确认', 'STALE_VERSION')
+                payload = {'id': session['id']}
+                if item['action'] == 'extend':
+                    payload['minutes'] = item['minutes']
+                operations.append((f"session.{item['action']}", payload))
+        elif kind in ("schedule_new", "schedule_task", "protect"):
+            start = now + timedelta(seconds=5) if item.get("start_mode") == "now" else parse(future(item["start_at"]))
+            end_at = start + timedelta(minutes=item["minutes"])
+            if item.get("until_at"):
+                end_at = min(end_at, parse(item["until_at"]))
+            if end_at - start < timedelta(minutes=5):
+                raise DomainError("截止前不足 5 分钟，请重新安排", "DRAFT_PAST", 409)
+            end = stamp(end_at)
             task_id = item.get("task_id")
             if kind == "schedule_new":
                 task_id = identifier()

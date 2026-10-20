@@ -96,6 +96,8 @@ def apply(state, operation, device_id, now):
         data = MODELS[kind].model_validate(operation.payload).model_dump(mode="json")
     state.setdefault("sleeps", [])
     state.setdefault("projects", [])
+    for collection in ('materials', 'analyses', 'memories'):
+        state.setdefault(collection, [])
 
     def usable_project(project_id):
         if project_id is None:
@@ -130,6 +132,14 @@ def apply(state, operation, device_id, now):
                 if block.get("task_id") == entity["id"] and block["status"] == "scheduled":
                     block["status"] = "cancelled"
                     block["version"] += 1
+            for session in state["sessions"]:
+                if session["task_id"] == entity["id"] and session["state"] == "awaiting_feedback":
+                    session.update(state="closed", cancelled_by_task=True)
+                    session["version"] += 1
+            for check in state["waiting_checks"]:
+                if check["task_id"] == entity["id"] and not check.get("resolved_at"):
+                    check.update(resolved_at=stamp(now), resolution="cancelled")
+                    check["version"] = check.get("version", 1) + 1
     elif kind == "block.create":
         entity = {**data, "id": data.get("id") or identifier(), "version": 1, "status": "scheduled"}
         if entity["task_id"]:
@@ -332,6 +342,42 @@ def apply(state, operation, device_id, now):
     elif kind == "sleep.delete":
         entity = find(state, "sleeps", data["id"])
         state["sleeps"].remove(entity)
+    elif kind == 'material.add':
+        from datetime import date
+        date.fromisoformat(data['date'])
+        if '/' in data['name'] or '\\' in data['name']:
+            raise DomainError('材料名称不能含路径', status=422)
+        if any(m['id'] == data['id'] for m in state.get('materials', [])):
+            raise DomainError('材料已存在')
+        entity = {**data, 'created_at': stamp(now)}
+        state.setdefault('materials', []).append(entity)
+    elif kind == 'material.summary':
+        entity = find(state, 'materials', data['id'])
+        entity['summary'] = data['summary']
+    elif kind == 'material.delete':
+        entity = find(state, 'materials', data['id'])
+        state['materials'].remove(entity)
+    elif kind == 'review.analysis':
+        from datetime import date
+        date.fromisoformat(data['date'])
+        for material_id in data['material_ids']:
+            find(state, 'materials', material_id)
+        entity = {**data, 'generated_at': stamp(now), 'source': 'model'}
+        state.setdefault('analyses', []).append(entity)
+        review = next((r for r in reversed(state['reviews']) if r['date'] == data['date']), None)
+        if review:
+            state['jobs'].append({'id': identifier(), 'kind': 'archive', 'review_id': review['id'], 'status': 'pending', 'attempts': 0})
+    elif kind == "memory.save":
+        memories = state.setdefault("memories", [])
+        if len(memories) >= 50:
+            raise DomainError("最多保留 50 条偏好，请先整理或删除旧记忆", status=422)
+        if any(m["id"] == data["id"] for m in memories):
+            raise DomainError("记忆标识已存在")
+        entity = {**data, "source": "user", "created_at": stamp(now)}
+        memories.append(entity)
+    elif kind == "memory.delete":
+        entity = find(state, "memories", data["id"])
+        state["memories"].remove(entity)
     elif kind == "settings.update":
         entity = state["settings"]
         candidate = {**entity, **data}
