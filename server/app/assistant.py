@@ -109,6 +109,23 @@ class AssistantSettings:
             self.key_path.write_text(data.api_key, encoding="utf-8")
 
 
+def _relay_message(response, key):
+    """The relay's own error text, without ever echoing the key."""
+    try:
+        data = response.json()
+        error = data.get("error") if isinstance(data, dict) else None
+        message = error.get("message") if isinstance(error, dict) else (error or data.get("message"))
+    except ValueError:
+        message = None
+    text = str(message or response.text[:160]).strip().replace("\n", " ")
+    return text.replace(key, "****") if key else text
+
+
+def _is_page(response):
+    kind = response.headers.get("content-type", "")
+    return "text/html" in kind or response.text.lstrip()[:1] == "<"
+
+
 async def complete(conf, key, messages, *, json_mode=True, transport=None):
     """One chat completion with bounded retries on 429/5xx/timeouts."""
     url = conf["base_url"].rstrip("/") + "/chat/completions"
@@ -135,20 +152,40 @@ async def complete(conf, key, messages, *, json_mode=True, transport=None):
                 attempt -= 1
                 continue
             if response.status_code == 429 or response.status_code >= 500:
-                problem = f"模型服务暂时不可用（{response.status_code}）"
+                problem = f"模型服务暂时不可用（{response.status_code}）：{_relay_message(response, key)}"
                 continue
             if response.status_code in (401, 403):
                 raise DomainError("模型服务拒绝了这个 API Key，请检查是否填写正确", "LLM_AUTH", 502)
+            if _is_page(response):
+                raise DomainError("服务地址返回的是网页而不是模型回复：中转站地址通常要以 /v1 结尾",
+                                  "LLM_PAGE", 502)
             if response.status_code == 404:
-                raise DomainError("找不到对话接口：中转站地址通常需要以 /v1 结尾", "LLM_NOT_FOUND", 502)
+                detail = _relay_message(response, key)
+                if "model" in detail.lower() or "模型" in detail:
+                    raise DomainError(f"这个服务不支持模型「{conf['model']}」：{detail}", "LLM_MODEL", 502)
+                raise DomainError(f"找不到对话接口（404）：{detail}", "LLM_NOT_FOUND", 502)
             if response.status_code >= 400:
-                detail = response.text[:160].replace(key, "****") if key else response.text[:160]
-                raise DomainError(f"模型服务返回错误（{response.status_code}）：{detail}", "LLM_ERROR", 502)
+                raise DomainError(f"模型服务返回错误（{response.status_code}）：{_relay_message(response, key)}",
+                                  "LLM_ERROR", 502)
             try:
                 return response.json()["choices"][0]["message"]["content"] or ""
             except (ValueError, KeyError, IndexError, TypeError):
-                raise DomainError("模型服务返回的内容格式无法识别", "LLM_FORMAT", 502) from None
+                sample = response.text[:80].replace(key, "****") if key else response.text[:80]
+                raise DomainError(f"模型服务的回复不是 OpenAI 兼容格式，收到：{sample}", "LLM_FORMAT", 502) from None
     raise DomainError(problem, "LLM_UNAVAILABLE", 502)
+
+
+async def list_models(conf, key, transport=None):
+    """Model ids the service offers this key (empty when it has no list)."""
+    async with httpx.AsyncClient(timeout=30, transport=transport) as http:
+        try:
+            response = await http.get(conf["base_url"].rstrip("/") + "/models",
+                                      headers={"Authorization": f"Bearer {key}"})
+            data = response.json()
+        except (httpx.HTTPError, ValueError):
+            return []
+    items = data.get("data", []) if isinstance(data, dict) else []
+    return sorted({str(item.get("id")) for item in items if isinstance(item, dict) and item.get("id")})
 
 
 # ---- Model output -------------------------------------------------------

@@ -10,10 +10,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
 from . import assistant
+from .assistant_service import AssistantService
+from .wechat import WeChatChannel, WeChatConfigIn, parse_message, signature_ok
 from .domain import DomainError, apply, stamp, identifier, parse
 from .models import Operation, PairConfirm, PlanRequest
 from .planning import propose
@@ -22,7 +24,7 @@ from .reports import flush_archives, report_for
 from .store import Store, digest, encode, utcnow
 
 
-def create_app(directory=None, clock=utcnow, llm_transport=None):
+def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transport=None, background=True):
     default_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share")) / "TimePlanner" / "data"
     directory = Path(directory or os.environ.get("PLANNER_DATA_DIR", default_data))
     store = Store(directory)
@@ -39,19 +41,31 @@ def create_app(directory=None, clock=utcnow, llm_transport=None):
                     flush_archives(store)
                 except (OSError, RuntimeError):
                     logging.getLogger(__name__).exception("Background maintenance will retry")
-        worker = asyncio.create_task(maintain())
+        async def wechat_worker():
+            while True:
+                try:
+                    await app.state.wechat.run_once()
+                except Exception:  # noqa: BLE001 - the queue keeps its evidence; retry next round
+                    logging.getLogger(__name__).exception("WeChat worker will retry")
+                await asyncio.sleep(3)
+        workers = [asyncio.create_task(maintain())]
+        if background:
+            workers.append(asyncio.create_task(wechat_worker()))
         try:
             yield
         finally:
-            worker.cancel()
-            with suppress(asyncio.CancelledError):
-                await worker
+            for worker in workers:
+                worker.cancel()
+            for worker in workers:
+                with suppress(asyncio.CancelledError):
+                    await worker
 
     app = FastAPI(title="个人弹性日程助手", version="0.1.0", lifespan=lifespan)
     app.state.store = store
     app.state.desktop_token = store.desktop_token
     pairing_attempts = {}
     app.state.llm_transport = llm_transport
+    app.state.wechat_transport = wechat_transport
 
     @app.exception_handler(DomainError)
     async def domain_error(request, error):
@@ -178,18 +192,9 @@ def create_app(directory=None, clock=utcnow, llm_transport=None):
         return report_for(store.state(), day)
 
     # ---- Assistant ------------------------------------------------------
-    with store.connect() as conn:
-        conn.executescript(assistant.SCHEMA)
-    assistant_settings = assistant.AssistantSettings(store.directory)
-
-    def require_assistant(conn):
-        if not assistant_settings.configured():
-            raise DomainError("助手还没有配置：请在电脑端「设置 · 助手」填写服务地址、模型和 API Key",
-                              "ASSISTANT_NOT_CONFIGURED", 409)
-        conf = assistant_settings.load()
-        if assistant.usage_today(conn, clock()) >= conf["daily_limit"]:
-            raise DomainError("今天的助手调用次数已用完，可在电脑端调高上限", "ASSISTANT_LIMIT", 429)
-        return conf, assistant_settings.key()[0]
+    service = AssistantService(store, clock, lambda: app.state.llm_transport)
+    app.state.assistant = service
+    assistant_settings = service.settings
 
     @app.get("/api/v1/assistant/config")
     def assistant_config(device=Depends(authenticated)):
@@ -205,13 +210,41 @@ def create_app(directory=None, clock=utcnow, llm_transport=None):
     @app.post("/api/v1/assistant/test")
     async def assistant_test(device=Depends(desktop)):
         with store.connect() as conn:
-            conf, key = require_assistant(conn)
+            conf, key = service.require(conn)
             assistant.count_call(conn, clock())
-        started = time.monotonic()
-        reply = await assistant.complete(conf, key, [{"role": "user", "content": "只回复两个字：在的"}],
-                                         json_mode=False, transport=app.state.llm_transport)
+        started, fixed = time.monotonic(), None
+        ping = [{"role": "user", "content": "只回复两个字：在的"}]
+        try:
+            reply = await assistant.complete(conf, key, ping, json_mode=False, transport=app.state.llm_transport)
+        except DomainError as error:
+            base = conf["base_url"].rstrip("/")
+            if error.code in ("LLM_PAGE", "LLM_NOT_FOUND") and not base.endswith("/v1"):
+                # Relays usually serve their website at the bare host; try the API path once.
+                candidate = {**conf, "base_url": base + "/v1"}
+                try:
+                    reply = await assistant.complete(candidate, key, ping, json_mode=False,
+                                                     transport=app.state.llm_transport)
+                except DomainError:
+                    raise error from None
+                assistant_settings.update(assistant.AssistantConfigIn(base_url=candidate["base_url"]))
+                fixed = candidate["base_url"]
+            elif error.code == "LLM_MODEL":
+                models = await assistant.list_models(conf, key, app.state.llm_transport)
+                if models:
+                    raise DomainError(f"{error.message}。这个服务可用的模型：{'、'.join(models[:20])}",
+                                      error.code, error.status) from None
+                raise
+            else:
+                raise
         return {"ok": True, "reply": reply.strip()[:80], "latency_ms": int((time.monotonic() - started) * 1000),
-                "model": conf["model"]}
+                "model": conf["model"], "fixed_base_url": fixed}
+
+    @app.get("/api/v1/assistant/models")
+    async def assistant_models(device=Depends(desktop)):
+        conf, key = assistant_settings.load(), assistant_settings.key()[0]
+        if not (conf["base_url"] and key):
+            raise DomainError("先填写服务地址和 API Key", "ASSISTANT_NOT_CONFIGURED", 409)
+        return {"models": await assistant.list_models(conf, key, app.state.llm_transport)}
 
     @app.get("/api/v1/assistant/messages")
     def assistant_history(device=Depends(authenticated)):
@@ -220,83 +253,67 @@ def create_app(directory=None, clock=utcnow, llm_transport=None):
 
     @app.post("/api/v1/assistant/messages")
     async def assistant_message(data: assistant.AssistantMessageIn, device=Depends(authenticated)):
-        now = clock()
-        expire_due(store, now)
-        with store.connect() as conn:
-            conf, key = require_assistant(conn)
-            state = store.state(conn)
-            history = conn.execute("SELECT role,text FROM assistant_messages ORDER BY created_at DESC, rowid DESC LIMIT 10").fetchall()
-        context, refs = assistant.build_context(state, now)
-        messages = [{"role": "system", "content": assistant.SYSTEM_PROMPT},
-                    {"role": "system", "content": context},
-                    *({"role": row["role"], "content": row["text"]} for row in reversed(history)),
-                    {"role": "user", "content": data.text}]
-        calls = 1
-        raw = await assistant.complete(conf, key, messages, transport=app.state.llm_transport)
-        try:
-            reply = assistant.parse_reply(raw)
-        except (ValueError, ValidationError) as error:
-            calls += 1
-            retry = [*messages, {"role": "assistant", "content": raw[:4000]},
-                     {"role": "user", "content": f"上面的输出不符合要求（{str(error)[:200]}）。请只输出符合格式的 JSON 对象。"}]
-            raw = await assistant.complete(conf, key, retry, transport=app.state.llm_transport)
-            try:
-                reply = assistant.parse_reply(raw)
-            except (ValueError, ValidationError):
-                reply = assistant.ModelReply(reply="我没能把这些整理成清楚的安排，换个说法再试一次？")
-        drafts, notes = assistant.resolve_drafts(reply, state, refs, now)
-        text = "\n".join(filter(None, [reply.reply or ("拟办如下，确认后生效。" if drafts else "收到。"), *notes]))
-        user_id, reply_id = identifier(), identifier()
-        with store.connect() as conn:
-            assistant.count_call(conn, now, calls)
-            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (user_id, "user", data.text, stamp(now)))
-            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)",
-                         (reply_id, "assistant", text, stamp(now + timedelta(microseconds=1))))
-            for draft in drafts:
-                conn.execute("INSERT INTO assistant_drafts VALUES(?,?,?,?,?,?)",
-                             (identifier(), reply_id, draft["summary"][:200], encode(draft["actions"]), "pending", stamp(now)))
-            return {"messages": [m for m in assistant.message_rows(conn, 2)]}
+        return {"messages": await service.converse(data.text)}
 
     @app.post("/api/v1/assistant/drafts/{draft_id}/apply")
     def assistant_apply(draft_id: str, device=Depends(authenticated)):
-        now = clock()
-        expire_due(store, now)
-        with store.connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT * FROM assistant_drafts WHERE id=?", (draft_id,)).fetchone()
-            if not row:
-                raise DomainError("拟办不存在", "NOT_FOUND", 404)
-            if row["status"] != "pending":
-                raise DomainError("这条拟办已经处理过了")
-            state = store.state(conn)
-            applied = []
-            # Every confirmed action is an ordinary logged operation; any failure rolls all back.
-            for kind, payload in assistant.draft_operations(state, json.loads(row["actions"]), now):
-                operation = Operation(operation_id=identifier(), kind=kind, payload=payload)
-                try:
-                    entity = apply(state, operation, device["id"], now)
-                except ValidationError as error:
-                    raise DomainError("拟办内容不完整：" + "; ".join(str(e["msg"]) for e in error.errors()),
-                                      "VALIDATION_ERROR", 422) from None
-                state["revision"] += 1
-                result = {"revision": state["revision"], "operation_id": operation.operation_id, "entity": entity}
-                conn.execute("INSERT INTO operations VALUES(?,?,?,?)", (operation.operation_id, device["id"],
-                             digest(encode(operation.model_dump())), encode(result)))
-                conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device["id"], kind,
-                             encode(payload), stamp(now)))
-                applied.append(kind)
-            store.save(conn, state)
-            conn.execute("UPDATE assistant_drafts SET status='applied' WHERE id=?", (draft_id,))
-        flush_archives(store)
-        return {"revision": state["revision"], "applied": applied}
+        return service.apply_draft(draft_id, device["id"])
 
     @app.post("/api/v1/assistant/drafts/{draft_id}/dismiss")
     def assistant_dismiss(draft_id: str, device=Depends(authenticated)):
-        with store.connect() as conn:
-            result = conn.execute("UPDATE assistant_drafts SET status='dismissed' WHERE id=? AND status='pending'", (draft_id,))
-            if result.rowcount == 0:
-                raise DomainError("拟办不存在或已处理", "NOT_FOUND", 404)
-        return {"dismissed": True}
+        return service.dismiss_draft(draft_id)
+
+    # ---- WeChat official-account channel --------------------------------
+    channel = WeChatChannel(store, clock, service, lambda: app.state.wechat_transport)
+    app.state.wechat = channel
+
+    @app.get("/wechat/callback")
+    def wechat_verify(signature: str = "", timestamp: str = "", nonce: str = "", echostr: str = ""):
+        # WeChat's URL check: echo back only when the Token signature matches.
+        if not signature_ok(channel.settings.token(), signature, timestamp, nonce, clock()):
+            return PlainTextResponse("forbidden", status_code=403)
+        return PlainTextResponse(echostr)
+
+    @app.post("/wechat/callback")
+    async def wechat_push(request: Request, signature: str = "", timestamp: str = "", nonce: str = ""):
+        if not signature_ok(channel.settings.token(), signature, timestamp, nonce, clock()):
+            return PlainTextResponse("forbidden", status_code=403)
+        body = await request.body()
+        try:
+            message = parse_message(body)
+        except DomainError:
+            return PlainTextResponse("success")  # Malformed pushes are dropped, never retried.
+        if channel.receive(message) and background:
+            asyncio.create_task(channel.run_once())
+        return PlainTextResponse("success")
+
+    @app.get("/api/v1/wechat/config")
+    def wechat_config(device=Depends(authenticated)):
+        return channel.settings.public(device["role"] == "desktop")
+
+    @app.post("/api/v1/wechat/config")
+    def wechat_configure(data: WeChatConfigIn, device=Depends(desktop)):
+        channel.settings.update(data)
+        return channel.settings.public(True)
+
+    @app.post("/api/v1/wechat/bind-code")
+    def wechat_bind_code(device=Depends(desktop)):
+        return channel.new_bind_code()
+
+    @app.post("/api/v1/wechat/unbind")
+    def wechat_unbind(device=Depends(desktop)):
+        return channel.unbind()
+
+    @app.post("/api/v1/wechat/test")
+    async def wechat_test(device=Depends(desktop)):
+        channel.enqueue("这是一条来自 Timer 的测试消息。收到就说明电脑后台能给你发微信了。")
+        if background:
+            asyncio.create_task(channel.run_once())
+        return {"queued": True}
+
+    @app.get("/api/v1/wechat/outbox")
+    def wechat_outbox(device=Depends(desktop)):
+        return {"messages": channel.outbox()}
 
     return app
 
