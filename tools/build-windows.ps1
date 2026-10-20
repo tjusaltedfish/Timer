@@ -2,6 +2,11 @@ param([ValidateSet('debug','release')] [string] $Mode = 'release')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'dev-environment.ps1')
 $taskEnv = Initialize-PlannerEnvironment
+# pubspec.yaml is the only version source; the app shows it and compares it
+# with the release the computer offers.
+$taskVersion = ((Get-Content -LiteralPath (Join-Path $taskEnv.App 'pubspec.yaml')) |
+    Where-Object { $_ -match '^version:\s*(\d+\.\d+\.\d+\+\d+)\s*$' } | Select-Object -First 1) -replace '^version:\s*', ''
+if (-not $taskVersion) { throw 'pubspec.yaml version must look like 1.2.3+45.' }
 $taskProject = $taskEnv.App
 $taskFlutter = $taskEnv.Flutter
 $taskOriginal = $taskProject
@@ -32,7 +37,7 @@ try {
         }
         $env:PLANNER_PLUGIN_SOURCE_ROOT = $taskPluginSources
     }
-    & $taskFlutter build windows "--$Mode" --no-pub
+    & $taskFlutter build windows "--$Mode" --no-pub "--dart-define=TIMER_VERSION=$taskVersion"
     if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
 } finally {
     Pop-Location

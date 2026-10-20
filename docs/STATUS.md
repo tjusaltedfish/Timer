@@ -8,6 +8,17 @@
 - 产品里程碑 `77882f0`：助手、桌面挂件、分类、睡眠及 v3 界面；环境修复 `8e5bce5`：共享 SDK、缓存和双工具环境入口。
 - 当前实现与未验证项以本文为准；任务拆解见 `vibe-blueprint/08-implementation-plan.md`；环境以 `development-environment.md` 为准；当前视觉以 `design/ink-system.md` 为准；学习复盘的已确认设计见 `design/daily-review.md`。
 
+## 一键发布与手机 App 内更新
+
+- 版本唯一来源 `apps/planner/pubspec.yaml`；构建脚本以 `--dart-define=TIMER_VERSION` 注入客户端，后台启动时读取同一文件。`/health` 与快照返回后台版本及最新手机版本；设置页「版本」显示两端版本。
+- `tools/release.ps1`：Timer 窗口开着时直接停止；build 号取 pubspec 与已发布版本的较大值加一；构建 Windows release 与安卓 debug、安装电脑版、发布 arm64 APK 到 `<数据目录>/releases`（`latest.json` 含版本、大小、SHA-256、`min_build`，保留两个 APK，不进 Git）；按桌面快捷方式同样的方式（`Start-Timer.ps1 -BackendOnly`）重启后台并核对版本；失败时恢复版本号。
+- 后台 `GET /api/v1/app/latest`、`/api/v1/app/download` 需配对凭证（经已有 `^/api/v1/` 隧道规则，不新增公开路径）。安卓：启动与回到前台时检查，顶部提示「下载并安装」，下载后由 Kotlin 计算 SHA-256 校验，再经 FileProvider（仅 cache/updates）调起系统安装器；无安装权限时引导到系统设置；低于 `min_build` 时提示必须更新。
+- 验证：后台 74 passed（新增发布 5 项）；Flutter 54 passed（新增更新 6 项）；analyze 无问题；脚本在 PowerShell 5.1 解析通过，Timer 开着时发布脚本不改动任何东西。
+- 真实发布（2026-10-19）：`tools/release.ps1` 把版本 1.0.0+1 → **1.0.0+2**，Windows 版已安装，arm64 APK（96,331,501 字节）已发布，后台重启后 `/health` 报告 1.0.0+2。首次运行发现：在输出被管道捕获时，后台进程继承了管道，脚本在重启这一步不退出；已拆出 `tools/restart-backend.ps1`（Start-Process 不继承句柄、只等启动器退出），同条件实测 5 秒返回。
+- 外网实测（临时配对设备，用后撤销）：无凭证 401；凭证查到 1.0.0+2；经 `timer.studydazi.top` 下载完整 96,331,501 字节且 SHA-256 一致；撤销后凭证立即 401。
+- 手机上当前安装的是更新功能之前的旧包，**需要手动装一次 1.0.0+2**（已放到电脑桌面 `Timer-手机版.apk`），之后才能在 App 内收到更新提示。OPPO 上的下载、权限引导与安装器尚待真机实测。
+- 只能在同一调试签名（`%USERPROFILE%\.android\debug.keystore`）下覆盖安装。
+
 ## 新增交互入口：微信助手（公众号测试号，已真实接通）
 
 - 用户已明确：电脑登录自己的微信小号，通过普通好友私聊与手机大号交互，承担安排、反馈、主动提醒与每日总结。App 与电脑后台继续保留并共用日程数据。
@@ -22,6 +33,7 @@
 - 日常安装：`tools/install-timer.ps1` 把最新 Windows 版装到 `%USERPROFILE%/Apps/Timer` 并在桌面放「Timer」快捷方式；双击时若后台未运行则先隐藏启动后台（127.0.0.1:8787），再开窗口。已实测：快捷方式启动后 `/health` 正常、窗口打开、真实后台 `/api/v1/wechat/config` 可用。
 - 接通进展：官方 DeepSeek 已配置并实测（测试连接与 JSON 拟办生成成功；此前中转站因地址缺 /v1 返回网页、且无该模型，已改进相应提示并加「可用模型」）。Cloudflare 隧道 `timer.studydazi.top` 已建，只开放 `/wechat/callback`，外网实测签名校验通过、其他接口 404；启动脚本会同时拉起隧道。
 - **真实接通（2026-10-19）**：测试号接口配置提交成功；手机大号已绑定，绑定回复经客服消息实际送达（outbox `sent`）。排查中发现并修复：最初填的 appID 不是关注的测试号（48001 / 40003，现已改为中文提示）；绑定码原先只存内存、后台重启后失效（现存哈希于磁盘，错误码会回复提示）；隧道在本机代理 TUN 模式下 QUIC 不稳（改用 `protocol: http2`）。后台 68 passed。
+- 手机同步：用户同意后隧道增开 `/api/v1/`（全部需配对凭证，外网无凭证 401、`/health` `/docs` 仍 404）；配对限流改按 `CF-Connecting-IP` 区分隧道来源（新增测试，后台 69 passed）。最新 arm64 debug APK 已放到电脑桌面，待用户在 OPPO 上安装与配对。
 - 待做：大号实际对话与拟办确认的实测；服务端主动提醒与日报调度；后台与隧道开机自启。
 
 ## 最新进展：弹性执行与自动微调
