@@ -8,7 +8,9 @@
 
 > **环境更新（2026-10-19）**：项目已更名为 `C:/Users/ASUS/Documents/Timer`。Codex 的 AppData 工具链路径经实测会发生 Store 应用重定向；共享 SDK、Pub 缓存和工作区联接现位于 `%USERPROFILE%/DevTools/Timer`。环境操作以 `AGENTS.md`、`docs/development-environment.md`、`tools/toolchain.json` 为准，先运行 `tools/setup-dev.ps1`，不要按下文历史记录重复安装 SDK。最新功能进度以 `docs/STATUS.md` 为准。
 
-> **新增入口（2026-10-19）**：用户确认电脑登录微信小号，与手机大号普通好友私聊。调研与接入方案见 [微信小号技术路线](design/wechat-personal-channel.md)；本机微信 4.1.15.13，仅核查了安装版本。UIA 桥接为待验证路线，微信收发、锁屏运行、消息队列和日报推送均尚未实现；不要把官方 ClawBot 绑定当成本需求已完成。
+> **微信路线历史**：曾调研个人小号桌面接入，W1 后用户已改选公众号测试号；当前已接通的正式入口是公众号。路线变更与既有接通证据见 `design/wechat-personal-channel.md`、`guides/wechat-test-account.md`，不要按旧 UIA 方案重复开发。
+
+> **1.1.0+3 续接**：首页时钟/日期、手机整周总览、专注面板、通用编辑删除、执行感知助手与偏好、材料原文复盘、公众号主动调度和通知启用入口已实现并做隔离验证。规则与模板见 [助手机制](design/assistant-behavior.md)。原小号路线已经被用户改为公众号测试号；旧设计细节以专项文档为准。当前正式后台仍为 1.0.0+2，须在正常数据环境激活准备包；不要把 Codex 的 AppData 包缓存当成正式数据库。
 
 ---
 
@@ -47,7 +49,7 @@
 
 ### 2.1 代码与仓库
 
-- FastAPI/SQLite 后台实际测试 **52 passed**；Flutter 实际测试 **47 passed**；analyze **No issues found**；Windows 原生集成 **1 passed**。最新规则与验证见 `elastic-operations.md` 和 `STATUS.md`。
+- FastAPI/SQLite 后台实际测试 **92 passed**；Flutter 实际测试 **59 passed**；analyze **No issues found**；Windows 原生集成 **1 passed**。最新规则与验证见 `elastic-operations.md` 和 `STATUS.md`。
 - Windows release、Android 三种 ABI 的 debug APK 已构建成功；Flutter doctor **No issues found**。
 - 私有仓库 `https://github.com/tjusaltedfish/Timer`，分支 `main`；历史锚点为产品 `77882f0`、环境 `8e5bce5`，后续已新增回顾版本修复与弹性执行；最新提交以 `git log` 为准。
 - 原有大型 UI 已拆分，助手在 `server/app/assistant.py`，窗口管理在 `apps/planner/lib/desktop/`。最新状态和已知缺陷见 `docs/STATUS.md`。
@@ -112,7 +114,7 @@
 
 `task.create` `task.update` `block.create` `block.move` `session.start` `session.pause` `session.resume` `session.end` `session.extend` `feedback.create` `waiting.resolve` `waiting.snooze` `review.save` `settings.update` `plan.apply` `plan.undo` `project.create` `project.update` `sleep.log` `sleep.delete`
 
-迟到模式、续时、检查点改约和确定性顺延的已实现约定见 `elastic-operations.md`；客户端的乐观操作与存储已拆到 `operations.dart` / `execution.dart` / `storage.dart`。
+助手的过去/当前/未来规则见 `design/assistant-behavior.md`；迟到模式、续时、检查点改约和确定性顺延的已实现约定见 `elastic-operations.md`；客户端的乐观操作与存储已拆到 `operations.dart` / `execution.dart` / `storage.dart`。
 
 注意：`block.move` 后台支持，但客户端 `_optimistic()` **没有实现**（会抛「需要连接电脑」）。做拖动改期前要补上。
 

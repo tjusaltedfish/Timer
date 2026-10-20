@@ -4,6 +4,8 @@
 
 当前已进入正式实现：Flutter Android/Windows 客户端与 Python 电脑后台已有任务、执行和反馈闭环。界面采用[墨晕白纸](docs/design/ink-system.md)风格，支持卡片轮盘、点选时段新建、滚轮选时、Windows 桌面置顶挂件、睡眠记录和可配置的 AI 助手（OpenAI 中转站或 DeepSeek，Key 只存在电脑上）。日终复盘与知识回忆见[设计稿](docs/design/daily-review.md)。完整初版仍在推进，详见[当前状态](docs/STATUS.md)。
 
+源码更新到 **1.1.0+3**：此刻时钟、手机整周总览、专注反馈、待办编辑删除、助手偏好与材料复盘、公众号主动调度。正式激活和真机验证进度见当前状态；行为与边界见[助手机制](docs/design/assistant-behavior.md)。
+
 - [接手开发指导（技术 + 水墨审美，优先阅读）](docs/HANDOFF.md)
 - [蓝图入口](docs/vibe-blueprint/00-index.md)
 - [需求验收](docs/vibe-blueprint/02-scope-and-requirements.md)
