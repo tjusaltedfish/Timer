@@ -7,7 +7,7 @@
 # Usage: ./tools/release.ps1 [-Version 1.1.0] [-RequireUpdate]
 #   -Version        new x.y.z (default: keep the current one, only the build number rises)
 #   -RequireUpdate  phones older than this build are told they must update
-param([string] $Version, [switch] $RequireUpdate)
+param([string] $Version, [switch] $RequireUpdate, [switch] $Prepared, [switch] $ValidateOnly)
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $pubspec = Join-Path $repo 'apps\planner\pubspec.yaml'
@@ -17,10 +17,51 @@ $launcher = Join-Path $env:USERPROFILE 'Apps\Timer\Start-Timer.ps1'
 $data = if ($env:PLANNER_DATA_DIR) { $env:PLANNER_DATA_DIR } else { Join-Path $env:LOCALAPPDATA 'TimePlanner\data' }
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
-if (Get-Process -Name time_planner -ErrorAction SilentlyContinue | Where-Object { -not $_.Path -or $_.Path -like "$client*" }) {
+if ($ValidateOnly -and -not $Prepared) { throw '-ValidateOnly requires -Prepared.' }
+if (-not ($Prepared -and $ValidateOnly) -and (Get-Process -Name time_planner -ErrorAction SilentlyContinue | Where-Object { -not $_.Path -or $_.Path -like "$client*" })) {
     throw 'Timer (computer version) is open. Close the Timer window, then run tools/release.ps1 again.'
 }
 if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+$') { throw "-Version must look like 1.2.3, got: $Version" }
+
+# A prepared build can be activated from the user's ordinary terminal without
+# rebuilding, or inheriting a packaged development app's AppData redirection.
+if ($Prepared) {
+    if ($Version) { throw '-Prepared reads its version from the prepared manifest; omit -Version.' }
+    $preparedPath = Join-Path $repo 'artifacts\prepared-release.json'
+    if (-not (Test-Path -LiteralPath $preparedPath)) { throw 'No prepared release found.' }
+    $preparedRelease = Get-Content -LiteralPath $preparedPath -Raw | ConvertFrom-Json
+    if ($preparedRelease.version -notmatch '^\d+\.\d+\.\d+\+\d+$' -or -not $preparedRelease.files -or
+        -not ($preparedRelease.files | Where-Object { $_.path -eq 'time_planner.exe' })) { throw 'Prepared release manifest is incomplete.' }
+    $sourceVersion = [regex]::Match([IO.File]::ReadAllText($pubspec), '(?m)^version:\s*(\S+)').Groups[1].Value
+    if ($sourceVersion -ne $preparedRelease.version) { throw 'Prepared release differs from pubspec.yaml.' }
+    $artifactPrefix = [IO.Path]::GetFullPath((Join-Path $repo 'artifacts')).TrimEnd('\') + '\'
+    $preparedWindows = [IO.Path]::GetFullPath([string]$preparedRelease.windows)
+    $preparedApk = [IO.Path]::GetFullPath([string]$preparedRelease.apk)
+    if (-not $preparedWindows.StartsWith($artifactPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+        -not $preparedApk.StartsWith($artifactPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Prepared files must be inside this checkout artifacts folder.' }
+    if ((Get-FileHash -LiteralPath $preparedApk -Algorithm SHA256).Hash -ne $preparedRelease.apk_sha256) { throw 'Prepared APK checksum differs.' }
+    foreach ($entry in $preparedRelease.files) {
+        $candidate = [IO.Path]::GetFullPath((Join-Path $preparedWindows $entry.path))
+        if (-not $candidate.StartsWith($preparedWindows.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid prepared Windows file path.' }
+        if ((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne $entry.sha256) { throw 'Prepared Windows file checksum differs.' }
+    }
+    if ($ValidateOnly) {
+        Write-Output "Verified prepared release $($preparedRelease.version); no installed files or data changed."
+        exit 0
+    }
+    & (Join-Path $PSScriptRoot 'install-timer.ps1') -Build $preparedWindows
+    if ($LASTEXITCODE -ne 0) { throw 'Prepared Windows install failed.' }
+    $preparedArgs = @('-m', 'app.releases', 'publish', $preparedApk, '--version', $preparedRelease.version, '--data', $data)
+    if ($RequireUpdate) { $preparedArgs += '--require' }
+    Push-Location (Join-Path $repo 'server')
+    try {
+        & $python @preparedArgs
+        if ($LASTEXITCODE -ne 0) { throw 'Prepared phone publish failed.' }
+    } finally { Pop-Location }
+    & (Join-Path $PSScriptRoot 'restart-backend.ps1') -ExpectVersion $preparedRelease.version
+    Write-Output "Activated prepared version $($preparedRelease.version). Open the phone app to update."
+    exit 0
+}
 
 $original = [IO.File]::ReadAllText($pubspec, $utf8)
 $match = [regex]::Match($original, '(?m)^version:\s*(\d+\.\d+\.\d+)\+(\d+)\s*$')

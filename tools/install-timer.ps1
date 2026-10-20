@@ -26,7 +26,13 @@ if (-not $LauncherOnly) {
     if (Get-Process -Name time_planner -ErrorAction SilentlyContinue | Where-Object { -not $_.Path -or $_.Path -like "$client*" }) {
         throw 'Timer is open; close it before updating (or use -LauncherOnly).'
     }
-    if (Test-Path -LiteralPath $client) { Remove-Item -LiteralPath $client -Recurse -Force }
+    $installRoot = [IO.Path]::GetFullPath($home_).TrimEnd('\') + '\'
+    $resolvedClient = [IO.Path]::GetFullPath($client)
+    if (-not $resolvedClient.StartsWith($installRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path -Leaf $resolvedClient) -ne 'client') { throw 'Client install target is outside the Timer install folder.' }
+    $existingClient = Get-Item -LiteralPath $resolvedClient -Force -ErrorAction SilentlyContinue
+    if ($existingClient -and ($existingClient.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Client install target is a link; left untouched.' }
+    if ($existingClient) { Remove-Item -LiteralPath $resolvedClient -Recurse -Force }
     & robocopy $Build $client /E /NFL /NDL /NJH /NJS | Out-Null
     if ($LASTEXITCODE -gt 7) { throw 'Could not copy the client files.' }
 }
