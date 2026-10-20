@@ -9,10 +9,7 @@ extension _WeekPage on _PlannerHomeState {
               Row(
                 children: [
                   const Expanded(
-                    child: Text(
-                      '深墨是安排 · 点日期看明细',
-                      style: TextStyle(fontSize: 12),
-                    ),
+                    child: Text('淡彩记事 · 长按看全名', style: TextStyle(fontSize: 12)),
                   ),
                   TextButton(
                     onPressed: () => update(() => weekDetail = true),
@@ -24,6 +21,7 @@ extension _WeekPage on _PlannerHomeState {
               Expanded(
                 child: WeekOverview(
                   blocks: c.blocks,
+                  tasks: c.tasks,
                   day: selectedDay,
                   now: now,
                   zone: zone,

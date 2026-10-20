@@ -36,6 +36,22 @@ extension _BlockDetailSheet on _PlannerHomeState {
               },
               child: const Text('编辑待办'),
             ),
+          if (block['status'] == 'scheduled' &&
+              !c.sessions.any((s) => s['block_id'] == block['id']))
+            TextButton(
+              key: ValueKey('block.cancel.${block['id']}'),
+              onPressed: () {
+                Navigator.pop(context);
+                attempt(() async {
+                  await c.submit('block.cancel', {
+                    'id': block['id'],
+                    'version': block['version'],
+                  });
+                  message('已撤下这一段，相关提醒已取消。');
+                });
+              },
+              child: Text(t == null ? '删除这一段' : '只撤下这一段'),
+            ),
           if (t != null && t['state'] != 'cancelled')
             TextButton(
               key: ValueKey('task.delete.${t['id']}'),

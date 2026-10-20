@@ -26,23 +26,25 @@ extension _TodayPage on _PlannerHomeState {
         .toList();
     final ids = items.map((b) => b['id']).join('|');
     Widget empty() => Center(
-      child: InkCard(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '今日尚空。先落一笔有结果的事。',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              key: const Key('action.first-task'),
-              onPressed: () => taskDialog(),
-              icon: const Icon(Icons.add),
-              label: const Text('安排第一件事'),
-            ),
-          ],
+      child: SingleChildScrollView(
+        child: InkCard(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '今日尚空。先落一笔有结果的事。',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                key: const Key('action.first-task'),
+                onPressed: () => taskDialog(),
+                icon: const Icon(Icons.add),
+                label: const Text('安排第一件事'),
+              ),
+            ],
+          ),
         ),
       ),
     );

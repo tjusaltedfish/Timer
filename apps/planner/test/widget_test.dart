@@ -9,7 +9,10 @@ void main() {
     tester,
   ) async {
     tzdata.initializeTimeZones();
-    final controller = PlannerController(storage: MemoryStore());
+    final controller = PlannerController(
+      storage: MemoryStore(),
+      clock: () => DateTime.utc(2026, 10, 19, 16),
+    );
     await controller.initialize();
     await tester.pumpWidget(PlannerApp(controller: controller));
     expect(find.text('今日尚空。先落一笔有结果的事。'), findsOneWidget);

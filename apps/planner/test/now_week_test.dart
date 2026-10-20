@@ -42,7 +42,13 @@ void main() {
       await tester.tap(find.text('回到今天'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('action.start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
+      // Starting is acknowledged with a brief full-page "入定" moment.
+      expect(find.byKey(const Key('focus.entry')), findsOneWidget);
+      expect(find.text('入定'), findsOneWidget);
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('focus.entry')), findsNothing);
       expect(find.byKey(const Key('focus.panel')), findsOneWidget);
       expect(find.text('正在专注'), findsOneWidget);
       expect(find.byKey(const Key('focus.remaining')), findsOneWidget);

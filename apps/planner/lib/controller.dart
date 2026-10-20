@@ -408,10 +408,29 @@ class PlannerController extends ChangeNotifier {
       ((await _assistant('GET', '/models'))['models'] as List).cast<String>();
   Future<List<Json>> assistantMessages() async =>
       ((await _assistant('GET', '/messages'))['messages'] as List).cast<Json>();
-  Future<List<Json>> sendAssistant(String text) async =>
-      ((await _assistant('POST', '/messages', {'text': text}))['messages']
-              as List)
-          .cast<Json>();
+
+  /// The assistant changes the schedule on the computer right away, so local
+  /// records go up first and the result comes back down afterwards.
+  Future<List<Json>> sendAssistant(String text) async {
+    if (pending.isNotEmpty) await sync();
+    final messages =
+        ((await _assistant('POST', '/messages', {'text': text}))['messages']
+                as List)
+            .cast<Json>();
+    if (messages.any(
+      (m) => (m['drafts'] as List? ?? []).any((d) => d['status'] == 'applied'),
+    )) {
+      await sync();
+    }
+    return messages;
+  }
+
+  Future<void> undoDraft(String id) async {
+    await sync();
+    await _assistant('POST', '/drafts/$id/undo', {});
+    await sync();
+  }
+
   Future<void> dismissDraft(String id) =>
       _assistant('POST', '/drafts/$id/dismiss', {});
 

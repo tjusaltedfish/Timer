@@ -200,7 +200,7 @@ class _ReviewPanelState extends State<ReviewPanel> {
           style: TextStyle(fontSize: 28, color: context.inkPalette.inkJiao),
         ),
         const SizedBox(height: 10),
-        Text('${widget.day} · 两三句话，记录产出、卡点和下一步。'),
+        Text('${widget.day} · 放进今天的笔记或实验报告，写两三句产出、卡点和下一步，助手据此帮你总结。'),
         const SizedBox(height: 24),
         for (final material
             in (widget.controller.state['materials'] as List? ?? [])
@@ -231,21 +231,14 @@ class _ReviewPanelState extends State<ReviewPanel> {
                     },
             ),
           ),
-        Wrap(
-          spacing: 8,
-          children: [
-            OutlinedButton.icon(
-              key: const Key('review.add-material'),
-              onPressed: busy ? null : addMaterial,
-              icon: const Icon(Icons.attach_file),
-              label: const Text('添加笔记或实验报告'),
-            ),
-            FilledButton(
-              key: const Key('review.generate'),
-              onPressed: busy ? null : generate,
-              child: Text(busy ? '处理中…' : '生成材料复盘'),
-            ),
-          ],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            key: const Key('review.add-material'),
+            onPressed: busy ? null : addMaterial,
+            icon: const Icon(Icons.attach_file),
+            label: const Text('添加笔记或实验报告'),
+          ),
         ),
         const SizedBox(height: 16),
         TextField(
@@ -269,6 +262,38 @@ class _ReviewPanelState extends State<ReviewPanel> {
             hintText: '今天留下了什么？哪些还在等待，明天从哪里继续？',
           ),
         ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton(
+              key: const Key('review.generate'),
+              onPressed: busy ? null : generate,
+              child: Text(busy ? '处理中…' : '生成 AI 复盘'),
+            ),
+            OutlinedButton(
+              key: const Key('review.save'),
+              onPressed: busy
+                  ? null
+                  : () async {
+                      if (text.text.trim().isEmpty) return;
+                      try {
+                        await widget.controller.submit('review.save', {
+                          'date': widget.day,
+                          'text': text.text.trim(),
+                        });
+                        if (mounted) {
+                          setState(() => result = '原文已保留。连接电脑后写入日报归档。');
+                        }
+                      } catch (e) {
+                        if (mounted) setState(() => result = e.toString());
+                      }
+                    },
+              child: const Text('只保存原文'),
+            ),
+          ],
+        ),
         const SizedBox(height: 16),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
@@ -288,23 +313,6 @@ class _ReviewPanelState extends State<ReviewPanel> {
                     if (mounted) setState(() => result = e.toString());
                   }
                 },
-        ),
-        FilledButton(
-          onPressed: busy
-              ? null
-              : () async {
-                  if (text.text.trim().isEmpty) return;
-                  try {
-                    await widget.controller.submit('review.save', {
-                      'date': widget.day,
-                      'text': text.text.trim(),
-                    });
-                    if (mounted) setState(() => result = '原文已保留。连接电脑后写入日报归档。');
-                  } catch (e) {
-                    if (mounted) setState(() => result = e.toString());
-                  }
-                },
-          child: const Text('保存今天的回顾'),
         ),
         if (result != null)
           Padding(

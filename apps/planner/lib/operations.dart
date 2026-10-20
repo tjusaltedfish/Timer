@@ -96,6 +96,14 @@ void _optimistic(Json state, Json operation, {required DateTime now}) {
           : find(tasks, p['task_id'])['title'],
       ...p,
     });
+  } else if (kind == 'block.cancel') {
+    final block = find(blocks, p['id']);
+    if (block['status'] != 'scheduled' ||
+        sessions.any((s) => s['block_id'] == block['id'])) {
+      throw ApiFailure('这一段已经开始或有记录，不能撤下。', 409);
+    }
+    block['status'] = 'cancelled';
+    block['version']++;
   } else if (kind == 'session.start') {
     _startSession(state, p, now);
   } else if (kind == 'session.extend') {

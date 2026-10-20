@@ -22,6 +22,7 @@ import 'widgets/brush_divider.dart';
 import 'widgets/ink_card.dart';
 import 'widgets/seal.dart';
 import 'widgets/enso_timer.dart';
+import 'widgets/focus_ring.dart';
 import 'widgets/card_wheel.dart';
 import 'widgets/ink_timeline.dart';
 import 'widgets/sync_dot.dart';
@@ -417,6 +418,9 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
       );
       return PaperBackground(
         child: Scaffold(
+          // Home/week inputs live in keyboard-safe sheets. Their backdrop must
+          // not shrink a second time when the sheet owns the keyboard inset.
+          resizeToAvoidBottomInset: page != 0 && page != 1,
           backgroundColor: palette.paper.withValues(alpha: 0),
           body: SafeArea(
             bottom: !compact,

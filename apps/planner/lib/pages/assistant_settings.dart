@@ -234,7 +234,23 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
                   decoration: const InputDecoration(labelText: '每日调用上限'),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                key: const Key('assistant.confirm-first'),
+                contentPadding: EdgeInsets.zero,
+                value: config?['confirm_first'] == true,
+                title: const Text('改动前先问我'),
+                subtitle: const Text('关闭时助手直接改好日程，每次都能一键撤销。'),
+                onChanged: busy
+                    ? null
+                    : (value) => _run(() async {
+                        final saved = await c.saveAssistantConfig({
+                          'confirm_first': value,
+                        });
+                        if (mounted) setState(() => config = saved);
+                      }),
+              ),
+              const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,

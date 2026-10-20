@@ -2,11 +2,20 @@ part of '../home.dart';
 
 extension _EditTaskSheet on _PlannerHomeState {
   Future<void> deleteTask(Json t) async {
+    final active = c.sessions
+        .where(
+          (s) =>
+              s['task_id'] == t['id'] &&
+              ['running', 'paused'].contains(s['state']),
+        )
+        .firstOrNull;
     final confirmed = await showOwnedDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('删除这项待办？'),
-        content: Text('「${t['title']}」及未来安排将被撤下，相关提醒会取消。已有投入和结果记录仍保留在历史中。'),
+        content: Text(
+          '${active == null ? '' : '当前投入会先结束，已记录的时间会保留。'}「${t['title']}」及未来安排将被撤下，相关提醒会取消。已有投入和结果记录仍保留在历史中。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -15,16 +24,18 @@ extension _EditTaskSheet on _PlannerHomeState {
           FilledButton(
             key: const Key('task.confirm-delete'),
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('删除待办'),
+            child: Text(active == null ? '删除待办' : '结束并删除'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
     await attempt(() async {
+      if (active != null) await c.controlSession(active, 'end');
+      final latest = c.tasks.firstWhere((item) => item['id'] == t['id']);
       await c.submit('task.update', {
         'id': t['id'],
-        'version': t['version'],
+        'version': latest['version'],
         'state': 'cancelled',
       });
       message('已删除待办，未来安排和提醒已撤下。');

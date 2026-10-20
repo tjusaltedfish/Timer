@@ -12,8 +12,10 @@ extension _FocusPanel on _PlannerHomeState {
         ? '本段时间到了'
         : '正在专注';
     final anchor = paused ? DateTime.parse(active['paused_at']) : c.nowUtc;
-    final seconds = end.difference(anchor).inSeconds.clamp(0, 864000);
-    final minutes = seconds ~/ 60;
+    final remaining = end.difference(anchor).inSeconds;
+    final planned =
+        active['planned_seconds'] as int? ??
+        end.difference(DateTime.parse(active['actual_start_at'])).inSeconds;
     return InkCard(
       key: const Key('focus.panel'),
       focused: true,
@@ -69,29 +71,15 @@ extension _FocusPanel on _PlannerHomeState {
             ],
             Expanded(
               child: Center(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${minutes.toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}',
-                        key: const Key('focus.remaining'),
-                        style: TextStyle(
-                          fontFamily: 'WenKai',
-                          fontSize: 64,
-                          height: 1.2,
-                          color: palette.inkJiao,
-                        ),
-                      ),
-                      Text(
-                        expired
-                            ? '记录结果，或再给自己一点时间'
-                            : '预计 ${hm(local(active['expected_end_at']))} 收尾',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
+                child: FocusRing(
+                  remaining: paused ? remaining.clamp(0, 864000) : remaining,
+                  planned: planned,
+                  paused: paused,
+                  caption: paused
+                      ? '暂停中 · 恢复后继续计时'
+                      : expired
+                      ? '记录结果，或再给自己一点时间'
+                      : '预计 ${hm(local(active['expected_end_at']))} 收尾',
                 ),
               ),
             ),

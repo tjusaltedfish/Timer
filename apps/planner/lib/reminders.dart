@@ -112,12 +112,12 @@ List<ReminderItem> buildReminders(Json state, DateTime now) {
   for (final check in (state['waiting_checks'] as List).cast<Json>()) {
     if (check['resolved_at'] != null) continue;
     final task = tasks.where((t) => t['id'] == check['task_id']).firstOrNull;
-    if (task != null && ['done', 'cancelled'].contains(task['state'])) continue;
+    if (task == null || task['state'] != 'waiting') continue;
     add(
       'waiting:${check['id']}',
       check['check_at'],
       '检查等待中的结果',
-      task?['title'] ?? '确认结果是否返回，并记录下一步。',
+      task['title'],
       {'page': 'tasks', 'task_id': check['task_id']},
     );
   }
@@ -304,6 +304,7 @@ class ReminderService extends ChangeNotifier {
   Future<void>? _initialization;
   Timer? _windowsClock;
   List<ReminderItem> _plan = [];
+  ReminderItem? _testReminder;
   Map<String, String> _registry = {}, _shown = {};
 
   Future<void> initialize() => _initialization ??= _initialize()
@@ -368,6 +369,7 @@ class ReminderService extends ChangeNotifier {
 
   Future<void> disable() async {
     enabled = false;
+    _testReminder = null;
     await controller.storage.write('reminders_enabled', 'false');
     await refresh(force: true);
   }
@@ -392,6 +394,7 @@ class ReminderService extends ChangeNotifier {
         {'page': 'today'},
       );
       if (driver.schedulesInSystem) {
+        _testReminder = item;
         await driver.schedule(item);
         status = '已安排 15 秒后测试，请切到其他应用或锁屏观察通知。';
       } else {
@@ -438,7 +441,13 @@ class ReminderService extends ChangeNotifier {
           continue;
         }
         final now = clock().toUtc();
-        final all = buildReminders(controller.state, now);
+        final all = [
+          ...buildReminders(controller.state, now),
+          // Sync must retain the test alarm until it has had time to display.
+          if (_testReminder case final test?
+              when now.isBefore(test.at.add(const Duration(minutes: 2))))
+            test,
+        ];
         _plan = all.where((r) => !r.at.isAfter(now)).toList();
         _plan.addAll(all.where((r) => r.at.isAfter(now)).take(120));
         final ids = <int>{};

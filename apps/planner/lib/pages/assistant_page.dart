@@ -8,8 +8,8 @@ extension _AssistantPage on _PlannerHomeState {
   );
 }
 
-/// Letter-paper conversation with the assistant. Changes it suggests arrive
-/// as drafts and only take effect after "照此办理".
+/// Letter-paper conversation with the assistant. Clear requests are carried
+/// out at once and can be undone; with "改动前先问我" they wait as drafts.
 class AssistantPanel extends StatefulWidget {
   const AssistantPanel({
     super.key,
@@ -199,6 +199,22 @@ class _AssistantPanelState extends State<AssistantPanel> {
     memoryText.dispose();
   }
 
+  Future<void> undo(Json draft) async {
+    setState(() => busyDrafts.add(draft['id']));
+    try {
+      await c.undoDraft(draft['id']);
+      if (!mounted) return;
+      setState(() {
+        draft['status'] = 'undone';
+        draft['undoable'] = false;
+      });
+    } catch (error) {
+      if (mounted) setState(() => problem = error.toString());
+    } finally {
+      if (mounted) setState(() => busyDrafts.remove(draft['id']));
+    }
+  }
+
   Future<void> decide(Json draft, bool accept) async {
     setState(() => busyDrafts.add(draft['id']));
     try {
@@ -326,6 +342,7 @@ class _AssistantPanelState extends State<AssistantPanel> {
                               message: messages[i],
                               busy: busyDrafts,
                               onDecide: decide,
+                              onUndo: undo,
                             ),
                     ),
             ),
@@ -389,10 +406,12 @@ class _MessageView extends StatelessWidget {
     required this.message,
     required this.busy,
     required this.onDecide,
+    required this.onUndo,
   });
   final Json message;
   final Set<String> busy;
   final void Function(Json draft, bool accept) onDecide;
+  final void Function(Json draft) onUndo;
   @override
   Widget build(BuildContext context) {
     final p = context.inkPalette;
@@ -456,8 +475,14 @@ class _MessageView extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              '拟办 · ${draft['summary']}',
-                              style: theme.textTheme.titleSmall,
+                              draft['status'] == 'pending'
+                                  ? '拟办 · ${draft['summary']}'
+                                  : draft['summary'],
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                decoration: draft['status'] == 'undone'
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
                             ),
                           ),
                           if (draft['status'] == 'applied')
@@ -494,11 +519,31 @@ class _MessageView extends StatelessWidget {
                             ),
                           ],
                         )
+                      else if (draft['status'] == 'applied' &&
+                          draft['undoable'] == true)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '已改好日程',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                            TextButton(
+                              key: ValueKey('draft.undo.${draft['id']}'),
+                              onPressed: busy.contains(draft['id'])
+                                  ? null
+                                  : () => onUndo(draft),
+                              child: const Text('撤销'),
+                            ),
+                          ],
+                        )
                       else
-                        Text(
-                          draft['status'] == 'applied' ? '已照此办理' : '已放下',
-                          style: theme.textTheme.bodySmall,
-                        ),
+                        Text(switch (draft['status']) {
+                          'applied' => '已办',
+                          'undone' => '已撤销',
+                          _ => '已放下',
+                        }, style: theme.textTheme.bodySmall),
                     ],
                   ),
                 ),

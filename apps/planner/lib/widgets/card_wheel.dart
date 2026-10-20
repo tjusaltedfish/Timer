@@ -95,6 +95,7 @@ class _CardWheelState extends State<CardWheel> {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, bounds) {
       final viewport = bounds.maxHeight.isFinite ? bounds.maxHeight : 600.0;
+      if (viewport <= 20) return const SizedBox.shrink();
       final fraction = ((widget.minimumCardHeight + 20) / viewport).clamp(
         .44,
         1.0,

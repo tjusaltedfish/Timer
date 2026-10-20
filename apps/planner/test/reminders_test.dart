@@ -39,10 +39,35 @@ void main() {
       );
       expect(testReminder.at, now.add(const Duration(seconds: 15)));
       expect(service.status, contains('15 秒'));
+      // A background sync can arrive before the fifteen seconds are up.
+      await service.refresh();
+      expect(driver.pending[testReminder.id]?.at, testReminder.at);
+      await service.disable();
+      expect(driver.pending, isEmpty);
       service.dispose();
       c.dispose();
     },
   );
+  test('reopening a waiting task cancels its checkpoint notification', () {
+    final state = snapshot();
+    state['tasks'] = <Json>[
+      {'id': 't', 'state': 'waiting', 'title': '实验结果'},
+    ];
+    state['waiting_checks'] = <Json>[
+      {
+        'id': 'w',
+        'task_id': 't',
+        'check_at': '2026-10-19T18:00:00Z',
+        'resolved_at': null,
+      },
+    ];
+    expect(buildReminders(state, now).any((r) => r.key == 'waiting:w'), isTrue);
+    (state['tasks'] as List).single['state'] = 'ready';
+    expect(
+      buildReminders(state, now).any((r) => r.key == 'waiting:w'),
+      isFalse,
+    );
+  });
   test('extension and waiting snooze replace the OS reminder instead of leaving the old alert', () async {
     var current = now;
     final c = PlannerController(storage: MemoryStore(), clock: () => current);
@@ -182,6 +207,9 @@ void main() {
   });
   test('waiting checks and unresolved feedback are retained without claiming completion', () {
     final state = snapshot();
+    state['tasks'] = <Json>[
+      {'id': 't', 'state': 'waiting', 'title': '实验结果'},
+    ];
     state['waiting_checks'] = <Json>[
       {
         'id': 'w',

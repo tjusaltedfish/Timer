@@ -288,12 +288,14 @@ extension _BlockCard on _PlannerHomeState {
         page = 0;
         selectedBlock = block['id'];
       });
-      unawaited(HapticFeedback.lightImpact());
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 1),
-          content: Text('已进入专注 · ${block['title']}'),
-        ),
+      unawaited(HapticFeedback.mediumImpact());
+      final session = c.activeSession;
+      showFocusEntry(
+        context,
+        block['title'],
+        session == null
+            ? '已进入专注'
+            : '预计 ${hm(local(session['expected_end_at']))} 收尾 · 到点会提醒你',
       );
     });
   }
