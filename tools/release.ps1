@@ -14,7 +14,7 @@ $pubspec = Join-Path $repo 'apps\planner\pubspec.yaml'
 $python = Join-Path $repo 'server\.venv\Scripts\python.exe'
 $client = Join-Path $env:USERPROFILE 'Apps\Timer\client'
 $launcher = Join-Path $env:USERPROFILE 'Apps\Timer\Start-Timer.ps1'
-$data = if ($env:PLANNER_DATA_DIR) { $env:PLANNER_DATA_DIR } else { Join-Path $env:LOCALAPPDATA 'TimePlanner\data' }
+$data = if ($env:PLANNER_DATA_DIR) { $env:PLANNER_DATA_DIR } else { Join-Path $env:USERPROFILE 'TimePlanner\data' }
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 if ($ValidateOnly -and -not $Prepared) { throw '-ValidateOnly requires -Prepared.' }

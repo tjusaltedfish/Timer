@@ -2,7 +2,7 @@
 # on the desktop. Re-run after each tools/build-windows.ps1 -Mode release to update.
 #
 # - Client files: %USERPROFILE%\Apps\Timer\client (replaced on each install;
-#   app data stays in %LOCALAPPDATA%\TimePlanner\data and is never touched).
+#   app data stays in %USERPROFILE%\TimePlanner\data and is never touched).
 # - Launcher: starts the computer backend (this checkout's server\.venv) on
 #   127.0.0.1:8787 if it is not already running, then opens the client.
 #   The backend keeps running after the window closes, so WeChat replies and
@@ -45,7 +45,7 @@ param([switch] `$BackendOnly)
 `$ErrorActionPreference = 'Stop'
 `$server = '$(Join-Path $repo 'server')'
 `$python = '$python'
-`$logs = Join-Path `$env:LOCALAPPDATA 'TimePlanner\logs'
+`$logs = Join-Path `$env:USERPROFILE 'TimePlanner\logs'
 function Test-Backend {
     try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 'http://127.0.0.1:8787/health').StatusCode -eq 200 } catch { `$false }
 }

@@ -27,8 +27,7 @@ from .store import Store, digest, encode, utcnow
 
 
 def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transport=None, background=True):
-    default_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share")) / "TimePlanner" / "data"
-    directory = Path(directory or os.environ.get("PLANNER_DATA_DIR", default_data))
+    directory = Path(directory or releases.default_data_dir())
     store = Store(directory)
 
     @asynccontextmanager

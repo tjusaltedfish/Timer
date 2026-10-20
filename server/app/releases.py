@@ -108,8 +108,9 @@ def public(info):
 
 
 def default_data_dir():
-    base = os.environ.get("LOCALAPPDATA", str(Path.home() / ".local" / "share"))
-    return Path(os.environ.get("PLANNER_DATA_DIR", Path(base) / "TimePlanner" / "data"))
+    # Outside AppData on purpose: packaged apps (Claude, Codex) silently redirect
+    # AppData writes into their own caches, which split the data into copies.
+    return Path(os.environ.get("PLANNER_DATA_DIR", Path.home() / "TimePlanner" / "data"))
 
 
 def main(argv=None):

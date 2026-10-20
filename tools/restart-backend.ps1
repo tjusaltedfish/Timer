@@ -15,16 +15,18 @@ foreach ($i in 1..20) {
     if (-not (Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue)) { break }
     Start-Sleep -Milliseconds 500
 }
-# Start-Process without redirection does not hand our handles to the backend.
-# Wait for the launcher only; Start-Process -Wait would also wait for the backend it starts.
-$launch = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -PassThru `
-    -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$launcher`"", '-BackendOnly'
-$launch.WaitForExit()
+# Launch through WMI so the backend and tunnel are not children of this shell:
+# a process started directly from a terminal or an agent session belongs to its
+# job and is killed when that session ends (2026-10-20 the backend and tunnel
+# vanished this way after a release). WMI also hands over none of our handles.
+$command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`" -BackendOnly"
+$created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $command }
+if ($created.ReturnValue -ne 0) { throw "Could not start the launcher (Win32_Process.Create returned $($created.ReturnValue))." }
 $health = $null
 foreach ($i in 1..40) {
     try { $health = Invoke-RestMethod -TimeoutSec 2 'http://127.0.0.1:8787/health'; break } catch { Start-Sleep -Milliseconds 500 }
 }
-if (-not $health) { throw 'Backend did not come back on 127.0.0.1:8787; see %LOCALAPPDATA%\TimePlanner\logs\server.err.log' }
+if (-not $health) { throw 'Backend did not come back on 127.0.0.1:8787; see %USERPROFILE%\TimePlanner\logs\server.err.log' }
 if ($ExpectVersion -and ($health.version -ne $ExpectVersion -or $health.app_latest -ne $ExpectVersion)) {
     throw "Backend reports version $($health.version) / phone $($health.app_latest), expected $ExpectVersion."
 }
