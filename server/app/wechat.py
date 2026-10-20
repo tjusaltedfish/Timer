@@ -50,7 +50,7 @@ HINTS = {
     40013: "appID 不对：请从测试号页面重新复制",
     43004: "对方没有关注这个测试号",
 }
-HELP = ("我是你的 Timer 助手。\n"
+HELP = ("我是你的瞬时助手。\n"
         "· 直接说想安排什么，比如「明晚八点学两小时算法」\n"
         "· 「今天」查看今天的安排\n"
         "· 我会直接改好日程，不对就回复「撤销」\n"
@@ -249,7 +249,7 @@ class WeChatChannel:
             if not bound:
                 if is_code:
                     mark("done", "bad code")
-                    self._enqueue(conn, openid, "这个绑定码不对或已经过期了，请在电脑上的 Timer 里重新生成。", now)
+                    self._enqueue(conn, openid, "这个绑定码不对或已经过期了，请在电脑上的瞬时里重新生成。", now)
                 else:
                     mark("ignored", "not bound")
                 return True
@@ -282,7 +282,7 @@ class WeChatChannel:
         if review:
             day = self.clock().astimezone(ZoneInfo(self.store.state()['settings']['timezone'])).date().isoformat()
             self.assistant.apply_operation('review.save', {'date': day, 'text': review.group(1)}, 'wechat', operation_id)
-            return '今日原文已保留并安排电脑归档。材料复盘可在 Timer 的回顾页生成。'
+            return '今日原文已保留并安排电脑归档。材料复盘可在瞬时的回顾页生成。'
         if command:
             from .maintenance import expire_due
             expire_due(self.store, self.clock())
@@ -291,7 +291,7 @@ class WeChatChannel:
             if command.group(2):
                 candidates = [s for s in candidates if s['id'].startswith(command.group(2).lower())]
             if len(candidates) != 1:
-                return '请说明是哪一段，或打开 Timer 选择待回话的任务。'
+                return '请说明是哪一段，或打开瞬时选择待回话的任务。'
             session = candidates[0]
             if command.group(1).startswith(('再给我', '续时')):
                 minutes = int(re.search(r'15|30', command.group(1)).group())
@@ -299,7 +299,7 @@ class WeChatChannel:
                     changed = self.assistant.apply_operation('session.extend', {'id': session['id'], 'minutes': minutes}, 'wechat', operation_id)['entity']
                     end = parse(changed['expected_end_at']).astimezone(ZoneInfo(state['settings']['timezone']))
                     adjustment = changed.get('adjustment', {}).get('status')
-                    tail = '后续弹性安排已顺延。' if adjustment == 'applied' else '后续有冲突或需要确认，请到 Timer 查看调整。' if adjustment in ('proposal', 'blocked') else ''
+                    tail = '后续弹性安排已顺延。' if adjustment == 'applied' else '后续有冲突或需要确认，请到瞬时查看调整。' if adjustment in ('proposal', 'blocked') else ''
                     return f'已增加 {minutes} 分钟，预计 {end:%H:%M} 收尾。{tail}'
                 except DomainError as error:
                     return error.message
@@ -350,7 +350,7 @@ class WeChatChannel:
         else:  # A bare "撤销" means the assistant's latest change, if it is recent.
             matches = [r for r in rows[:1] if parse(r["created_at"]) >= self.clock() - timedelta(minutes=30)]
         if len(matches) != 1:
-            return "没有找到可以撤销的这条改动，可能已经撤销过了。请到 Timer 的助手页查看。"
+            return "没有找到可以撤销的这条改动，可能已经撤销过了。请到瞬时的助手页查看。"
         try:
             self.assistant.undo_draft(matches[0]["id"], "wechat")
         except DomainError as error:

@@ -78,18 +78,18 @@ class Proactive:
                     elif event['kind'] == 'review.analysis':
                         analysis = next((a for a in state.get('analyses', []) if a['id'] == payload.get('id')), None)
                         if analysis:
-                            queue('analysis', analysis['id'], 1, f"{analysis['date']} · 复盘已归档\n{analysis['text'][:120]}\n完整材料出处见 Timer 回顾页。",
+                            queue('analysis', analysis['id'], 1, f"{analysis['date']} · 复盘已归档\n{analysis['text'][:120]}\n完整材料出处见瞬时的回顾页。",
                                   {'date': analysis['date']}, now + timedelta(hours=12))
                 active_blocks = {s['block_id'] for s in state['sessions']}
                 for b in state['blocks']:
                     if b['status'] != 'scheduled' or b['kind'] == 'protected' or not live_task(b.get('task_id')) or b['id'] in active_blocks:
                         continue
                     if parse(b['start_at']) <= now < min(parse(b['end_at']), parse(b['start_at']) + timedelta(minutes=15)):
-                        queue('start', b['id'], b['version'], f"该开始了\n{b['title']}\n打开 Timer 开始这一段；结束后记录结果。",
+                        queue('start', b['id'], b['version'], f"该开始了\n{b['title']}\n打开瞬时开始这一段；结束后记录结果。",
                               {'block_id': b['id'], 'block_version': b['version'], 'not_started': True}, parse(b['end_at']))
                     end = parse(b['end_at'])
                     if end <= now < end + timedelta(minutes=15):
-                        queue('missed', b['id'], b['version'], f"这一段的时间已过\n{b['title']}\n尚未记录开始。实际做了、没有开始，还是需要重新安排？可以直接说明，或打开 Timer 补记结果。",
+                        queue('missed', b['id'], b['version'], f"这一段的时间已过\n{b['title']}\n尚未记录开始。实际做了、没有开始，还是需要重新安排？可以直接说明，或打开瞬时补记结果。",
                               {'block_id': b['id'], 'block_version': b['version'], 'not_started': True}, end + timedelta(hours=1))
                 open_sessions = [s for s in state['sessions']
                                  if live_task(s['task_id']) and s['state'] in ('running', 'awaiting_feedback')]
@@ -109,7 +109,7 @@ class Proactive:
                         continue
                     due = parse(check['check_at'])
                     if due <= now < due + timedelta(hours=24):
-                        queue('waiting', check['id'], check.get('version', 1), f"看看等待的结果\n{tasks[check['task_id']]['title']}\n结果回来了吗？没回来可以在 Timer 改约检查时间。",
+                        queue('waiting', check['id'], check.get('version', 1), f"看看等待的结果\n{tasks[check['task_id']]['title']}\n结果回来了吗？没回来可以在瞬时里改约检查时间。",
                               {'check_id': check['id'], 'check_version': check.get('version', 1)}, due + timedelta(hours=24))
                 hour, minute = map(int, state['settings']['daily_review_time'].split(':'))
                 if (local.hour, local.minute) >= (hour, minute):

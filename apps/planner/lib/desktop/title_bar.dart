@@ -31,10 +31,10 @@ class InkTitleBar extends StatelessWidget {
                   child: Row(
                     children: [
                       if (!compact) ...[
-                        const Seal('日程', label: '日程之间', size: 20),
+                        const Seal('瞬', label: '瞬时', size: 20),
                         const SizedBox(width: 12),
                         Text(
-                          '日程之间',
+                          '瞬时',
                           style: TextStyle(
                             fontFamily: 'WenKai',
                             fontSize: 14,

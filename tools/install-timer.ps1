@@ -70,15 +70,19 @@ if (-not `$BackendOnly) {
 "@ | Set-Content -LiteralPath $launcher -Encoding ascii
 
 $shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Timer.lnk'))
+# The product is called 瞬时; the name is built from code points so this file stays ASCII.
+$productName = [string]([char]0x77AC) + [char]0x65F6
+$desktop = [Environment]::GetFolderPath('Desktop')
+Remove-Item -LiteralPath (Join-Path $desktop 'Timer.lnk') -ErrorAction SilentlyContinue
+$shortcut = $shell.CreateShortcut((Join-Path $desktop "$productName.lnk"))
 $shortcut.TargetPath = (Get-Command powershell.exe).Source
 $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
 $shortcut.WorkingDirectory = $home_
 $shortcut.IconLocation = (Join-Path $client 'time_planner.exe') + ',0'
-$shortcut.Description = 'Timer'
+$shortcut.Description = $productName
 $shortcut.Save()
 if (-not $LauncherOnly) { Write-Output "Installed client: $client" }
 Write-Output "Launcher: $launcher"
-Write-Output 'Desktop shortcut: Timer'
+Write-Output "Desktop shortcut: $productName"
 # robocopy reports success with exit codes 1-7; do not leak them as failure.
 exit 0

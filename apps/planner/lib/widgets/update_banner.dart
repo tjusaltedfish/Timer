@@ -56,7 +56,7 @@ extension _UpdateBanner on _PlannerHomeState {
             Text('版本', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              '日程之间 ${AppVersion.current}'
+              '瞬时 ${AppVersion.current}'
               '${server == null ? '' : ' · 电脑后台 $server'}',
               key: const Key('version.text'),
               style: theme.textTheme.bodySmall,

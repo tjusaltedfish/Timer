@@ -136,7 +136,7 @@ def test_only_the_bound_account_is_answered(env):
     assert client.get("/api/v1/wechat/config").json()["bound_hint"] == "····1234"
     # Before binding, a wrong code only earns a "code is wrong" note.
     to_stranger = [b["text"]["content"] for _, b in wechat.custom if b["touser"] == STRANGER]
-    assert to_stranger == ["这个绑定码不对或已经过期了，请在电脑上的 Timer 里重新生成。"]
+    assert to_stranger == ["这个绑定码不对或已经过期了，请在电脑上的瞬时里重新生成。"]
     assert "绑定好了" in wechat.custom[-1][1]["text"]["content"] and wechat.custom[-1][1]["touser"] == OWNER
     sent = len(wechat.custom)
     push(client, token, STRANGER, code, msg_id="s3")  # replayed code after binding

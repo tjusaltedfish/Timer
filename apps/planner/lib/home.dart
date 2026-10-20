@@ -285,7 +285,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
         settingsPage,
       ][page]();
       final title = page == 0
-          ? '日程之间'
+          ? '瞬时'
           : page == 5
           ? '设置'
           : labels[page];
@@ -386,7 +386,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
           children: [
             SizedBox(height: desktop.enabled ? 8 : 28),
             if (!desktop.enabled) ...[
-              const Seal('日程', label: '日程之间', size: 28),
+              const Seal('瞬', label: '瞬时', size: 28),
               const SizedBox(height: 24),
             ],
             Expanded(

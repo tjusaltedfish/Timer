@@ -32,7 +32,7 @@ class DesktopWindow with WindowListener {
     opacity.value = prefs.getDouble('desktop.opacity') ?? 1.0;
     final normal = _rect(prefs.getString('desktop.normal'));
     final options = WindowOptions(
-      title: '日程之间',
+      title: '瞬时',
       size: normal?.size ?? const Size(1280, 820),
       minimumSize: normalMinimum,
       center: normal == null,

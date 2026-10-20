@@ -193,7 +193,7 @@ class NativeReminderDriver implements ReminderDriver {
       settings: const InitializationSettings(
         android: AndroidInitializationSettings('ic_notification'),
         windows: WindowsInitializationSettings(
-          appName: '日程之间',
+          appName: '瞬时',
           appUserModelId: 'dev.personal.time_planner',
           guid: 'd7e76cab-65a4-4fe3-9aa9-86c485185cf7',
         ),
@@ -389,7 +389,7 @@ class ReminderService extends ChangeNotifier {
               ? const Duration(seconds: 15)
               : Duration.zero,
         ),
-        '日程之间 · 测试提醒',
+        '瞬时 · 测试提醒',
         '这是系统提醒测试。日程到点时也会通知你。',
         {'page': 'today'},
       );

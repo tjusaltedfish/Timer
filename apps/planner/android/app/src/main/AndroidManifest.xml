@@ -6,7 +6,7 @@
     <!-- In-app updates: hand a verified APK from the paired computer to the system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
-        android:label="日程之间"
+        android:label="瞬时"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <provider

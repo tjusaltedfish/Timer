@@ -20,7 +20,7 @@ class PlannerApp extends StatelessWidget {
   final UpdateService? updates;
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: '日程之间',
+    title: '瞬时',
     debugShowCheckedModeBanner: false,
     locale: const Locale('zh', 'CN'),
     localizationsDelegates: GlobalMaterialLocalizations.delegates,

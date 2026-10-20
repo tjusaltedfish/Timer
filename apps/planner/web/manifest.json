@@ -1,6 +1,6 @@
 {
-    "name": "time_planner",
-    "short_name": "time_planner",
+    "name": "瞬时",
+    "short_name": "瞬时",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

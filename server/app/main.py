@@ -333,7 +333,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
 
     @app.post("/api/v1/wechat/test")
     async def wechat_test(device=Depends(desktop)):
-        channel.enqueue("这是一条来自 Timer 的测试消息。收到就说明电脑后台能给你发微信了。")
+        channel.enqueue("这是一条来自瞬时的测试消息。收到就说明电脑后台能给你发微信了。")
         if background:
             asyncio.create_task(channel.run_once())
         return {"queued": True}

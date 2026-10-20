@@ -130,7 +130,7 @@ class UpdateService extends ChangeNotifier {
     String? path;
     try {
       if (!await platform.canInstall()) {
-        problem = '需要先允许「日程之间」安装应用：已打开系统设置，打开开关后返回再点一次。';
+        problem = '需要先允许「瞬时」安装应用：已打开系统设置，打开开关后返回再点一次。';
         await platform.openInstallSettings();
         return;
       }
