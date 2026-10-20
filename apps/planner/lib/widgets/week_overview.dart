@@ -236,14 +236,12 @@ class WeekOverview extends StatelessWidget {
                           ListTile(
                             contentPadding: EdgeInsets.zero,
                             onTap: () => onBlockTap(slice.block),
-                            leading: SizedBox(
-                              width: 12,
-                              height: 32,
-                              child: Center(
-                                child: CustomPaint(
-                                  size: const Size(10, 10),
-                                  painter: _WashPainter(pigment(slice.block)),
-                                ),
+                            leading: Container(
+                              width: 4,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                color: pigment(slice.block),
+                                borderRadius: BorderRadius.circular(2),
                               ),
                             ),
                             minLeadingWidth: 12,
@@ -274,7 +272,7 @@ class WeekOverview extends StatelessWidget {
     double chartHeight,
   ) {
     final title = slice.block['title'] as String;
-    final count = height >= 40 ? 6 : 3;
+    final count = height >= 40 ? 8 : 4;
     final brief = title.characters.take(count).join();
     return Positioned(
       key: ValueKey('week.stamp.${slice.block['id']}'),
@@ -290,20 +288,41 @@ class WeekOverview extends StatelessWidget {
           button: true,
           child: InkWell(
             onTap: () => onBlockTap(slice.block),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(6),
+            // A flat, faint tint with a solid bar on the left: the colour only
+            // tells tasks apart, the words stay in ink.
             child: Stack(
               children: [
+                Positioned.fill(
+                  top: 1,
+                  bottom: 1,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: pigment.withValues(
+                        alpha: ScheduleInk.tint(Theme.of(context).brightness),
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
                 Positioned(
                   top: 1,
+                  bottom: 1,
                   left: 0,
-                  right: 0,
-                  height: math.max(2, height - 2),
-                  child: CustomPaint(painter: _WashPainter(pigment)),
+                  width: 3,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: pigment,
+                      borderRadius: const BorderRadius.horizontal(
+                        left: Radius.circular(6),
+                      ),
+                    ),
+                  ),
                 ),
                 if (label)
                   Positioned.fill(
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      padding: const EdgeInsets.only(left: 4, right: 1),
                       child: Center(
                         child: Text(
                           brief,
@@ -311,10 +330,9 @@ class WeekOverview extends StatelessWidget {
                           maxLines: height >= 40 ? 2 : 1,
                           overflow: TextOverflow.clip,
                           style: TextStyle(
-                            fontFamily: 'WenKai',
-                            fontSize: 11,
-                            height: 1.22,
-                            color: pigment,
+                            fontSize: 10.5,
+                            height: 1.25,
+                            color: context.inkPalette.inkJiao,
                           ),
                         ),
                       ),
@@ -327,56 +345,4 @@ class WeekOverview extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Translucent pigment with a soft, rounded waterline.
-class _WashPainter extends CustomPainter {
-  const _WashPainter(this.color);
-  final Color color;
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    final w = size.width, h = size.height;
-    final r = math.min(9.0, h * .35);
-    final shape = Path()
-      ..moveTo(r, h * .04)
-      ..cubicTo(w * .38, h * .02, w * .67, 0, w - r, h * .05)
-      ..quadraticBezierTo(w, h * .08, w, r)
-      ..lineTo(w, h - r)
-      ..quadraticBezierTo(w - 1, h, w - r, h * .97)
-      ..cubicTo(w * .64, h * .94, w * .3, h, r, h * .96)
-      ..quadraticBezierTo(0, h * .94, 0, h - r)
-      ..lineTo(0, r)
-      ..quadraticBezierTo(0, h * .05, r, h * .04)
-      ..close();
-    canvas.save();
-    canvas.clipPath(shape);
-    canvas.drawPath(shape, Paint()..color = color.withValues(alpha: .15));
-    for (final center in [Offset(w * .2, h * .2), Offset(w * .84, h * .74)]) {
-      final rect = Rect.fromCenter(
-        center: center,
-        width: w * 1.8,
-        height: math.max(12, h * 1.8),
-      );
-      canvas.drawRect(
-        rect,
-        Paint()
-          ..shader = RadialGradient(
-            colors: [color.withValues(alpha: .12), color.withValues(alpha: 0)],
-          ).createShader(rect),
-      );
-    }
-    canvas.restore();
-    canvas.drawPath(
-      shape,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = .6
-        ..color = color.withValues(alpha: .34),
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _WashPainter oldDelegate) =>
-      oldDelegate.color != color;
 }

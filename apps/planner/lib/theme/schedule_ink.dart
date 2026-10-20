@@ -1,27 +1,32 @@
 import 'package:flutter/material.dart';
 
-/// Muted pigments identify tasks; the application chrome keeps its ink palette.
+/// Clear mineral colours that tell tasks apart in the week view. They only
+/// mark a block (a thin bar and a flat, faint tint); the text stays in ink.
 abstract final class ScheduleInk {
   static const light = [
-    Color(0xFF2F535B), // 青黛
-    Color(0xFF6C4435), // 赭石
-    Color(0xFF544866), // 藕紫
-    Color(0xFF3E5342), // 松绿
-    Color(0xFF6F3D4A), // 胭脂
-    Color(0xFF5E4B23), // 秋香
-    Color(0xFF394E70), // 花青
-    Color(0xFF5C4A3E), // 茶褐
+    Color(0xFFC0473A), // 朱砂
+    Color(0xFF2B6CB0), // 石青
+    Color(0xFF2E8564), // 石绿
+    Color(0xFFA87A12), // 藤黄
+    Color(0xFFAD4477), // 胭脂
+    Color(0xFF4C55B0), // 靛蓝
+    Color(0xFF9E5A33), // 赭石
+    Color(0xFF357484), // 黛青
   ];
   static const dark = [
-    Color(0xFFA8CFD2),
-    Color(0xFFE4B69F),
-    Color(0xFFCABAE0),
-    Color(0xFFB7CDB0),
-    Color(0xFFE5B0BD),
-    Color(0xFFDCC791),
-    Color(0xFFB2C8EB),
-    Color(0xFFD5C3B2),
+    Color(0xFFF0897D),
+    Color(0xFF7DB0F0),
+    Color(0xFF6FCFA6),
+    Color(0xFFEBC15E),
+    Color(0xFFE88BB6),
+    Color(0xFF9EA6F4),
+    Color(0xFFE3A27C),
+    Color(0xFF86C4D2),
   ];
+
+  /// Tint strength of a block's fill over the paper.
+  static double tint(Brightness brightness) =>
+      brightness == Brightness.dark ? .22 : .14;
 
   static Color forTask(
     String id,

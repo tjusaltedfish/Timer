@@ -27,18 +27,22 @@ void main() {
           ScheduleInk.forTask(tasks[i]['id'], renamed, brightness),
           colors[i],
         );
-        final paper = brightness == Brightness.light
-            ? InkPalette.light.paper
-            : InkPalette.dark.paper;
+        final palette = brightness == Brightness.light
+            ? InkPalette.light
+            : InkPalette.dark;
+        double contrast(Color x, Color y) {
+          final a = x.computeLuminance(), b = y.computeLuminance();
+          return (a > b ? a + .05 : b + .05) / (a > b ? b + .05 : a + .05);
+        }
+
+        // Titles are written in ink on the faint tint.
         final surface = Color.alphaBlend(
-          colors[i].withValues(alpha: .35),
-          paper,
+          colors[i].withValues(alpha: ScheduleInk.tint(brightness)),
+          palette.paper,
         );
-        final a = colors[i].computeLuminance(), b = surface.computeLuminance();
-        expect(
-          (a > b ? a + .05 : b + .05) / (a > b ? b + .05 : a + .05),
-          greaterThanOrEqualTo(4.5),
-        );
+        expect(contrast(palette.inkJiao, surface), greaterThanOrEqualTo(7));
+        // The colour bar itself must stand out from the paper.
+        expect(contrast(colors[i], palette.paper), greaterThanOrEqualTo(3));
       }
     }
   });
@@ -104,9 +108,13 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('实验分'), findsOneWidget);
-        expect(find.text('算法学习'), findsOneWidget);
-        expect(find.text('短时检'), findsOneWidget);
+        Finder inStamp(String id, String text) => find.descendant(
+          of: find.byKey(ValueKey('week.stamp.$id')),
+          matching: find.text(text),
+        );
+        expect(inStamp('b0', '实验分析'), findsOneWidget);
+        expect(inStamp('b1', '算法学习'), findsOneWidget);
+        expect(inStamp('b2', '短时检查'), findsOneWidget);
         await tester.longPress(find.byKey(const ValueKey('week.stamp.b0')));
         await tester.pumpAndSettle();
         expect(find.text('实验分析报告\n09:00—10:00'), findsOneWidget);
