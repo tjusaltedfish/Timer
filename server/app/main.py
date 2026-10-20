@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from . import assistant, releases
 from .assistant_service import AssistantService
 from .proactive import Proactive
+from .weekly import WeeklyBrief
 from .materials import MaterialService, GenerateReview, MAX_FILE
 from .wechat import WeChatChannel, WeChatConfigIn, parse_message, signature_ok
 from .domain import DomainError, apply, stamp, identifier, parse
@@ -59,6 +60,10 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                         await app.state.materials.generate_due()
                     except Exception:
                         logging.getLogger(__name__).exception('Daily review worker will retry')
+                    try:
+                        await app.state.weekly.run_due()
+                    except Exception:
+                        logging.getLogger(__name__).exception('Weekly brief will retry')
                     await asyncio.sleep(60)
             workers.append(asyncio.create_task(review_worker()))
         try:
@@ -291,6 +296,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     channel = WeChatChannel(store, clock, service, lambda: app.state.wechat_transport)
     app.state.wechat = channel
     app.state.proactive = Proactive(store, channel, clock)
+    app.state.weekly = WeeklyBrief(store, channel, service, clock)
     channel.notification_valid = app.state.proactive.valid
 
     @app.get("/wechat/callback")

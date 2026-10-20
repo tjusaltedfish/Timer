@@ -43,11 +43,13 @@ class FakeWeChat:
 
 class FakeModel:
     def __init__(self):
-        self.replies = []
+        self.replies, self.requests = [], []
 
     def __call__(self, request):
+        self.requests.append(request)
         body = self.replies.pop(0) if self.replies else {"reply": "好的", "drafts": []}
-        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(body, ensure_ascii=False)}}]})
+        content = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
 
 @pytest.fixture
