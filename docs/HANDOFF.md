@@ -566,7 +566,7 @@ running ──(续时)──> running(extended)
 ### 7.2 配置与密钥
 
 - 文件：`<数据目录>\assistant.json`：`{"base_url": "...", "model": "...", "daily_call_limit": 200, "timeout_seconds": 30}`。
-- Key：优先环境变量 `PLANNER_LLM_API_KEY`；否则 `<数据目录>\secrets\llm-key`。默认数据目录是 `%LOCALAPPDATA%\TimePlanner\data`，在仓库之外；若用 `PLANNER_DATA_DIR` 指到仓库内，`.gitignore` 的 `data/` 规则会兜底，但仍要用 `git status` 确认 Key 文件不会被提交。
+- Key：优先环境变量 `PLANNER_LLM_API_KEY`；否则 `<数据目录>\secrets\llm-key`。默认数据目录是 `%USERPROFILE%\TimePlanner\data`，在仓库之外；若用 `PLANNER_DATA_DIR` 指到仓库内，`.gitignore` 的 `data/` 规则会兜底，但仍要用 `git status` 确认 Key 文件不会被提交。
 - 电脑端设置页可以填 Key：`POST /api/v1/assistant/config`（仅 `desktop` 角色），后台写文件；`GET` 只返回 `{configured, base_url, model, key_hint: "····a1b2"}`。
 - 日志里对 Authorization 头和 Key 做脱敏；异常信息不得包含请求头。
 - **不要在聊天里向用户索要 Key 再替他写入**；在设置页让用户自己粘贴。

@@ -4,9 +4,9 @@
 
 ## 零、电脑上的 Timer
 
-桌面上的「Timer」快捷方式：双击后先确认电脑后台在运行（没有就在后台悄悄启动，日志在 `%LOCALAPPDATA%/TimePlanner/logs`），再打开 Timer 窗口。关掉窗口后台仍在运行，微信回复不中断；重启电脑后需要再双击一次（开机自启尚未做）。
+桌面上的「Timer」快捷方式：双击后先确认电脑后台在运行（没有就在后台悄悄启动，日志在 `%USERPROFILE%/TimePlanner/logs`），再打开 Timer 窗口。关掉窗口后台仍在运行，微信回复不中断；重启电脑后需要再双击一次（开机自启尚未做）。
 
-更新：关闭 Timer 窗口，在项目目录运行 `./tools/release.ps1`（见文末「一键发布与更新」）。程序装在 `%USERPROFILE%/Apps/Timer`，数据仍在 `%LOCALAPPDATA%/TimePlanner/data`，更新不会动数据。
+更新：关闭 Timer 窗口，在项目目录运行 `./tools/release.ps1`（见文末「一键发布与更新」）。程序装在 `%USERPROFILE%/Apps/Timer`，数据仍在 `%USERPROFILE%/TimePlanner/data`，更新不会动数据。
 
 ## 一、让微信能访问到电脑（域名 + Cloudflare Tunnel）
 
@@ -17,7 +17,7 @@
 
 微信要求回调地址使用 80 或 443 端口（以官方说明为准），Cloudflare 提供的 HTTPS 正好是 443。
 
-**已完成（2026-10-19）**：隧道 `timer`（ID `fe2c5622…`）已建，CNAME `timer.studydazi.top` 指向它。`cloudflared` 2026.10.1 来自官方 GitHub 发布并核对 SHA256，装在 `%USERPROFILE%/Apps/cloudflared`；配置 `timer.yml` 只把路径 `^/wechat/callback$` 转到 `127.0.0.1:8787`，其余返回 404。登录凭证 `cert.pem` 与隧道凭证在 `%USERPROFILE%/.cloudflared`，不要分享。外网实测：正确签名回显 200、伪造签名 403、其他接口 404。桌面「Timer」启动时会顺带启动隧道，日志在 `%LOCALAPPDATA%/TimePlanner/logs/tunnel.log`。
+**已完成（2026-10-19）**：隧道 `timer`（ID `fe2c5622…`）已建，CNAME `timer.studydazi.top` 指向它。`cloudflared` 2026.10.1 来自官方 GitHub 发布并核对 SHA256，装在 `%USERPROFILE%/Apps/cloudflared`；配置 `timer.yml` 只把路径 `^/wechat/callback$` 转到 `127.0.0.1:8787`，其余返回 404。登录凭证 `cert.pem` 与隧道凭证在 `%USERPROFILE%/.cloudflared`，不要分享。外网实测：正确签名回显 200、伪造签名 403、其他接口 404。桌面「Timer」启动时会顺带启动隧道，日志在 `%USERPROFILE%/TimePlanner/logs/tunnel.log`。
 
 
 ## 二、申请测试号
@@ -64,7 +64,7 @@
 2. 在项目目录运行 `./tools/release.ps1`。它会：
    - 把 `apps/planner/pubspec.yaml` 的版本号 build 部分加一（这是唯一的版本来源，安卓 versionCode 必须递增）；`-Version 1.1.0` 可同时改主版本号；
    - 打包 Windows 版并装到 `%USERPROFILE%/Apps/Timer`，打包安卓调试版；
-   - 把 arm64 安装包和版本信息放到 `%LOCALAPPDATA%/TimePlanner/data/releases/`（不进 Git，只保留最近两个）；
+   - 把 arm64 安装包和版本信息放到 `%USERPROFILE%/TimePlanner/data/releases/`（不进 Git，只保留最近两个）；
    - 重启电脑后台，并核对后台报告的版本号；任何一步失败都会把版本号改回去。
    - 加 `-RequireUpdate`：比这次更旧的手机版会被提示「必须更新后再继续同步」。
 3. 手机打开 Timer（或从后台切回来），顶部出现「有新版本 x.y.z+n · 下载并安装」；设置 →「版本」也能手动「检查更新」。

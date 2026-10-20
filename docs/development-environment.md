@@ -29,7 +29,7 @@ Codex、Claude 或手工终端开始验证前，在项目根目录执行：
 | Android SDK | `%USERPROFILE%/DevTools/Timer/toolchains/android-sdk` |
 | Java | `tools/toolchain.json` 中已安装的 Temurin 21 |
 | 后台 Python | `server/.venv/Scripts/python.exe` |
-| 后台数据及模型 Key | 默认 `%LOCALAPPDATA%/TimePlanner/data`，不上传 Git |
+| 后台数据及模型 Key | 默认 `%USERPROFILE%/TimePlanner/data`，不上传 Git |
 
 `pubspec.lock` 固定包版本及哈希；`.dart_tool`、Flutter ephemeral、`build`、`android/local.properties` 是本机生成配置。它们不可从另一个目录直接复用或提交 Git。SDK 位于项目外，改名不需要重装。
 
@@ -56,4 +56,4 @@ Pop-Location
 
 共享工具链与缓存改放用户目录下的 `DevTools/Timer`，并通过相同的初始化脚本固定路径。`tools/migrate-shared-toolchain.ps1` 是一次性迁移工具：复制原有 SDK、ATL 和包缓存，保持原副本，并重新生成 Flutter 工具的依赖元数据，不升级 SDK。首次迁移后运行 `setup-dev.ps1 -Clean`。新机器缺少原 SDK 时，先安装 `tools/toolchain.json` 指定 revision 的官方 Flutter，并准备官方 Android SDK，再运行环境入口。
 
-每次切换工具无需重新安装工具链。遇到包不存在时先恢复锁定依赖；遇到旧绝对路径时才清理项目生成缓存。SDK 与应用数据分开管理，默认应用数据仍在 `%LOCALAPPDATA%/TimePlanner/data`。不要删除整个 `%LOCALAPPDATA%/TimePlanner`。
+每次切换工具无需重新安装工具链。遇到包不存在时先恢复锁定依赖；遇到旧绝对路径时才清理项目生成缓存。SDK 与应用数据分开管理，默认应用数据仍在 `%USERPROFILE%/TimePlanner/data`。不要删除整个 `%USERPROFILE%/TimePlanner`；`%LOCALAPPDATA%/TimePlanner` 里只剩工具链缓存等旧内容。
