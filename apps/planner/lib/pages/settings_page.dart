@@ -55,6 +55,8 @@ extension _SettingsPage on _PlannerHomeState {
             controller: c,
           ),
           const SizedBox(height: 18),
+          versionPanel(),
+          const SizedBox(height: 18),
           if (widget.reminders != null) ...[
             panel(
               Column(

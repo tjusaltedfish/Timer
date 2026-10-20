@@ -9,6 +9,7 @@ import 'controller.dart';
 import 'desktop/desktop_window.dart';
 import 'planner_app.dart';
 import 'reminders.dart';
+import 'updates.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,7 +23,13 @@ Future<void> main(List<String> args) async {
     controller: controller,
     driver: NativeReminderDriver(),
   );
-  runApp(PlannerApp(controller: controller, reminders: reminders));
+  final updates = UpdateService(
+    controller: controller,
+    platform: createUpdatePlatform(),
+  );
+  runApp(
+    PlannerApp(controller: controller, reminders: reminders, updates: updates),
+  );
   unawaited(reminders.initialize());
   final token = await readDesktopToken(args);
   if (token != null) {

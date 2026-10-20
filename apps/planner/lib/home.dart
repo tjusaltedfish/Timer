@@ -10,6 +10,7 @@ import 'dialogs.dart';
 import 'calendar.dart';
 import 'week_calendar.dart';
 import 'reminders.dart';
+import 'updates.dart';
 
 import 'formatting.dart';
 import 'theme/tokens.dart';
@@ -45,11 +46,18 @@ part 'pages/widget_page.dart';
 part 'widgets/home_layout.dart';
 part 'widgets/block_card.dart';
 part 'widgets/adjustment_notice.dart';
+part 'widgets/update_banner.dart';
 
 class PlannerHome extends StatefulWidget {
-  const PlannerHome({super.key, required this.controller, this.reminders});
+  const PlannerHome({
+    super.key,
+    required this.controller,
+    this.reminders,
+    this.updates,
+  });
   final PlannerController controller;
   final ReminderService? reminders;
+  final UpdateService? updates;
   @override
   State<PlannerHome> createState() => _PlannerHomeState();
 }
@@ -125,6 +133,9 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     widget.reminders?.addListener(_openReminder);
     WidgetsBinding.instance.addPostFrameCallback((_) => _openReminder());
+    if (widget.updates?.supported ?? false) {
+      unawaited(widget.updates!.check());
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _onAdjustment());
   }
 
@@ -140,6 +151,9 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      if (widget.updates?.supported ?? false) {
+        unawaited(widget.updates!.check());
+      }
       unawaited(c.sync());
       final reminders = widget.reminders;
       if (reminders != null) unawaited(reminders.refresh(force: true));
@@ -230,6 +244,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
     animation: Listenable.merge([
       c,
       if (widget.reminders != null) widget.reminders!,
+      if (widget.updates != null) widget.updates!,
       desktop.changes,
     ]),
     builder: (context, _) {
@@ -324,6 +339,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
       final body = Column(
         children: [
           header,
+          updateBanner(),
           if (c.conflict != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),

@@ -168,6 +168,27 @@ class PlannerController extends ChangeNotifier {
     return value;
   }
 
+  /// Streams a large authenticated download (the phone update package).
+  Future<http.StreamedResponse> openDownload(String path) async {
+    if (!configured) throw ApiFailure('请先在设置里连接电脑。', 409);
+    final request = http.Request('GET', Uri.parse('$serverUrl$path'))
+      ..headers['Authorization'] = 'Bearer $_token';
+    final response = await transport
+        .send(request)
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode >= 400) {
+      String? message;
+      try {
+        message =
+            (jsonDecode(await response.stream.bytesToString())
+                    as Json)['message']
+                as String?;
+      } catch (_) {}
+      throw ApiFailure(message ?? '下载没有成功', response.statusCode);
+    }
+    return response;
+  }
+
   Future<void> startBlock(Json block, {String mode = 'keep_duration'}) =>
       submit('session.start', {
         'id': const Uuid().v4(),
