@@ -127,6 +127,11 @@ def apply(state, operation, device_id, now):
             usable_project(data["project_id"])
         entity.update(data)
         entity["version"] += 1
+        if 'title' in data:
+            for planned in state['blocks']:
+                if planned.get('task_id') == entity['id'] and planned['status'] == 'scheduled':
+                    planned['title'] = entity['title']
+                    planned['version'] += 1
         if entity["state"] == "cancelled":
             for block in state["blocks"]:
                 if block.get("task_id") == entity["id"] and block["status"] == "scheduled":

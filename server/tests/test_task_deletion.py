@@ -34,3 +34,18 @@ def test_deleting_active_task_requires_ending_execution(clocked):
         version=state['tasks'][0]['version'], state='cancelled'))
     assert response.status_code == 409
     assert c.get('/api/v1/snapshot').json()['tasks'][0]['state'] == 'in_progress'
+
+
+def test_editing_task_title_updates_plans_but_keeps_recorded_block_titles(clocked):
+    c, current = clocked
+    task = new_task(c)
+    b = block(c, task['id'], start=current[0])
+    renamed = send(c, 'task.update', id=task['id'], version=1, title='重命名实验')['entity']
+    snapshot = c.get('/api/v1/snapshot').json()
+    assert snapshot['blocks'][0]['title'] == '重命名实验'
+    session = send(c, 'session.start', block_id=b['id'])['entity']
+    send(c, 'session.end', id=session['id'])
+    send(c, 'feedback.create', session_id=session['id'], choice='done')
+    task = c.get('/api/v1/snapshot').json()['tasks'][0]
+    send(c, 'task.update', id=task['id'], version=task['version'], title='任务新标题')
+    assert c.get('/api/v1/snapshot').json()['blocks'][0]['title'] == '重命名实验'
