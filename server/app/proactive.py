@@ -75,6 +75,31 @@ class Proactive:
                         queue('focus', s['id'], 1, f"已进入专注\n{tasks[s['task_id']]['title']}\n预计 {parse(s['expected_end_at']).astimezone(zone):%H:%M} 收尾，到点会问你结果。",
                               {'session_id': s['id'], 'running': True, 'expected_end': s['expected_end_at'],
                                'title': tasks[s['task_id']]['title']}, now + timedelta(minutes=5))
+                    elif event['kind'] == 'session.end':
+                        s = sessions.get(payload.get('id'))
+                        info = (s or {}).get('adjustment') or {}
+                        status = info.get('status')
+                        if not s or status not in ('applied', 'proposal', 'blocked'):
+                            continue
+                        title = next((t['title'] for t in state['tasks'] if t['id'] == s['task_id']), '这一段')
+                        plan = next((p for p in state.get('proposals', []) if p['id'] == info.get('proposal_id')), None)
+                        if info.get('early') and plan and plan['new_blocks']:
+                            first = plan['new_blocks'][0]
+                            when = (f"{parse(first['start_at']).astimezone(zone):%H:%M}–"
+                                    f"{parse(first['end_at']).astimezone(zone):%H:%M}")
+                            queue('early', s['id'], s['version'],
+                                  f"这一段提前结束了\n{title}\n早了 {info['minutes']} 分钟，后面的安排在 {when} 可以往前挪。回复「提前」就改。",
+                                  {'proposal_id': plan['id'], 'proposal_status': 'draft'}, parse(plan['expires_at']))
+                        elif status == 'applied' and plan:
+                            queue('shifted', s['id'], s['version'],
+                                  f"这一段结束了\n{title}\n后面的安排已顺延 {info.get('minutes', 0)} 分钟。",
+                                  {'proposal_id': plan['id'], 'proposal_status': 'applied'}, now + timedelta(minutes=10))
+                        elif plan:
+                            reason = ('后面的安排遇到固定、保护或已开始的段，已保留原样。'
+                                      if status == 'blocked' else '后面的安排需要你确认。')
+                            queue('shiftwait', s['id'], s['version'],
+                                  f"这一段晚结束了\n{title}\n{reason}打开瞬时查看调整。",
+                                  {'proposal_id': plan['id'], 'proposal_status': status}, parse(plan['expires_at']))
                     elif event['kind'] == 'review.analysis':
                         analysis = next((a for a in state.get('analyses', []) if a['id'] == payload.get('id')), None)
                         if analysis:
@@ -139,6 +164,14 @@ class Proactive:
             if not row:
                 return False
             ref, state = json.loads(row['body']), self.store.state(conn)
+        if ref.get('proposal_id'):
+            plan = next((p for p in state.get('proposals', []) if p['id'] == ref['proposal_id']), None)
+            if not plan:
+                return False
+            if ref.get('proposal_status') == 'applied':
+                return plan['status'] == 'applied'
+            return (plan['status'] == ref.get('proposal_status') and plan.get('base_revision') == state['revision']
+                    and parse(plan['expires_at']) > self.clock())
         if ref.get('task_id'):
             task = next((t for t in state['tasks'] if t['id'] == ref['task_id']), None)
             if not task or task['state'] in ('done', 'cancelled'):

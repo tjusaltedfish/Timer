@@ -22,6 +22,7 @@ extension _WeekPage on _PlannerHomeState {
                 child: WeekOverview(
                   blocks: c.blocks,
                   tasks: c.tasks,
+                  sessions: c.sessions,
                   day: selectedDay,
                   now: now,
                   zone: zone,
@@ -49,6 +50,7 @@ extension _WeekPage on _PlannerHomeState {
                 WeekCalendar(
                   blocks: c.blocks,
                   tasks: c.tasks,
+                  sessions: c.sessions,
                   zone: zone,
                   selectedDay: selectedDay,
                   now: now,

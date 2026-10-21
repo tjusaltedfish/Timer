@@ -3,6 +3,16 @@ part of '../home.dart';
 extension _BlockDetailSheet on _PlannerHomeState {
   Future<void> blockDetails(Json block) async {
     final t = task(block['task_id']);
+    final s = session(block['id']);
+    final span = blockSpan(block, s);
+    final localStart = tz.TZDateTime.from(span.start, zone);
+    final localEnd = tz.TZDateTime.from(span.end, zone);
+    final planned = '原定 ${dateKey(local(block['start_at']))} '
+        '${hm(local(block['start_at']))}—${hm(local(block['end_at']))}';
+    final differs =
+        s != null &&
+        (span.start != DateTime.parse(block['start_at']) ||
+            span.end != DateTime.parse(block['end_at']));
     await showOwnedDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -14,8 +24,16 @@ extension _BlockDetailSheet on _PlannerHomeState {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '${dateKey(local(block['start_at']))}  ${hm(local(block['start_at']))}—${hm(local(block['end_at']))}',
+                '${dateKey(localStart)}  ${hm(localStart)}—${hm(localEnd)}'
+                '${s == null ? '' : '（实际）'}',
               ),
+              if (differs) ...[
+                const SizedBox(height: 4),
+                Text(
+                  planned,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
               const SizedBox(height: 14),
               Text(t?['outcome_criteria'] ?? '保护时段'),
               if (t != null) ...[

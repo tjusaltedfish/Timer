@@ -62,6 +62,21 @@ void main() {
       c.dispose();
     },
   );
+  testWidgets('an ended block shows its actual time and keeps the plan as reference', (
+    tester,
+  ) async {
+    await prepare();
+    await c.startBlock(c.blocks.single);
+    current = DateTime.utc(2026, 10, 19, 17, 5);
+    await c.controlSession(c.sessions.single, 'end');
+    await show(tester);
+    expect(find.text('09:20 — 10:05'), findsOneWidget);
+    expect(find.text('原定 09:00–10:00'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
+
   testWidgets(
     'interruption asks remaining work and saves it before trying a replan',
     (tester) async {

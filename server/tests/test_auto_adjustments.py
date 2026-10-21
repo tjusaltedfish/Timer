@@ -203,3 +203,71 @@ def test_cross_day_chain_is_left_for_manual_review(clocked):
     session = send(c, "session.start", block_id=source["id"])["entity"]
     assert change(c, session)["adjustment"]["status"] == "blocked"
     assert any(b["id"] == following["id"] for b in active_blocks(c))
+
+
+def test_late_end_shifts_the_blocks_that_the_overrun_pushed_into(clocked):
+    c, current, source, later, session = calendar(clocked)
+    current[0] += timedelta(minutes=70)
+    ended = send(c, "session.end", id=session["id"])["entity"]
+    info = ended["adjustment"]
+    assert info["status"] == "applied" and info["count"] == 2 and info["minutes"] == 10
+    state = c.get("/api/v1/snapshot").json()
+    plan = next(p for p in state["proposals"] if p["id"] == info["proposal_id"])
+    for before, after in zip(later, plan["new_blocks"]):
+        assert datetime.fromisoformat(after["start_at"]) == datetime.fromisoformat(before["start_at"]) + timedelta(minutes=10)
+
+
+def test_large_late_end_offers_a_proposal_instead_of_moving_blocks(clocked):
+    c, current, source, later, session = calendar(clocked)
+    current[0] += timedelta(minutes=110)
+    info = send(c, "session.end", id=session["id"])["entity"]["adjustment"]
+    assert info["status"] == "proposal" and info.get("early") is None
+    starts = {b["id"]: b["start_at"] for b in active_blocks(c)}
+    assert starts[later[0]["id"]] == later[0]["start_at"]
+
+
+def test_early_end_offers_to_pull_the_chain_forward_only_after_confirmation(clocked):
+    c, current, source, later, session = calendar(clocked)
+    current[0] += timedelta(minutes=40)
+    info = send(c, "session.end", id=session["id"])["entity"]["adjustment"]
+    assert info["status"] == "proposal" and info["early"] is True and info["minutes"] == 20
+    starts = {b["id"]: b["start_at"] for b in active_blocks(c)}
+    assert starts[later[0]["id"]] == later[0]["start_at"]
+    send(c, "plan.apply", proposal_id=info["proposal_id"])
+    state = c.get("/api/v1/snapshot").json()
+    plan = next(p for p in state["proposals"] if p["id"] == info["proposal_id"])
+    assert plan["kind"] == "early" and plan["status"] == "applied"
+    moved = [b for b in state["blocks"] if b.get("source_block_id") in {x["id"] for x in later}]
+    assert datetime.fromisoformat(moved[0]["start_at"]) == datetime.fromisoformat(later[0]["start_at"]) - timedelta(minutes=20)
+    assert datetime.fromisoformat(moved[1]["start_at"]) == datetime.fromisoformat(later[1]["start_at"]) - timedelta(minutes=20)
+
+
+def test_early_end_under_fifteen_minutes_is_silent(clocked):
+    c, current, source, later, session = calendar(clocked)
+    current[0] += timedelta(minutes=50)
+    assert send(c, "session.end", id=session["id"])["entity"]["adjustment"]["status"] == "none"
+
+
+def test_early_end_does_not_collapse_a_later_gap(clocked):
+    c, current = clocked
+    task = new_task(c, "单独一段")
+    planned = block(c, task["id"], start=current[0], duration=60)
+    other = block(c, new_task(c, "下午")["id"], start=current[0] + timedelta(hours=3), duration=30)
+    session = send(c, "session.start", block_id=planned["id"])["entity"]
+    current[0] += timedelta(minutes=40)
+    info = send(c, "session.end", id=session["id"])["entity"]["adjustment"]
+    assert info["status"] == "none"
+    assert next(b for b in active_blocks(c) if b["id"] == other["id"])["start_at"] == other["start_at"]
+
+
+def test_early_end_stops_at_a_fixed_barrier(clocked):
+    c, current = clocked
+    task = new_task(c, "主线")
+    planned = block(c, task["id"], start=current[0], duration=60)
+    fixed_task = new_task(c, "课")
+    barrier = block(c, fixed_task["id"], start=current[0] + timedelta(minutes=60), duration=30, kind="fixed")
+    session = send(c, "session.start", block_id=planned["id"])["entity"]
+    current[0] += timedelta(minutes=40)
+    info = send(c, "session.end", id=session["id"])["entity"]["adjustment"]
+    assert info["status"] == "none"
+    assert next(b for b in active_blocks(c) if b["id"] == barrier["id"])["start_at"] == barrier["start_at"]

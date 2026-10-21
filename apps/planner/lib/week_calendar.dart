@@ -39,6 +39,7 @@ class WeekCalendar extends StatefulWidget {
     super.key,
     required this.blocks,
     required this.tasks,
+    this.sessions = const [],
     required this.zone,
     required this.selectedDay,
     required this.dayStart,
@@ -49,7 +50,7 @@ class WeekCalendar extends StatefulWidget {
     this.onSlotPicked,
     this.markOf,
   });
-  final List<Json> blocks, tasks;
+  final List<Json> blocks, tasks, sessions;
   final tz.Location zone;
   final DateTime selectedDay;
   final DateTime? now;
@@ -112,7 +113,13 @@ class _WeekCalendarState extends State<WeekCalendar> {
         (i) => DateTime(monday.year, monday.month, monday.day + i),
       );
       final slices = {
-        for (final day in days) day: daySlices(widget.blocks, day, widget.zone),
+        for (final day in days)
+          day: daySlices(
+            widget.blocks,
+            day,
+            widget.zone,
+            sessions: widget.sessions,
+          ),
       };
       final (first, last) = visibleHours(
         slices.values.expand((s) => s),
@@ -442,9 +449,13 @@ class _DayColumnState extends State<_DayColumn> {
                 _pick(from, to);
               }
             : null,
-        child: Stack(
-          clipBehavior: Clip.hardEdge,
-          children: [
+        child: LayoutBuilder(
+          builder: (context, box) {
+            final lanes = sliceLanes(widget.slices);
+            final cell = box.maxWidth - 8;
+            return Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
             if (isToday)
               Positioned.fill(
                 child: ColoredBox(color: p.inkJiao.withValues(alpha: .02)),
@@ -493,17 +504,23 @@ class _DayColumnState extends State<_DayColumn> {
                   strong: true,
                 ),
               ),
-            for (final slice in widget.slices)
+            for (var i = 0; i < widget.slices.length; i++)
               Positioned(
-                top: _y(slice.start) + 1.5,
-                left: 4,
-                right: 4,
-                height: math.max(_y(slice.end) - _y(slice.start) - 3, 20),
+                top: _y(widget.slices[i].start) + 1.5,
+                left: 4 + lanes[i].lane * cell / lanes[i].lanes,
+                width:
+                    cell / lanes[i].lanes - (lanes[i].lanes > 1 ? 1 : 0),
+                height: math.max(
+                  _y(widget.slices[i].end) -
+                      _y(widget.slices[i].start) -
+                      3,
+                  20,
+                ),
                 child: _BlockChip(
-                  slice: slice,
-                  mark: widget.markOf?.call(slice.block),
+                  slice: widget.slices[i],
+                  mark: widget.markOf?.call(widget.slices[i].block),
                   showOffset: widget.showOffset,
-                  onTap: () => widget.onBlockTap(slice.block),
+                  onTap: () => widget.onBlockTap(widget.slices[i].block),
                 ),
               ),
             if (isToday && now.isAfter(origin) && now.isBefore(end))
@@ -527,7 +544,9 @@ class _DayColumnState extends State<_DayColumn> {
                   ),
                 ),
               ),
-          ],
+              ],
+            );
+          },
         ),
       ),
     );

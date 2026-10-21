@@ -1,7 +1,14 @@
 import asyncio
 from datetime import timedelta
 
-from test_wechat import env, configure, bind, run, NOW
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from app import assistant
+from app.main import create_app
+from test_wechat import (env, configure, bind, run, NOW, FakeWeChat, FakeModel,
+                         OWNER, APP_SECRET)
 from test_assistant import send
 
 
@@ -159,3 +166,66 @@ def test_time_up_question_offers_finish_extend_and_postpone_without_codes(env):
     run(c, app)
     [text] = [body['text']['content'] for _, body in fake.custom if '到时间了' in body['text']['content']]
     assert '「完成了」' in text and '「再给我15分钟」' in text and '推迟' in text
+
+
+@pytest.fixture
+def movable_env(tmp_path, monkeypatch):
+    """WeChat env whose clock can advance without recreating the app."""
+    monkeypatch.setattr(assistant, "RETRY_DELAYS", (0, 0, 0))
+    monkeypatch.delenv("PLANNER_LLM_API_KEY", raising=False)
+    wechat, model = FakeWeChat(), FakeModel()
+    now = [NOW]
+    app = create_app(tmp_path, clock=lambda: now[0], llm_transport=httpx.MockTransport(model),
+                     wechat_transport=httpx.MockTransport(wechat), background=False)
+    with TestClient(app) as client:
+        client.headers["Authorization"] = "Bearer " + app.state.desktop_token
+        token = configure(client)['token']
+        bind(client, app, token)
+        wechat.custom.clear()
+        yield client, app, wechat, now
+
+
+def test_late_end_tells_wechat_that_following_blocks_moved(movable_env):
+    c, app, fake, now = movable_env
+    task = send(c, 'task.create', title='实验报告', outcome_criteria='保存报告', remaining_minutes=120)
+    source = send(c, 'block.create', task_id=task['id'], start_at=now[0].isoformat(),
+                  end_at=(now[0] + timedelta(hours=1)).isoformat())
+    later = send(c, 'block.create', task_id=send(c, 'task.create', title='下一件', outcome_criteria='完成', remaining_minutes=30)['id'],
+                 start_at=(now[0] + timedelta(hours=1)).isoformat(),
+                 end_at=(now[0] + timedelta(hours=1, minutes=30)).isoformat())
+    session = send(c, 'session.start', block_id=source['id'])
+    now[0] += timedelta(minutes=70)
+    info = send(c, 'session.end', id=session['id'])['adjustment']
+    assert info['status'] == 'applied' and info['minutes'] == 10
+    app.state.proactive.tick()
+    run(c, app)
+    texts = [body['text']['content'] for _, body in fake.custom]
+    assert any('后面的安排已顺延 10 分钟' in t for t in texts)
+
+
+def test_early_end_asks_in_wechat_and_reply_pulls_the_chain(movable_env):
+    c, app, fake, now = movable_env
+    task = send(c, 'task.create', title='实验报告', outcome_criteria='保存报告', remaining_minutes=120)
+    source = send(c, 'block.create', task_id=task['id'], start_at=now[0].isoformat(),
+                  end_at=(now[0] + timedelta(hours=1)).isoformat())
+    next_task = send(c, 'task.create', title='下一件', outcome_criteria='完成', remaining_minutes=30)
+    later = send(c, 'block.create', task_id=next_task['id'],
+                 start_at=(now[0] + timedelta(hours=1)).isoformat(),
+                 end_at=(now[0] + timedelta(hours=1, minutes=30)).isoformat())
+    session = send(c, 'session.start', block_id=source['id'])
+    now[0] += timedelta(minutes=40)
+    info = send(c, 'session.end', id=session['id'])['adjustment']
+    assert info['status'] == 'proposal' and info['early'] is True
+    app.state.proactive.tick()
+    run(c, app)
+    texts = [body['text']['content'] for _, body in fake.custom]
+    assert any('回复「提前」就改' in t for t in texts)
+    assert not any('已提前' in t for t in texts)
+
+    reply = c.portal.call(app.state.wechat.handle, '提前', 'early-once')
+    assert '已提前：下一件' in reply
+    state = c.get('/api/v1/snapshot').json()
+    moved = next(b for b in state['blocks'] if b.get('source_block_id') == later['id'])
+    assert moved['start_at'] == (NOW + timedelta(minutes=40)).isoformat()
+    again = c.portal.call(app.state.wechat.handle, '提前', 'early-twice')
+    assert '没有可以提前' in again

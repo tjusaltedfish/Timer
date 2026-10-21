@@ -23,9 +23,36 @@ extension _BlockCard on _PlannerHomeState {
     '保护时段' => '护',
     _ => null,
   };
+  /// Actual interval once the block has been started, with the planned one as
+  /// the reference; untouched blocks keep their plan.
+  ({String main, String? hint}) blockTime(Json block, Json? s) {
+    final plannedStart = DateTime.parse(block['start_at'] as String);
+    final plannedEnd = DateTime.parse(block['end_at'] as String);
+    final span = blockSpan(block, s);
+    final start = hm(local(span.start.toIso8601String()));
+    final end = hm(local(span.end.toIso8601String()));
+    final plan = '原定 ${hm(local(block['start_at']))}–${hm(local(block['end_at']))}';
+    if (s == null || s['actual_start_at'] == null) {
+      return (main: '$start — $end', hint: null);
+    }
+    final state = s['state'];
+    if (state == 'running') {
+      return (main: '$start 开始 · 预计 $end 收尾', hint: plan);
+    }
+    if (state == 'paused') {
+      return (main: '$start 开始 · 暂停中', hint: plan);
+    }
+    final differs = span.start != plannedStart || span.end != plannedEnd;
+    return (
+      main: '$start — $end',
+      hint: differs ? plan : null,
+    );
+  }
+
   Widget focusCard(Json block, {bool focused = true}) {
     final t = task(block['task_id']), s = session(block['id']);
     final state = s?['state'];
+    final time = blockTime(block, s);
     final planned =
         s?['planned_seconds'] as int? ??
         DateTime.parse(block['end_at'])
@@ -48,8 +75,7 @@ extension _BlockCard on _PlannerHomeState {
         : DateTime.parse(s['expected_end_at']).difference(c.nowUtc).inSeconds;
     final seal = blockSeal(block);
     return Semantics(
-      label:
-          '${hm(local(block['start_at']))}至${hm(local(block['end_at']))}，${block['title']}，${blockStatus(block)}',
+      label: '${time.main}，${block['title']}，${blockStatus(block)}',
       child: InkCard(
         mark: markOf(t?['project_id']),
         focused: focused,
@@ -68,7 +94,7 @@ extension _BlockCard on _PlannerHomeState {
                       children: [
                         Expanded(
                           child: Text(
-                            '${hm(local(block['start_at']))} — ${hm(local(block['end_at']))}',
+                            time.main,
                             style: TextStyle(
                               fontFamily: 'WenKai',
                               fontSize: 16,
@@ -92,6 +118,17 @@ extension _BlockCard on _PlannerHomeState {
                           ),
                       ],
                     ),
+                    if (time.hint != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          time.hint!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: palette.inkZhong.withValues(alpha: .8),
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: 12),
                     Text(
                       block['title'],
@@ -302,6 +339,14 @@ extension _BlockCard on _PlannerHomeState {
 
   Widget blockTile(Json block) {
     final t = task(block['task_id']);
+    final s = session(block['id']);
+    final span = blockSpan(block, s);
+    final plannedStart = DateTime.parse(block['start_at'] as String);
+    final plannedEnd = DateTime.parse(block['end_at'] as String);
+    final start = hm(local(span.start.toIso8601String()));
+    final end = hm(local(span.end.toIso8601String()));
+    final differs =
+        s != null && (span.start != plannedStart || span.end != plannedEnd);
     return Column(
       children: [
         ListTile(
@@ -313,7 +358,7 @@ extension _BlockCard on _PlannerHomeState {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  hm(local(block['start_at'])),
+                  start,
                   style: TextStyle(
                     fontFamily: 'WenKai',
                     fontSize: 16,
@@ -321,7 +366,7 @@ extension _BlockCard on _PlannerHomeState {
                   ),
                 ),
                 Text(
-                  hm(local(block['end_at'])),
+                  end,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -332,8 +377,9 @@ extension _BlockCard on _PlannerHomeState {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           subtitle: Text(
-            t?['outcome_criteria'] ?? '保护时段',
-            maxLines: 2,
+            '${t?['outcome_criteria'] ?? '保护时段'}'
+            '${differs ? '\n原定 ${hm(local(block['start_at']))}–${hm(local(block['end_at']))}' : ''}',
+            maxLines: 3,
             overflow: TextOverflow.ellipsis,
           ),
           trailing: Text(

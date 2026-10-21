@@ -55,11 +55,13 @@ HELP = ("我是你的瞬时助手。\n"
         "· 「今天」查看今天的安排\n"
         "· 我会直接改好日程，不对就回复「撤销」\n"
         "· 到点后可回复「完成了」或「再给我15分钟」\n"
+        "· 提前结束时我会问要不要把后面的安排提前，回「提前」即可\n"
         "· 「今日总结：……」保存原文，「记住：……」保存偏好\n"
         "· 「取消 某某」「把午饭挪到一点」也可以直接说")
 UNDO = re.compile(r"^(撤销|撤回|undo)\s*([0-9a-fA-F]{4})?$", re.IGNORECASE)
 CONFIRM = re.compile(r"^(确认|照办|照此办理|办|好的?|可以|ok)\s*([0-9a-fA-F]{4})?$", re.IGNORECASE)
 DISMISS = re.compile(r"^(不必|算了|不用了?|放下)\s*([0-9a-fA-F]{4})?$")
+EARLY = re.compile(r"^提前\s*([0-9a-fA-F]{4})?$")
 log = logging.getLogger(__name__)
 
 
@@ -317,6 +319,11 @@ class WeChatChannel:
         undo = UNDO.match(compact)
         if undo:
             return self.undo(undo.group(2))
+        early = EARLY.match(compact)
+        if early:
+            answer = self.apply_early(early.group(1), operation_id)
+            if answer is not None:
+                return answer
         match = CONFIRM.match(compact) or DISMISS.match(compact)
         if match:
             answer = self.decide(bool(CONFIRM.match(compact)), match.group(2))
@@ -356,6 +363,30 @@ class WeChatChannel:
         except DomainError as error:
             return error.message
         return f"已撤销：{matches[0]['summary']}。"
+
+    def apply_early(self, code, operation_id=None):
+        """Apply a pending pull-earlier proposal created after an early end."""
+        state = self.store.state()
+        now = self.clock()
+        drafts = [p for p in state.get('proposals', [])
+                  if p['status'] == 'draft' and p.get('kind') == 'early'
+                  and p.get('base_revision') == state['revision'] and parse(p['expires_at']) > now]
+        if code:
+            drafts = [p for p in drafts if p['id'][:4].lower() == code.lower()]
+        if not drafts:
+            return '现在没有可以提前的安排，可能已经处理过或日程有变。到瞬时里看看当前安排吧。'
+        if len(drafts) > 1:
+            codes = '、'.join(p['id'][:4].upper() for p in drafts)
+            return f'有几份提前建议在等你：{codes}。请带上编号，比如「提前 {drafts[0]["id"][:4].upper()}」。'
+        proposal = drafts[0]
+        try:
+            self.assistant.apply_operation('plan.apply', {'proposal_id': proposal['id']}, 'wechat', operation_id)
+        except DomainError as error:
+            return error.message
+        first = proposal['new_blocks'][0]
+        zone = ZoneInfo(state['settings']['timezone'])
+        start, end = parse(first['start_at']).astimezone(zone), parse(first['end_at']).astimezone(zone)
+        return f"已提前：{first['title']} 改到 {start:%H:%M}–{end:%H:%M}。"
 
     def decide(self, accept, code):
         with self.store.connect() as conn:

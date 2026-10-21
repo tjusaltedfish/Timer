@@ -114,7 +114,16 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
     c.blocks,
     selectedDay,
     zone,
+    sessions: c.sessions,
   ).map((slice) => slice.block).toList();
+  /// A block still ahead of us, judged by the interval actually shown
+  /// (extended work keeps counting until its real end).
+  bool upcoming(Json block) {
+    final span = blockSpan(block, session(block['id']));
+    return block['status'] == 'scheduled' &&
+        tz.TZDateTime.from(span.end, zone).isAfter(now);
+  }
+
   Json? task(String? id) => c.tasks.where((t) => t['id'] == id).firstOrNull;
   Json? session(String blockId) =>
       c.sessions.where((s) => s['block_id'] == blockId).lastOrNull;
@@ -238,11 +247,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
           ? '${weekdays[selectedDay.weekday - 1]}还空着'
           : '${weekdays[selectedDay.weekday - 1]} · ${items.length} 件安排';
     }
-    final left = items
-        .where(
-          (b) => b['status'] == 'scheduled' && local(b['end_at']).isAfter(now),
-        )
-        .length;
+    final left = items.where(upcoming).length;
     if (items.isEmpty) return '$greeting，今天还空着，想做点什么？';
     if (left == 0) return '$greeting，今天的安排都落定了，留点时间给自己。';
     return '$greeting，今天还有 $left 件事，一件一件来。';

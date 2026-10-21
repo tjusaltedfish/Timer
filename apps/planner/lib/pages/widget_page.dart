@@ -37,15 +37,11 @@ extension _WidgetPage on _PlannerHomeState {
           ].contains(session(b['id'])?['state']),
         )
         .firstOrNull;
-    final upcoming = items
-        .where(
-          (b) => b['status'] == 'scheduled' && local(b['end_at']).isAfter(now),
-        )
-        .toList();
-    final focus = active ?? upcoming.firstOrNull;
-    final later = upcoming.where((b) => b != focus).toList();
+    final upcomingNow = items.where(upcoming).toList();
+    final focus = active ?? upcomingNow.firstOrNull;
+    final later = upcomingNow.where((b) => b != focus).toList();
     final past = items
-        .where((b) => b != active && !upcoming.contains(b))
+        .where((b) => b != active && !upcomingNow.contains(b))
         .length;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -100,7 +96,9 @@ extension _WidgetPage on _PlannerHomeState {
     final s = session(block['id']);
     final state = s?['state'];
     final t = task(block['task_id']);
-    final start = local(block['start_at']), end = local(block['end_at']);
+    final span = blockSpan(block, s);
+    final start = tz.TZDateTime.from(span.start, zone),
+        end = tz.TZDateTime.from(span.end, zone);
     double progress = 0;
     String status = blockStatus(block);
     if (state == 'running' || state == 'paused') {
@@ -194,7 +192,8 @@ extension _WidgetPage on _PlannerHomeState {
   }
 
   Widget _miniRow(Json block) {
-    final start = local(block['start_at']);
+    final span = blockSpan(block, session(block['id']));
+    final start = tz.TZDateTime.from(span.start, zone);
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: () => blockDetails(block),

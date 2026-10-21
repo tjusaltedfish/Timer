@@ -15,6 +15,7 @@ class WeekOverview extends StatelessWidget {
     super.key,
     required this.blocks,
     required this.tasks,
+    this.sessions = const [],
     required this.day,
     required this.now,
     required this.zone,
@@ -23,7 +24,7 @@ class WeekOverview extends StatelessWidget {
     required this.dayStart,
     required this.dayEnd,
   });
-  final List<Json> blocks, tasks;
+  final List<Json> blocks, tasks, sessions;
   final DateTime day, now;
   final tz.Location zone;
   final ValueChanged<DateTime> onSelectDay;
@@ -46,7 +47,10 @@ class WeekOverview extends StatelessWidget {
       7,
       (i) => DateTime(monday.year, monday.month, monday.day + i),
     );
-    final slices = [for (final d in days) daySlices(blocks, d, zone)];
+    final slices = [
+      for (final d in days)
+        daySlices(blocks, d, zone, sessions: sessions),
+    ];
     var first = int.parse(dayStart.split(':')[0]);
     var last =
         int.parse(dayEnd.split(':')[0]) + (dayEnd.endsWith(':00') ? 0 : 1);
@@ -60,7 +64,7 @@ class WeekOverview extends StatelessWidget {
       );
     }
     last = last.clamp(first + 1, 24);
-    final selected = daySlices(blocks, day, zone);
+    final selected = daySlices(blocks, day, zone, sessions: sessions);
     return LayoutBuilder(
       builder: (context, bounds) {
         final chartHeight = math.min(
@@ -151,9 +155,12 @@ class WeekOverview extends StatelessWidget {
                               const SizedBox(height: 4),
                               SizedBox(
                                 height: chartHeight,
-                                child: Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
+                                child: LayoutBuilder(
+                                  builder: (context, box) {
+                                    final lanes = sliceLanes(slices[i]);
+                                    return Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
                                     if (dateKey(days[i]) == dateKey(day))
                                       Positioned.fill(
                                         child: DecoratedBox(
@@ -197,8 +204,13 @@ class WeekOverview extends StatelessWidget {
                                                     ) >=
                                                 18,
                                         chartHeight,
+                                        lane: lanes[j].lane,
+                                        lanes: lanes[j].lanes,
+                                        width: box.maxWidth,
                                       ),
-                                  ],
+                                      ],
+                                    );
+                                  },
                                 ),
                               ),
                             ],
@@ -248,7 +260,8 @@ class WeekOverview extends StatelessWidget {
                             horizontalTitleGap: 10,
                             title: Text(slice.block['title']),
                             subtitle: Text(
-                              '${hm(slice.start)}—${hm(slice.end)}',
+                              '${hm(slice.start)}—${hm(slice.end)}'
+                              '${slice.differsFromPlan ? '  · 原定 ${hm(slice.plannedStart!)}—${hm(slice.plannedEnd!)}' : ''}',
                             ),
                             trailing: const Icon(Icons.chevron_right, size: 18),
                           ),
@@ -269,16 +282,20 @@ class WeekOverview extends StatelessWidget {
     double top,
     double height,
     bool label,
-    double chartHeight,
-  ) {
+    double chartHeight, {
+    int lane = 0,
+    int lanes = 1,
+    double width = 0,
+  }) {
     final title = slice.block['title'] as String;
     final count = height >= 40 ? 8 : 4;
     final brief = title.characters.take(count).join();
+    final cell = (width - 4) / lanes;
     return Positioned(
       key: ValueKey('week.stamp.${slice.block['id']}'),
       top: top,
-      left: 2,
-      right: 2,
+      left: 2 + lane * cell,
+      width: lanes > 1 ? cell - 1 : width - 4,
       height: math.min(math.max(18, height), chartHeight - top),
       child: Tooltip(
         message: '$title\n${hm(slice.start)}—${hm(slice.end)}',

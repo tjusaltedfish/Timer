@@ -14,12 +14,7 @@ extension _TodayPage on _PlannerHomeState {
               ].contains(session(b['id'])?['state']),
             )
             .firstOrNull ??
-        items
-            .where(
-              (b) =>
-                  b['status'] == 'scheduled' && local(b['end_at']).isAfter(now),
-            )
-            .firstOrNull ??
+        items.where(upcoming).firstOrNull ??
         items.lastOrNull;
     final awaiting = c.sessions
         .where((s) => s['state'] == 'awaiting_feedback')
@@ -182,6 +177,7 @@ extension _TodayPage on _PlannerHomeState {
                         child: InkTimeline(
                           blocks: items,
                           tasks: c.tasks,
+                          sessions: c.sessions,
                           zone: zone,
                           day: selectedDay,
                           now: now,

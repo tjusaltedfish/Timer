@@ -14,6 +14,7 @@ class InkTimeline extends StatelessWidget {
     super.key,
     required this.blocks,
     required this.tasks,
+    this.sessions = const [],
     required this.zone,
     required this.day,
     required this.now,
@@ -23,7 +24,7 @@ class InkTimeline extends StatelessWidget {
     this.onSlotPicked,
     this.markOf,
   });
-  final List<Json> blocks, tasks;
+  final List<Json> blocks, tasks, sessions;
   final tz.Location zone;
   final DateTime day, now;
   final String dayStart, dayEnd;
@@ -34,7 +35,8 @@ class InkTimeline extends StatelessWidget {
   final void Function(tz.TZDateTime start, int minutes)? onSlotPicked;
   @override
   Widget build(BuildContext context) {
-    final p = context.inkPalette, slices = daySlices(blocks, day, zone);
+    final p = context.inkPalette,
+        slices = daySlices(blocks, day, zone, sessions: sessions);
     var first = int.parse(dayStart.split(':').first);
     var last =
         int.parse(dayEnd.split(':').first) + (dayEnd.endsWith(':00') ? 0 : 1);

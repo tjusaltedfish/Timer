@@ -57,8 +57,11 @@ def validate_block(state, block, exclude_id=None, now=None):
                 previous = [b for b in state["blocks"] if b.get("task_id") == dependency and b["status"] == "scheduled"]
                 if not previous or max(parse(b["end_at"]) for b in previous) > parse(block["start_at"]):
                     raise DomainError("请先安排或完成前置任务")
+    # A block that already has an execution record no longer reserves its
+    # planned span; the session's actual interval is the truth there.
+    used_blocks = {s["block_id"] for s in state.get("sessions", [])}
     for other in state["blocks"]:
-        if other["id"] == exclude_id or other["status"] != "scheduled":
+        if other["id"] == exclude_id or other["status"] != "scheduled" or other["id"] in used_blocks:
             continue
         if parse(block["start_at"]) < parse(other["end_at"]) and parse(block["end_at"]) > parse(other["start_at"]):
             raise DomainError(f"与「{other['title']}」的时间冲突", "TIME_CONFLICT")
@@ -415,4 +418,7 @@ def apply(state, operation, device_id, now):
     if kind in ("session.start", "session.extend", "session.resume"):
         from .adjustments import adjust_following
         entity["adjustment"] = adjust_following(state, entity, now, automatic_allowed=not data.get("defer_adjustment", False))
+    elif kind == "session.end":
+        from .adjustments import adjust_after_end
+        entity["adjustment"] = adjust_after_end(state, entity, now, automatic_allowed=not data.get("defer_adjustment", False))
     return entity
