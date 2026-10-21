@@ -4,7 +4,7 @@
 
 ## 零、电脑上的 Timer
 
-桌面上的「Timer」快捷方式：双击后先确认电脑后台在运行（没有就在后台悄悄启动，日志在 `%USERPROFILE%/TimePlanner/logs`），再打开 Timer 窗口。关掉窗口后台仍在运行，微信回复不中断；重启电脑后需要再双击一次（开机自启尚未做）。
+桌面上的「Timer」快捷方式：双击后先确认电脑后台在运行（没有就在后台悄悄启动，日志在 `%USERPROFILE%/TimePlanner/logs`），再打开 Timer 窗口。关掉窗口后台仍在运行，微信回复不中断；重启电脑并登录后，`TimePlannerBackend` 会自动起后台与隧道，`TimePlannerWatchdog` 每分钟检查并重启掉线的隧道，不需要再双击。
 
 更新：关闭 Timer 窗口，在项目目录运行 `./tools/release.ps1`（见文末「一键发布与更新」）。程序装在 `%USERPROFILE%/Apps/Timer`，数据仍在 `%USERPROFILE%/TimePlanner/data`，更新不会动数据。
 
@@ -17,7 +17,7 @@
 
 微信要求回调地址使用 80 或 443 端口（以官方说明为准），Cloudflare 提供的 HTTPS 正好是 443。
 
-**已完成（2026-10-19）**：隧道 `timer`（ID `fe2c5622…`）已建，CNAME `timer.studydazi.top` 指向它。`cloudflared` 2026.10.1 来自官方 GitHub 发布并核对 SHA256，装在 `%USERPROFILE%/Apps/cloudflared`；配置 `timer.yml` 只把路径 `^/wechat/callback$` 转到 `127.0.0.1:8787`，其余返回 404。登录凭证 `cert.pem` 与隧道凭证在 `%USERPROFILE%/.cloudflared`，不要分享。外网实测：正确签名回显 200、伪造签名 403、其他接口 404。桌面「Timer」启动时会顺带启动隧道，日志在 `%USERPROFILE%/TimePlanner/logs/tunnel.log`。登录自启由 `tools/install-autostart.ps1` 注册的计划任务 `TimePlannerBackend` 负责（只起后台与隧道，延迟 30 秒，不打开客户端）。
+**已完成（2026-10-19）**：隧道 `timer`（ID `fe2c5622…`）已建，CNAME `timer.studydazi.top` 指向它。`cloudflared` 2026.10.1 来自官方 GitHub 发布并核对 SHA256，装在 `%USERPROFILE%/Apps/cloudflared`；配置 `timer.yml` 只把 `^/api/v1/`（手机 API，均需配对凭证）和 `^/wechat/callback$` 转到 `127.0.0.1:8787`，其余返回 404。登录凭证 `cert.pem` 与隧道凭证在 `%USERPROFILE%/.cloudflared`，不要分享。外网实测：正确签名回显 200、伪造签名 403、其他接口 404。桌面「Timer」启动时会顺带启动隧道，日志在 `%USERPROFILE%/TimePlanner/logs/tunnel.log`。登录自启由 `tools/install-autostart.ps1` 注册的两个计划任务负责：`TimePlannerBackend`（延迟 30 秒起后台与隧道，不打开客户端）和 `TimePlannerWatchdog`（延迟 60 秒起守护，掉线自动重启，日志 `watchdog.log`）。
 
 
 ## 二、申请测试号
