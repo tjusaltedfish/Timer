@@ -1,6 +1,18 @@
 # 当前状态
 
-日期：2026-10-20。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
+日期：2026-10-21。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
+
+## QQ 机器人接管聊天入口、助手人格改「大肥鱼」（2026-10-21）
+
+- 起因：用户嫌公众号测试号「头像不能改、消息界面很难进、不能置顶、没有人格」，要求改成 **QQ 机器人**接管，并且「不仅是助手、更是朋友」。按用户批准（`m00179`：直接走 B、允许改后端）做的是 **Timer 原生 QQ 通道**，不是外挂 AstrBot；公众号那条路保留可用。
+- **抽出指令大脑**：新增 `server/app/chat_commands.py`，把「一句话变成日程动作」的整段逻辑从 `wechat.py` 搬出来给两条通道共用（帮助、今天、拟办确认/撤销、提前、再给 15 分钟、今日总结、记忆、空闲兜底），`device` 只影响自称是「微信」还是「QQ」。`wechat.py` 从 583 行缩到 413 行，`/api/v1/wechat/*`、回调验签、六态投递全部不变。
+- **新通道 `server/app/qq.py`**：QQ 官方机器人 WebSocket 长连接（只订 `C2C_MESSAGE_CREATE`，intent `33554432`；`Authorization: QQBot <token>`，token 提前 60 秒过期、401 自动换一次）；出站沿用六态队列（queued/sending/sent/failed/unknown/expired/cancelled），60 分钟被动窗口内借最近一条 `msg_id` 回复，过期自动转主动消息，`msg_seq` 撞车递增，限频与连不上按 30/120/600/1800 秒退避，`unknown`（超时）**永不自动重发**，崩溃重启把残留 `sending` 标 `unknown`。绑定沿用 6 位码机制（只存 sha256、10 分钟、一次性）；换 AppID 自动解绑，因为 `user_openid` 是每个机器人独有的。收发表独立成 `qq_inbox`/`qq_outbox`，不动微信的两张表。
+- **通道选择**：新增 `server/app/channels.py` 的 `RoutedChannel`，按「已配置且已绑定」在 QQ 和微信之间挑一条当提醒投递目标（QQ 优先），`proactive.py`、`weekly.py` 一行未改；`main.py` 增加 `/api/v1/qq/{config,bind-code,unbind,test,outbox}`，形状与微信那组一致，配置接口额外带 `connected`（网关长连接是否就绪）。
+- **人格**：`server/app/assistant.py` 的身份段改成「大肥鱼」——闲时能正常聊两句（`drafts` 留空、reply ≤80 字、不追问、闲聊不写 `remember`），一涉及日程立刻收敛成干活模式（reply ≤40 字）；动作清单、时间规则和 JSON 输出契约一字未动，见 [助手机制](design/assistant-behavior.md)。
+- **验证（真实跑过的）**：后台 `PLANNER_DATA_DIR=<仓库内临时目录> ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **146 passed**（原 119 + 新增 `test_qq.py` 27 项）；`flutter test` → **72 passed**；`flutter analyze` → **No issues found**。`test_qq.py` 覆盖：`QQBot` 鉴权头与 token 复用、重推去重、陌生号静默丢弃、绑定码一次性且跨重启有效、刚聊过天走被动回复、无近期互动走主动消息、长回复分片按 `msg_seq` 递增、超时记 `unknown` 不重发、连不上与限频按退避重排、被动凭证失效转主动、解绑后旧提醒失效。公网侧实测过真实 `/gateway` 与 token 接口响应（假 token 返回 401 / 11244）。
+- **没验证的**：没有真实 AppID/AppSecret，**一条真实 QQ 消息都还没收发过**；「头像可改」「能置顶」是 QQ 客户端行为，未实机确认；单聊界面是否显示机器人头像官方说法不一致。
+- **未做**：表情包/图片发送（要 `POST /v2/users/{openid}/files` 拿 `file_info` 再发富媒体）；随机主动搭话（目前只有到点提醒、日终复盘、周日简报这类规律消息）；群聊。
+- **文档**：接入步骤与限制 `docs/guides/qq-bot.md`，协议契约 `docs/qqbot-c2c-api-spec.md`，HANDOFF/README/助手机制已同步。
 
 ## 弹性执行：结束也顺延/提前，界面按实际时刻展示（2026-10-20）
 

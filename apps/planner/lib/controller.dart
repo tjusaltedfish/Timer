@@ -461,6 +461,23 @@ class PlannerController extends ChangeNotifier {
   Future<List<Json>> wechatOutbox() async =>
       ((await _wechat('GET', '/outbox'))['messages'] as List).cast<Json>();
 
+  // ---- QQ official-bot channel (configured on the computer) ----
+
+  Future<Json> _qq(String method, String path, [Json? body]) async {
+    if (!configured) {
+      throw ApiFailure('QQ 机器人在电脑上运行，请先在设置里连接电脑。', 409);
+    }
+    return request(method, '/api/v1/qq$path', body);
+  }
+
+  Future<Json> qqConfig() => _qq('GET', '/config');
+  Future<Json> saveQqConfig(Json body) => _qq('POST', '/config', body);
+  Future<Json> qqBindCode() => _qq('POST', '/bind-code', {});
+  Future<Json> qqUnbind() => _qq('POST', '/unbind', {});
+  Future<Json> qqTest() => _qq('POST', '/test', {});
+  Future<List<Json>> qqOutbox() async =>
+      ((await _qq('GET', '/outbox'))['messages'] as List).cast<Json>();
+
   Future<void> applyProposal(String id, {bool undo = false}) async {
     await sync();
     if (!connected || pending.isNotEmpty) {

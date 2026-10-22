@@ -44,6 +44,7 @@ part 'pages/settings_page.dart';
 part 'pages/assistant_page.dart';
 part 'pages/assistant_settings.dart';
 part 'pages/wechat_settings.dart';
+part 'pages/qq_settings.dart';
 part 'pages/review_page.dart';
 part 'pages/today_page.dart';
 part 'pages/widget_page.dart';
@@ -116,6 +117,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
     zone,
     sessions: c.sessions,
   ).map((slice) => slice.block).toList();
+
   /// A block still ahead of us, judged by the interval actually shown
   /// (extended work keeps counting until its real end).
   bool upcoming(Json block) {

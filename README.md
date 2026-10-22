@@ -10,7 +10,8 @@
 - [蓝图入口](docs/vibe-blueprint/00-index.md)
 - [需求验收](docs/vibe-blueprint/02-scope-and-requirements.md)
 - [开发任务](docs/vibe-blueprint/08-implementation-plan.md)
-- [微信小号接入调研与方案](docs/design/wechat-personal-channel.md)：电脑小号与手机大号私聊；技术验证与接入待执行。
+- [QQ 机器人接入（当前主入口）](docs/guides/qq-bot.md)：官方机器人 WebSocket 长连接，人格「大肥鱼」；[协议契约](docs/qqbot-c2c-api-spec.md)。
+- [微信公众号测试号接入（旧入口，代码保留）](docs/guides/wechat-test-account.md)；[微信小号接入调研与方案](docs/design/wechat-personal-channel.md)。
 - [环境检查](docs/environment-check.md)
 - [页面草图](prototype/index.html)：演示数据，刷新恢复。
 

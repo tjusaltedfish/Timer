@@ -9,6 +9,8 @@
 > **环境更新（2026-10-19）**：项目已更名为 `C:/Users/ASUS/Documents/Timer`。Codex 的 AppData 工具链路径经实测会发生 Store 应用重定向；共享 SDK、Pub 缓存和工作区联接现位于 `%USERPROFILE%/DevTools/Timer`。环境操作以 `AGENTS.md`、`docs/development-environment.md`、`tools/toolchain.json` 为准，先运行 `tools/setup-dev.ps1`，不要按下文历史记录重复安装 SDK。最新功能进度以 `docs/STATUS.md` 为准。
 
 > **微信路线历史**：曾调研个人小号桌面接入，W1 后用户已改选公众号测试号；当前已接通的正式入口是公众号。路线变更与既有接通证据见 `design/wechat-personal-channel.md`、`guides/wechat-test-account.md`，不要按旧 UIA 方案重复开发。
+>
+> **QQ 通道（2026-10-21，进行中）**：用户嫌公众号测试号头像不能改、消息界面难进、不能置顶且没有人格，要求改成 **QQ 官方机器人（WebSocket 长连接）**接管，并把助手人格改成「大肥鱼」（不仅是助手，也是搭子）。后端通道 `server/app/qq.py` 已实现并通过测试，指令大脑抽到了 `server/app/chat_commands.py` 与公众号共用；接入步骤见 `guides/qq-bot.md`，协议契约见 `qqbot-c2c-api-spec.md`。**尚未用真实 AppID/AppSecret 做端到端验收**（用户还没在 q.qq.com 建机器人），也没有在真机 QQ 上验证过「头像可改 / 可置顶」这两条客户端行为——不要写成已验证。
 
 > **1.1.0+3 续接**：首页时钟/日期、手机整周总览、专注面板、通用编辑删除、执行感知助手与偏好、材料原文复盘、公众号主动调度和通知启用入口已实现并做隔离验证。规则与模板见 [助手机制](design/assistant-behavior.md)。原小号路线已经被用户改为公众号测试号；旧设计细节以专项文档为准。当前正式后台仍为 1.0.0+2，须在正常数据环境激活准备包；不要把 Codex 的 AppData 包缓存当成正式数据库。
 

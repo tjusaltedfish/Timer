@@ -19,6 +19,8 @@ from .proactive import Proactive
 from .weekly import WeeklyBrief
 from .materials import MaterialService, GenerateReview, MAX_FILE
 from .wechat import WeChatChannel, WeChatConfigIn, parse_message, signature_ok
+from .qq import QQChannel, QQConfigIn
+from .channels import RoutedChannel
 from .domain import DomainError, apply, stamp, identifier, parse
 from .models import Operation, PairConfirm, PlanRequest
 from .planning import propose
@@ -27,7 +29,7 @@ from .reports import flush_archives, report_for
 from .store import Store, digest, encode, utcnow
 
 
-def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transport=None, background=True):
+def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transport=None, qq_transport=None, qq_connect=None, background=True):
     directory = Path(directory or releases.default_data_dir())
     store = Store(directory)
 
@@ -43,17 +45,19 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                     flush_archives(store, clock())
                 except (OSError, RuntimeError):
                     logging.getLogger(__name__).exception("Background maintenance will retry")
-        async def wechat_worker():
+        async def channel_worker():
             while True:
                 try:
                     app.state.proactive.tick()
                     await app.state.wechat.run_once()
+                    await app.state.qq.run_once()
                 except Exception:  # noqa: BLE001 - the queue keeps its evidence; retry next round
-                    logging.getLogger(__name__).exception("WeChat worker will retry")
+                    logging.getLogger(__name__).exception("Chat worker will retry")
                 await asyncio.sleep(3)
         workers = [asyncio.create_task(maintain())]
         if background:
-            workers.append(asyncio.create_task(wechat_worker()))
+            workers.append(asyncio.create_task(channel_worker()))
+            workers.append(asyncio.create_task(app.state.qq.serve()))
             async def review_worker():
                 while True:
                     try:
@@ -82,6 +86,8 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     pairing_attempts = {}
     app.state.llm_transport = llm_transport
     app.state.wechat_transport = wechat_transport
+    app.state.qq_transport = qq_transport
+    app.state.qq_connect = qq_connect
 
     @app.exception_handler(DomainError)
     async def domain_error(request, error):
@@ -292,12 +298,16 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     def assistant_undo(draft_id: str, device=Depends(authenticated)):
         return service.undo_draft(draft_id, device["id"])
 
-    # ---- WeChat official-account channel --------------------------------
+    # ---- Chat channels: WeChat official account + QQ official bot ------
     channel = WeChatChannel(store, clock, service, lambda: app.state.wechat_transport)
-    app.state.wechat = channel
-    app.state.proactive = Proactive(store, channel, clock)
-    app.state.weekly = WeeklyBrief(store, channel, service, clock)
+    qq = QQChannel(store, clock, service, lambda: app.state.qq_transport, app.state.qq_connect)
+    app.state.wechat, app.state.qq = channel, qq
+    # Reminders leave through QQ as soon as it is bound; WeChat keeps the job until then.
+    outbound = RoutedChannel(channel, qq)
+    app.state.proactive = Proactive(store, outbound, clock)
+    app.state.weekly = WeeklyBrief(store, outbound, service, clock)
     channel.notification_valid = app.state.proactive.valid
+    qq.notification_valid = app.state.proactive.valid
 
     @app.get("/wechat/callback")
     def wechat_verify(signature: str = "", timestamp: str = "", nonce: str = "", echostr: str = ""):
@@ -346,6 +356,35 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     @app.get("/api/v1/wechat/outbox")
     def wechat_outbox(device=Depends(desktop)):
         return {"messages": channel.outbox()}
+
+    # ---- QQ official-bot channel -----------------------------------------
+    @app.get("/api/v1/qq/config")
+    def qq_config(device=Depends(authenticated)):
+        return {**qq.settings.public(device["role"] == "desktop"), **qq.status()}
+
+    @app.post("/api/v1/qq/config")
+    def qq_configure(data: QQConfigIn, device=Depends(desktop)):
+        qq.settings.update(data)
+        return {**qq.settings.public(True), **qq.status()}
+
+    @app.post("/api/v1/qq/bind-code")
+    def qq_bind_code(device=Depends(desktop)):
+        return qq.new_bind_code()
+
+    @app.post("/api/v1/qq/unbind")
+    def qq_unbind(device=Depends(desktop)):
+        return qq.unbind()
+
+    @app.post("/api/v1/qq/test")
+    async def qq_test(device=Depends(desktop)):
+        qq.enqueue("这是一条来自瞬时的测试消息。收到就说明电脑后台能通过 QQ 找到你了。")
+        if background:
+            asyncio.create_task(qq.run_once())
+        return {"queued": True}
+
+    @app.get("/api/v1/qq/outbox")
+    def qq_outbox(device=Depends(desktop)):
+        return {"messages": qq.outbox()}
 
     @app.post('/api/v1/materials/upload')
     async def upload_material(request: Request, name: str, day: str, description: str = '', external_allowed: bool = True, device=Depends(authenticated)):
