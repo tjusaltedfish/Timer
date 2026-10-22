@@ -8,7 +8,9 @@ extension _SettingsPage on _PlannerHomeState {
         children: [
           sleepBar(),
           const SizedBox(height: 12),
-          accountPanel(),
+          coachTarget(CoachKeys.accountPanel, accountPanel()),
+          const SizedBox(height: 18),
+          onboardingPanel(),
           const SizedBox(height: 18),
           heading('让手机和电脑接上。', '先保留本地记录，连接恢复后再同步。'),
           panel(
@@ -192,6 +194,40 @@ extension _SettingsPage on _PlannerHomeState {
       ),
     ),
   );
+
+  /// The only onboarding entry the settings page needs: watch the tour again.
+  Widget onboardingPanel() {
+    final onboarding = widget.onboarding;
+    if (onboarding == null || !onboarding.enabled) {
+      return const SizedBox.shrink();
+    }
+    return panel(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            onboarding.tutorialDone ? '引导' : '引导还没看完',
+            style: const TextStyle(fontSize: 20),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            onboarding.tutorialDone
+                ? '第一次使用时的十步介绍已经看完了。'
+                : '第一次使用时的十步介绍还没走完，随时可以接着看。',
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton(
+            key: const Key('settings.replay-onboarding'),
+            onPressed: () {
+              unawaited(onboarding.replay());
+              update(() => page = 0);
+            },
+            child: Text(onboarding.tutorialDone ? '重新看教程' : '继续看教程'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> editTimeSetting(String field) async {
     final parts = (c.settings[field] as String)

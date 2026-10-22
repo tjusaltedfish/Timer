@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../controller.dart';
-import '../home.dart';
+import '../onboarding/onboarding_host.dart';
 import '../reminders.dart';
 import '../theme/tokens.dart';
 import '../updates.dart';
@@ -48,7 +48,7 @@ class _AuthGateState extends State<AuthGate> {
     builder: (context, _) {
       if (!c.sessionChecked) return const SessionLoadingPage();
       if (!c.authenticated) return LoginPage(controller: c);
-      return PlannerHome(
+      return OnboardingHost(
         controller: c,
         reminders: widget.reminders,
         updates: widget.updates,
@@ -71,7 +71,10 @@ class SessionLoadingPage extends StatelessWidget {
             const SizedBox(height: 18),
             Text(
               '正在进入瞬时',
-              style: TextStyle(fontSize: 15, color: context.inkPalette.inkZhong),
+              style: TextStyle(
+                fontSize: 15,
+                color: context.inkPalette.inkZhong,
+              ),
             ),
             const SizedBox(height: 16),
             const SizedBox(

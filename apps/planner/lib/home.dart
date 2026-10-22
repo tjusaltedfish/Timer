@@ -11,9 +11,11 @@ import 'controller.dart';
 import 'dialogs.dart';
 import 'calendar.dart';
 import 'week_calendar.dart';
-import 'widgets/week_overview.dart';
 import 'reminders.dart';
 import 'updates.dart';
+import 'onboarding/coach_overlay.dart';
+import 'onboarding/onboarding_controller.dart';
+import 'onboarding/onboarding_steps.dart';
 
 import 'formatting.dart';
 import 'theme/tokens.dart';
@@ -61,10 +63,15 @@ class PlannerHome extends StatefulWidget {
     required this.controller,
     this.reminders,
     this.updates,
+    this.onboarding,
   });
   final PlannerController controller;
   final ReminderService? reminders;
   final UpdateService? updates;
+
+  /// Set by [OnboardingHost] when the v2 first-run tour is running; targets for
+  /// the coach marks are registered through it.
+  final OnboardingController? onboarding;
   @override
   State<PlannerHome> createState() => _PlannerHomeState();
 }
@@ -90,6 +97,46 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
   String? categoryName(String? projectId) =>
       c.projects.where((p) => p['id'] == projectId).firstOrNull?['name'];
   void update(VoidCallback change) => setState(change);
+
+  /// Registers [child] as the coach-mark target with id [id] (plan §10.1).
+  Widget coachTarget(String id, Widget child) {
+    final onboarding = widget.onboarding;
+    if (onboarding == null) return child;
+    return CoachTarget(key: onboarding.targets.key(id), child: child);
+  }
+
+  /// Nav destinations carry the tour's keys so each step points at a real tab.
+  Key? coachNavKey(int index) => switch (index) {
+    0 => widget.onboarding?.targets.key(CoachKeys.navToday),
+    1 => widget.onboarding?.targets.key(CoachKeys.navWeek),
+    3 => widget.onboarding?.targets.key(CoachKeys.navReview),
+    4 => widget.onboarding?.targets.key(CoachKeys.navAssistant),
+    _ => null,
+  };
+
+  /// `NavigationRailDestination` is a plain data holder (no key), so the rail
+  /// registers the label text instead.
+  Widget coachNavLabel(int index, String text) {
+    final id = switch (index) {
+      0 => CoachKeys.navToday,
+      1 => CoachKeys.navWeek,
+      3 => CoachKeys.navReview,
+      4 => CoachKeys.navAssistant,
+      _ => null,
+    };
+    if (id == null) return Text(text);
+    return coachTarget(id, Text(text));
+  }
+
+  /// Follows the tour: each step names the page it needs, so the highlighted
+  /// control is actually on screen when it is measured.
+  void _onOnboardingStep() {
+    final onboarding = widget.onboarding;
+    if (onboarding == null || !onboarding.showTutorial) return;
+    final target = onboarding.step.page;
+    if (target != null && target != page) update(() => page = target);
+  }
+
   Widget reviewPage() => padded(
     Column(
       children: [
@@ -151,6 +198,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
     });
     c.startPolling();
     c.addListener(_onAdjustment);
+    widget.onboarding?.addListener(_onOnboardingStep);
     WidgetsBinding.instance.addObserver(this);
     widget.reminders?.addListener(_openReminder);
     WidgetsBinding.instance.addPostFrameCallback((_) => _openReminder());
@@ -164,6 +212,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
   void dispose() {
     clock?.cancel();
     c.removeListener(_onAdjustment);
+    widget.onboarding?.removeListener(_onOnboardingStep);
     widget.reminders?.removeListener(_openReminder);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -335,10 +384,13 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
               onTap: () => syncDetails(),
             ),
             if (compact && page != 5)
-              IconButton(
-                tooltip: '设置',
-                onPressed: () => update(() => page = 5),
-                icon: const Icon(Icons.tune),
+              coachTarget(
+                CoachKeys.settingsEntry,
+                IconButton(
+                  tooltip: '设置',
+                  onPressed: () => update(() => page = 5),
+                  icon: const Icon(Icons.tune),
+                ),
               ),
           ],
         ),
@@ -383,7 +435,15 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
                   child: child,
                 ),
               ),
-              child: KeyedSubtree(key: ValueKey(page), child: content),
+              child: KeyedSubtree(
+                key: ValueKey(page),
+                // The tour only points at the today area, and wrapping every
+                // page with the same GlobalKey would clash while the switcher
+                // cross-fades two pages at once.
+                child: page == 0
+                    ? coachTarget(CoachKeys.todayArea, content)
+                    : content,
+              ),
             ),
           ),
         ],
@@ -409,16 +469,19 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
                   (i) => NavigationRailDestination(
                     icon: Icon(icons[i]),
                     selectedIcon: Icon(selectedIcons[i]),
-                    label: Text(labels[i]),
+                    label: coachNavLabel(i, labels[i]),
                   ),
                 ),
               ),
             ),
-            IconButton(
-              tooltip: '设置',
-              isSelected: page == 5,
-              onPressed: () => update(() => page = 5),
-              icon: const Icon(Icons.tune),
+            coachTarget(
+              CoachKeys.settingsEntry,
+              IconButton(
+                tooltip: '设置',
+                isSelected: page == 5,
+                onPressed: () => update(() => page = 5),
+                icon: const Icon(Icons.tune),
+              ),
             ),
             const SizedBox(height: 20),
           ],
@@ -470,6 +533,7 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
                     destinations: List.generate(
                       5,
                       (i) => NavigationDestination(
+                        key: coachNavKey(i),
                         icon: Icon(icons[i]),
                         selectedIcon: Icon(selectedIcons[i]),
                         label: labels[i],
@@ -480,18 +544,24 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
               : null,
           floatingActionButton: page <= 2
               ? compact
-                    ? FloatingActionButton(
-                        key: const Key('action.create'),
-                        tooltip: '安排一件事',
-                        onPressed: () => taskDialog(),
-                        child: const Icon(Icons.add),
+                    ? coachTarget(
+                        CoachKeys.addTask,
+                        FloatingActionButton(
+                          key: const Key('action.create'),
+                          tooltip: '安排一件事',
+                          onPressed: () => taskDialog(),
+                          child: const Icon(Icons.add),
+                        ),
                       )
-                    : FloatingActionButton.extended(
-                        key: const Key('action.create'),
-                        tooltip: '安排一件事',
-                        onPressed: () => taskDialog(),
-                        icon: const Icon(Icons.add),
-                        label: const Text('安排一件事'),
+                    : coachTarget(
+                        CoachKeys.addTask,
+                        FloatingActionButton.extended(
+                          key: const Key('action.create'),
+                          tooltip: '安排一件事',
+                          onPressed: () => taskDialog(),
+                          icon: const Icon(Icons.add),
+                          label: const Text('安排一件事'),
+                        ),
                       )
               : null,
         ),

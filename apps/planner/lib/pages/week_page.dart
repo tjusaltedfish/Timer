@@ -1,38 +1,24 @@
 part of '../home.dart';
 
 extension _WeekPage on _PlannerHomeState {
-  Widget weekPage() => MediaQuery.sizeOf(context).width < 600 && !weekDetail
+  Widget weekPage() => MediaQuery.sizeOf(context).width < 600
       ? padded(
-          Column(
-            children: [
-              weekNav(),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text('一色一事 · 长按看全名', style: TextStyle(fontSize: 12)),
-                  ),
-                  TextButton(
-                    onPressed: () => update(() => weekDetail = true),
-                    child: const Text('详细课表'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Expanded(
-                child: WeekOverview(
-                  blocks: c.blocks,
-                  tasks: c.tasks,
-                  sessions: c.sessions,
-                  day: selectedDay,
-                  now: now,
-                  zone: zone,
-                  onSelectDay: selectDate,
-                  onBlockTap: blockDetails,
-                  dayStart: c.settings['day_start'],
-                  dayEnd: c.settings['day_end'],
-                ),
-              ),
-            ],
+          MobileWeekView(
+            blocks: c.blocks,
+            tasks: c.tasks,
+            sessions: c.sessions,
+            zone: zone,
+            now: now,
+            selectedDay: selectedDay,
+            dayStart: c.settings['day_start'],
+            dayEnd: c.settings['day_end'],
+            weekNav: weekNav(),
+            detail: weekDetail,
+            onDetailChanged: (detail) => update(() => weekDetail = detail),
+            onSelectDay: selectDate,
+            onBlockTap: blockDetails,
+            onPlan: () => taskDialog(),
+            detailBuilder: _weekGrid,
           ),
         )
       : SingleChildScrollView(
@@ -41,32 +27,30 @@ extension _WeekPage on _PlannerHomeState {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 weekNav(),
-                if (MediaQuery.sizeOf(context).width < 600)
-                  TextButton(
-                    onPressed: () => update(() => weekDetail = false),
-                    child: const Text('返回整周总览'),
-                  ),
                 const SizedBox(height: 8),
-                WeekCalendar(
-                  blocks: c.blocks,
-                  tasks: c.tasks,
-                  sessions: c.sessions,
-                  zone: zone,
-                  selectedDay: selectedDay,
-                  now: now,
-                  markOf: blockMark,
-                  onSlotPicked: (start, minutes) =>
-                      taskDialog(start: start, minutes: minutes),
-                  dayStart: c.settings['day_start'],
-                  dayEnd: c.settings['day_end'],
-                  onSelectDay: selectDate,
-                  onBlockTap: blockDetails,
-                ),
+                _weekGrid(1),
                 const SizedBox(height: 70),
               ],
             ),
           ),
         );
+
+  /// 桌面（和手机「详细课表」）用的整周 hour 网格；[zoom] 为 1 时行为与以前一致。
+  Widget _weekGrid(double zoom) => WeekCalendar(
+    blocks: c.blocks,
+    tasks: c.tasks,
+    sessions: c.sessions,
+    zone: zone,
+    selectedDay: selectedDay,
+    now: now,
+    markOf: blockMark,
+    zoom: zoom,
+    onSlotPicked: (start, minutes) => taskDialog(start: start, minutes: minutes),
+    dayStart: c.settings['day_start'],
+    dayEnd: c.settings['day_end'],
+    onSelectDay: selectDate,
+    onBlockTap: blockDetails,
+  );
 
   Future<tz.TZDateTime> resolvePlannedTime(
     DateTime date,

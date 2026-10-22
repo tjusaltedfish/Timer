@@ -105,10 +105,15 @@ void main() {
           } else if (entry == 'week') {
             await tester.tap(find.text('一周').last);
             await tester.pumpAndSettle();
-            final detailTitle = find.descendant(
-              of: find.byType(ListTile),
-              matching: find.text(c.tasks.single['title']),
-            );
+            // 第二次进来时可能还停在单天概览，先退回整周总览。
+            if (find.byKey(const Key('week.overview')).evaluate().isEmpty) {
+              await tester.tap(find.byKey(const Key('week.day.close')));
+              await tester.pumpAndSettle();
+            }
+            // 手机周视图先点开当天（周一），再从紧凑列表点这一件事。
+            await tester.tap(find.byKey(const ValueKey('week.day.0')));
+            await tester.pumpAndSettle();
+            final detailTitle = find.byKey(const ValueKey('week.day.item.b'));
             await tester.ensureVisible(detailTitle);
             await tester.tap(detailTitle);
             await tester.pumpAndSettle();

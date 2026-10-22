@@ -8,6 +8,12 @@ import 'controller.dart';
 import 'formatting.dart';
 import 'theme/tokens.dart';
 
+// 手机周视图（总览 / 单天概览 / 详细课表）经由这里暴露给 `pages/week_page.dart`：
+// 那个文件是 home.dart 的 part，不能自己 import。
+export 'week/day_overview.dart';
+export 'week/mobile_week_view.dart';
+export 'week/week_blocks_overview.dart';
+
 /// Called with the chosen start and length when an empty slot is picked.
 typedef SlotPicked = void Function(tz.TZDateTime start, int minutes);
 
@@ -49,6 +55,7 @@ class WeekCalendar extends StatefulWidget {
     this.now,
     this.onSlotPicked,
     this.markOf,
+    this.zoom = 1,
   });
   final List<Json> blocks, tasks, sessions;
   final tz.Location zone;
@@ -59,6 +66,9 @@ class WeekCalendar extends StatefulWidget {
   final ValueChanged<Json> onBlockTap;
   final SlotPicked? onSlotPicked;
   final Color? Function(Json block)? markOf;
+
+  /// 放大倍数（默认 1，桌面不受影响）。手机详细课表用 +/− 按钮调它。
+  final double zoom;
   @override
   State<WeekCalendar> createState() => _WeekCalendarState();
 }
@@ -87,7 +97,8 @@ class _WeekCalendarState extends State<WeekCalendar> {
   @override
   void didUpdateWidget(covariant WeekCalendar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (dateKey(oldWidget.selectedDay) != dateKey(widget.selectedDay)) {
+    if (dateKey(oldWidget.selectedDay) != dateKey(widget.selectedDay) ||
+        oldWidget.zoom != widget.zoom) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
     }
   }
@@ -126,10 +137,15 @@ class _WeekCalendarState extends State<WeekCalendar> {
         widget.dayStart,
         widget.dayEnd,
       );
+      final zoom = widget.zoom.clamp(.75, 2.0).toDouble();
+      final hourHeight = _hourHeight * zoom;
       final available = constraints.maxWidth - _axisWidth;
-      final fits = available >= 7 * 96;
-      _columnWidth = fits ? available / 7 : math.max(available / 3.2, 96);
-      final gridHeight = (last - first) * _hourHeight;
+      // 放大后固定列宽会超出屏幕，所以 zoom > 1 时走横向滚动那一支。
+      final fits = available >= 7 * 96 && zoom <= 1;
+      _columnWidth = fits
+          ? available / 7
+          : math.max(available / 3.2, 96) * zoom;
+      final gridHeight = (last - first) * hourHeight;
       final changingOffset = days.any((day) {
         final a = tz.TZDateTime(
           widget.zone,
@@ -170,6 +186,7 @@ class _WeekCalendarState extends State<WeekCalendar> {
                       zone: widget.zone,
                       firstHour: first,
                       lastHour: last,
+                      hourHeight: hourHeight,
                       slices: slices[day]!,
                       tasks: widget.tasks,
                       now: widget.now,
@@ -205,7 +222,7 @@ class _WeekCalendarState extends State<WeekCalendar> {
                     const SizedBox(height: _headerHeight),
                     for (var hour = first; hour < last; hour++)
                       SizedBox(
-                        height: _hourHeight,
+                        height: hourHeight,
                         child: Align(
                           alignment: Alignment.topLeft,
                           child: Transform.translate(
@@ -319,6 +336,7 @@ class _DayColumn extends StatefulWidget {
     required this.zone,
     required this.firstHour,
     required this.lastHour,
+    required this.hourHeight,
     required this.slices,
     required this.tasks,
     required this.now,
@@ -331,6 +349,7 @@ class _DayColumn extends StatefulWidget {
   final DateTime? now;
   final tz.Location zone;
   final int firstHour, lastHour;
+  final double hourHeight;
   final List<DaySlice> slices;
   final List<Json> tasks;
   final bool showOffset;
@@ -354,7 +373,7 @@ class _DayColumnState extends State<_DayColumn> {
   );
   int get slotCount => (widget.lastHour - widget.firstHour) * 60 ~/ slotMinutes;
   int slotAt(double dy) =>
-      (dy / (_hourHeight * slotMinutes / 60)).floor().clamp(0, slotCount - 1);
+      (dy / (widget.hourHeight * slotMinutes / 60)).floor().clamp(0, slotCount - 1);
   tz.TZDateTime slotStart(int slot) =>
       origin.add(Duration(minutes: slot * slotMinutes));
 
@@ -385,7 +404,8 @@ class _DayColumnState extends State<_DayColumn> {
     picked(slotStart(a), (b - a + 1) * slotMinutes);
   }
 
-  double _y(DateTime t) => t.difference(origin).inSeconds / 3600 * _hourHeight;
+  double _y(DateTime t) =>
+      t.difference(origin).inSeconds / 3600 * widget.hourHeight;
 
   void _pastHint() {
     ScaffoldMessenger.maybeOf(context)
@@ -407,7 +427,7 @@ class _DayColumnState extends State<_DayColumn> {
     final sel = dragFrom == null
         ? null
         : (math.min(dragFrom!, dragTo!), math.max(dragFrom!, dragTo!));
-    final slotHeight = _hourHeight * slotMinutes / 60;
+    final slotHeight = widget.hourHeight * slotMinutes / 60;
     final picking = widget.onSlotPicked != null;
     return MouseRegion(
       onHover: picking
@@ -462,7 +482,7 @@ class _DayColumnState extends State<_DayColumn> {
               ),
             for (var h = 0; h <= widget.lastHour - widget.firstHour; h++)
               Positioned(
-                top: h * _hourHeight,
+                top: h * widget.hourHeight,
                 left: 0,
                 right: 0,
                 child: Container(height: 1, color: p.line),
