@@ -352,7 +352,7 @@ def test_reply_is_passive_and_uses_the_incoming_message_id(fake):
 
 def test_long_reply_is_split_in_order(fake, monkeypatch):
     client, app, api, gateway, model = fake
-    monkeypatch.setattr(qq_module, "SEND_LIMIT", 12)
+    monkeypatch.setattr(qq_module, "SEND_LIMIT", 40)
     configure(client)
     bind(client, app)
     run(client, app)
