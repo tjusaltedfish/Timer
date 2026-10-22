@@ -104,6 +104,16 @@
 - `artifacts/prepared-release.json` 保存客户端逐文件与 APK 校验和；`tools/release.ps1 -Prepared -ValidateOnly` 实测通过，不改安装或数据。发布与安装脚本在 Windows PowerShell 解析通过。正式激活仍待用户在普通终端执行 `tools/release.ps1 -Prepared`，版本尚未上线，不能提前记为交付完成。
 - 本轮日志：`artifacts/v4-backend-tests.log`、`v4-flutter-tests.log`、`v4-analyze.log`、`v4-native-test.log`、`v4-windows-build.log`、`v4-android-build.log`。
 
+## 2026-10-21：QQ 接管聊天入口 + 「像朋友」的助手
+
+- **QQ 官方机器人通道已端到端跑通**（真实 AppID `1905884176`，绑定真实 QQ）：WebSocket 收消息、被动回复（带 `msg_id`/`msg_seq`）、主动提醒（用户关掉主动开关前有效）、6 位绑定码用完即焚、发送队列六态与 `unknown` 不重发都对着实测验过。微信通道代码保留，`RoutedChannel` 优先走 QQ。
+- **表情包能发了**：模型只填类别（开心/夸你/累了…十类），实际选图在 `server/app/memes.py`，素材在 `server/assets/memes/<类别>/`（22 张）。QQ 侧走 `/v2/users/{openid}/files` 上传再 `msg_type=7`，文字在前图在后；素材缺失时整段静默，聊天不会因为缺图失败。
+- **助手语气改版**：删掉原来训人的说法（「不用假嗨/别汇报」）；改成熟人搭子，要求「夸要夸具体的事」；历史消息带 `[时:分]`、只带最近 45 分钟，不再把上午的事当刚发生；`meme` 字段可选。设计说明与可调旋钮见 `design/assistant-voice.md`。
+- **弹性时间选项**：续时可以是 5–120 分钟任意值（之前只有 15/30）；已过点没开始的段可以「挪到之后」（今晚/明晚/明早/自己选，原时长不变）；一段结束后接着问「接下来做点什么」（立刻开始下一段／休息 10 分钟／先这样）；剩余时长改为 5–240 分钟滚轮；补上 `block.move` 的离线乐观实现。
+- 验证：后台 `154 passed`（原 119 + QQ 27 + 表情包 8）；Flutter `analyze` 无问题、`test` 77 项全过。这两批改动分别提交在 `6b2ae3b`、`55b0f7c`。
+- **已知问题（待用户确认后处理）**：app 设置里的时区是 `Asia/Shanghai`，而这台电脑是 `Pacific`。日程与「现在是几点」都按 `Asia/Shanghai` 算，所以助手会说「现在 12:54」而实际是 21:54——这也是「明晚其实是今晚」的根子。改时区会影响已排安排，未擅自改。
+- 还没做：一段结束/过点后「按你的总结夸一句或问一句」的反应消息（用户要的「有规律的主动消息」）、群聊、发版（版本仍是 `1.1.0+8`，设置页文案还写着微信）。
+
 ## 仓库与交接入口
 
 - 私有仓库：[tjusaltedfish/Timer](https://github.com/tjusaltedfish/Timer)，分支 `main`，已完成首次推送并核对远程提交一致。
