@@ -6,6 +6,7 @@
 - 根因一（真 bug）：`apps/planner/lib/onboarding/coach_overlay.dart` 的蒙层是 `Positioned.fill` + `HitTestBehavior.opaque` 的 `GestureDetector`，教程没走完时整屏吞掉点击；可教程文案又写着「点这个按钮写下想做的事」，用户照做时按钮没反应、点输入框也不弹键盘。现在蒙层只挡高亮区域以外的四块，高亮处的真实控件可直接点（`_blockers()`），暗色仍由 `IgnorePointer` 的 `CustomPaint` 画。
 - 根因二（无从复现）：真机 1.2.8 前没复现到「键盘不出」，先用回归测试锁住焦点→IME 链：`test/phone_ime_test.dart`（首次设置页 `setup.name`、助手页 `assistant.input`，点后 `tester.testTextInput.hasAnyClients` 必须为 true）；`test/onboarding_test.dart` 加「教程高亮处的按钮能真的点开」（点 FAB 后 `action.save-task` 出现）。
 - 验证：`dart analyze` No issues found!；`flutter test --no-pub` → **111 passed**；两个新测试先红后绿（红的时候正是蒙层挡点击这个原因，测试直接定位到了真 bug）。
+- 地址规范化（同版）：`AuthSession.normalizeBaseUrl` 把公网 `http://` 自动升级成 `https://`（Cloudflare 对 http 返回 301，POST 被重定向后丢 body，客户端只能报「连不上」）；本机/局域网地址保持原样。`test/session_url_test.dart` 3 例。测试总数 **114 passed**。
 - 未做：真机肉眼验证（手机 USB 已拔）；「键盘盖住输入框」这类遮挡若仍存在，需要具体页面截图定位。
 
 ## v2 修：手机配助手、公众号绑定教程与键盘焦点（2026-10-22）
