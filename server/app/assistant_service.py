@@ -50,6 +50,29 @@ def undo_operations(before, after):
     return cancel + drop + reopen + move + restore
 
 
+def pending_question(conn, user_id, now):
+    """The one question still waiting for an answer, if it has not expired."""
+    return conn.execute(
+        "SELECT id, text, options FROM assistant_pending_questions"
+        " WHERE user_id=? AND answered_at IS NULL AND expires_at>?"
+        " ORDER BY created_at DESC LIMIT 1", (user_id, stamp(now))).fetchone()
+
+
+def close_pending_questions(conn, user_id, now):
+    """A new user turn supersedes every question asked before it."""
+    conn.execute("UPDATE assistant_pending_questions SET answered_at=?"
+                 " WHERE user_id=? AND answered_at IS NULL", (stamp(now), user_id))
+
+
+def ask_question(conn, user_id, now, question):
+    """Store a question for ten minutes so the next turn can read the answer."""
+    conn.execute("INSERT INTO assistant_pending_questions"
+                 " (id, user_id, text, options, created_at, expires_at) VALUES(?,?,?,?,?,?)",
+                 (identifier(), user_id, question.text[:200],
+                  json.dumps(list(question.options)[:4], ensure_ascii=False),
+                  stamp(now), stamp(now + timedelta(minutes=10))))
+
+
 class AssistantService:
     def __init__(self, store, clock, transport=lambda: None):
         self.store, self.clock, self.transport = store, clock, transport
@@ -131,9 +154,16 @@ class AssistantService:
             history = conn.execute("SELECT role,text,created_at FROM assistant_messages WHERE user_id=? AND created_at>=? "
                                    "ORDER BY created_at DESC, rowid DESC LIMIT 10",
                                    (user_id, stamp(now - timedelta(minutes=45)))).fetchall()
+            waiting_on = pending_question(conn, user_id, now)
         # Removing a memory must also keep the original memory command out of model context.
         history = [row for row in history if not (row['role'] == 'user' and re.match(r'^(?:请)?(?:记住|忘记)[：:]', row['text']))]
         context, refs = assistant.build_context(state, now)
+        if waiting_on:
+            options = json.loads(waiting_on["options"] or "[]")
+            listed = " ".join(f"{index}. {option}" for index, option in enumerate(options, 1))
+            context += ("\n【上一轮你问过的问题】" + waiting_on["text"]
+                        + (f"；选项：{listed}" if listed else "")
+                        + "。他这一轮的话很可能就是回答：按选项的意思接着做，不要重复问同一个问题。")
         mode = "confirm" if conf.get("confirm_first") else "auto"
         zone = ZoneInfo(state["settings"]["timezone"])
 
@@ -160,7 +190,7 @@ class AssistantService:
                 reply = assistant.parse_reply(raw)
             except (ValueError, ValidationError):
                 reply = assistant.ModelReply(reply="我没能把这些整理成清楚的安排，换个说法再试一次？")
-        if not reply.drafts and not reply.reply.strip():
+        if not reply.drafts and not reply.reply.strip() and not reply.question:
             # An empty turn means nothing was done; ask once more before telling the user a no-op.
             calls += 1
             retry = [*messages, {"role": "assistant", "content": raw[:4000]},
@@ -208,8 +238,16 @@ class AssistantService:
                     self.dismiss_draft(draft_id, user_id)
                     notes.append(error.message)
         answer = self._answer(reply.reply, mode, len(drafts), applied, notes, remembered)
+        if reply.question:
+            listed = " ".join(f"{index}. {option}" for index, option in enumerate(reply.question.options, 1))
+            answer = reply.question.text + (f"\n{listed}" if listed else "")
+            if notes:
+                answer += "\n" + "\n".join(notes[:2])
         answer = assistant.visible_text(answer, state, refs)
         with self.store.connect() as conn:
+            close_pending_questions(conn, user_id, now)
+            if reply.question:
+                ask_question(conn, user_id, now, reply.question)
             conn.execute("UPDATE assistant_messages SET text=? WHERE id=? AND user_id=?", (answer, reply_id, user_id))
             if reply.meme and not notes:
                 conn.execute("INSERT OR REPLACE INTO assistant_memes VALUES(?,?,?,?)",

@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS assistant_memes (message_id TEXT PRIMARY KEY, name TE
 CREATE TABLE IF NOT EXISTS assistant_configs (user_id TEXT PRIMARY KEY, base_url TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', daily_limit INTEGER NOT NULL DEFAULT 200, timeout_seconds INTEGER NOT NULL DEFAULT 45, confirm_first INTEGER NOT NULL DEFAULT 0, persona TEXT NOT NULL DEFAULT '大肥鱼', updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assistant_keys (user_id TEXT PRIMARY KEY, cipher TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assistant_usage_by_user (user_id TEXT NOT NULL, day TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, day));
-CREATE TABLE IF NOT EXISTS assistant_questions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, answered_at TEXT);
+CREATE TABLE IF NOT EXISTS assistant_pending_questions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL, options TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL, answered_at TEXT);
 """
 
 RETRY_DELAYS = (0, 1.5, 4.0)
@@ -465,8 +465,14 @@ class DraftOut(Loose):
     actions: list[Action] = Field(min_length=1, max_length=12)
 
 
+class ModelQuestion(Loose):
+    text: str = Field(min_length=1, max_length=200)
+    options: list[str] = Field(default_factory=list, max_length=4)
+
+
 class ModelReply(Loose):
     reply: str = Field(default="", max_length=3000)
+    question: ModelQuestion | None = None
     drafts: list[DraftOut] = Field(default_factory=list, max_length=5)
     remember: list[str] = Field(default_factory=list, max_length=3)
     meme: str = Field(default="", max_length=16)
@@ -516,7 +522,9 @@ meme 只想发表情包时才填，取值只能用下面这些（类别=什么�
 {"type":"snooze_waiting","waiting":"w1","check_local":"..."} 等待的结果还没回来，改约同一个检查点。
 {"type":"resolve_waiting","waiting":"w1","resolution":"done|ready","remaining_minutes":30,"outcome_text":"..."} 结果已返回；ready 必须给剩余分钟。
 用户说「几点之前」时，额外给 until_local（截止时刻），minutes 写估计工作量。
-task / block / waiting / 分类只能使用下方上下文里出现的编号；没有合适的分类就省略 project。不需要改动时 drafts 为空数组。"""
+task / block / waiting / 分类只能使用下方上下文里出现的编号；没有合适的分类就省略 project。不需要改动时 drafts 为空数组。
+- 只有在信息不足、且猜错代价大时才追问：填 question 字段（text 一句短问句，options 给 2–4 个具体选项），这一轮 drafts 留空、reply 留空；一次只问一个问题。下一轮他说「1」「第二个」或用自己的话回，就按那个意思接着做，不要重复问。能合理推断的（时长、时段、结果标准）不要问。
+- 上一轮你问过的问题和选项会出现在上下文里；他这轮的回复就是回答，别再问一遍。"""
 
 SYSTEM_PROMPT = SYSTEM_PROMPT.replace("__MEMES__", memes.hint())
 
