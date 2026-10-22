@@ -1,5 +1,12 @@
 # 当前状态
 
+## v2 P2 收尾：通道按账号并行，一个人算题不再卡住其他人（2026-10-22）
+
+- 收（`m00732` 方案「两三个用户共用一台电脑，某个人发消息不能拖住别人」+ 审查报告的「通道串行阻塞」）：微信/QQ 的 `run_once` 原来是逐条处理 inbox，每条都要等完整个模型往返（超时 45s）。改成 **按账号分组**：先按 openid 解析出用户并把未绑定的直接答「去 App 绑定」；同一个账号内保持到达顺序，不同账号用 `asyncio.gather` 并行，上限 `CHAT_CONCURRENCY = 4`。
+- 每处理一条消息一个 `ChatCommands` 实例（原来两条通道各持一个共享实例）：表情包类别、临时状态不再跨消息串味；`channel_worker` 里微信和 QQ 也改为并行跑。
+- 验证（真实跑过）：新增 `server/tests/test_channel_concurrency.py`（2 个用例）：两个成员同轮各发一条，假模型的 `max_active == 2`（调用真的重叠）且两条都回「好」；未绑定的陌生人只收到说明、模型调用为 0。`PLANNER_DATA_DIR=.review-data ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **202 passed**（200 + 2）。
+- 未做：同一账号连发多条仍是顺序处理（有意为之，避免同一个人两个操作抢 state revision）；通道并发上限按机器手调。
+
 ## v2 P4 运维：每日备份/恢复演练 + Windows 桌面 1.2.0+10（2026-10-22）
 
 - 备份计划任务：`tools/host/install-backup-task.ps1` 注册 `TimePlannerBackup`（每天 03:00，保留 14 天 + 8 周，错过会补跑）。真跑第一轮失败：本机宿主限制 venv 解释器写仓库外目录（`sqlite: unable to open database file`）；`tools/host/backup.ps1` 加「失败自动回退 `pyvenv.cfg` 基础解释器 + `PYTHONPATH=venv site-packages`」后，**计划任务真跑成功**：`integrity=ok tables=29`、700,416 字节，`latest.txt` 与 weekly 归档都更新。

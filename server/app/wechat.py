@@ -32,6 +32,7 @@ from .chat_commands import HELP, ChatCommands, split_text
 from .domain import DomainError, identifier, parse, stamp
 
 API = "https://api.weixin.qq.com"
+CHAT_CONCURRENCY = 4  # 每条通道最多同时处理这么多个账号的消息，避免一个人算 45 秒所有人排队
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS wechat_inbox (id TEXT PRIMARY KEY, dedup_key TEXT UNIQUE NOT NULL, openid TEXT NOT NULL,
     kind TEXT NOT NULL, content TEXT NOT NULL, received_at TEXT NOT NULL, status TEXT NOT NULL, note TEXT);
@@ -282,10 +283,11 @@ class WeChatChannel:
 
     async def handle(self, text, request_id=None, user_id=None):
         """Reply text for one message from a bound account."""
-        commands = self.commands
-        if user_id and user_id != self.store.owner_id:
-            commands = ChatCommands(self.store, self.clock, self.assistant, "wechat", user_id)
-        return await commands.reply(text, request_id)
+        return await self._commands(user_id).reply(text, request_id)
+
+    def _commands(self, user_id=None):
+        """一条消息一个实例：表情包与临时状态不跨消息串味。"""
+        return ChatCommands(self.store, self.clock, self.assistant, "wechat", user_id or self.store.owner_id)
 
     # ---- Outbound --------------------------------------------------------
     @staticmethod
@@ -401,23 +403,14 @@ class WeChatChannel:
             with self.store.connect() as conn:
                 pending = conn.execute("SELECT * FROM wechat_inbox WHERE status IN ('pending','processing') "
                                        "ORDER BY received_at, rowid").fetchall()
-            for row in pending:
+            groups, unbound = self._group_pending(pending)
+            if unbound:
                 with self.store.connect() as conn:
-                    conn.execute("UPDATE wechat_inbox SET status='processing' WHERE id=?", (row["id"],))
-                    user_id = self.identities.user_of(conn, "wechat", row["openid"])
-                if not user_id:
-                    with self.store.connect() as conn:
+                    for row in unbound:
                         conn.execute("UPDATE wechat_inbox SET status='done', note='unbound' WHERE id=?", (row["id"],))
-                    continue
-                try:
-                    reply = await self.handle(row["content"], request_id=row['id'], user_id=user_id)
-                    status = "done"
-                except Exception as error:  # noqa: BLE001 - keep the queue moving, keep the evidence
-                    log.exception("WeChat message handling failed")
-                    reply, status = "这条消息处理出错了，已记下，稍后再试一次？", f"failed:{type(error).__name__}"
-                with self.store.connect() as conn:
-                    conn.execute("UPDATE wechat_inbox SET status=? WHERE id=?", (status[:60], row["id"]))
-                    self._enqueue(conn, row["openid"], reply, self.clock(), key=f"reply:{row['id']}")
+            if groups:
+                limit = asyncio.Semaphore(CHAT_CONCURRENCY)
+                await asyncio.gather(*(self._reply_in_order(limit, user_id, rows) for user_id, rows in groups.items()))
             if not self.settings.configured():
                 return
             with self.store.connect() as conn:
@@ -428,3 +421,34 @@ class WeChatChannel:
             async with httpx.AsyncClient(timeout=15, transport=self.transport()) as http:
                 for row in due:
                     await self.deliver(http, row)
+
+    def _group_pending(self, pending):
+        """按账号分组：未绑定的消息直接给出说明，不占用模型。"""
+        groups, unbound = {}, []
+        with self.store.connect() as conn:
+            for row in pending:
+                user_id = self.identities.user_of(conn, "wechat", row["openid"])
+                if user_id:
+                    groups.setdefault(user_id, []).append(row)
+                else:
+                    unbound.append(row)
+        return groups, unbound
+
+    async def _reply_in_order(self, limit, user_id, rows):
+        """同一个账号的消息保持到达顺序；不同账号并行，谁也堵不住谁。"""
+        async with limit:
+            for row in rows:
+                await self._process_row(user_id, row)
+
+    async def _process_row(self, user_id, row):
+        with self.store.connect() as conn:
+            conn.execute("UPDATE wechat_inbox SET status='processing' WHERE id=?", (row["id"],))
+        try:
+            reply = await self.handle(row["content"], request_id=row["id"], user_id=user_id)
+            status = "done"
+        except Exception as error:  # noqa: BLE001 - keep the queue moving, keep the evidence
+            log.exception("WeChat message handling failed")
+            reply, status = "这条消息处理出错了，已记下，稍后再试一次？", f"failed:{type(error).__name__}"
+        with self.store.connect() as conn:
+            conn.execute("UPDATE wechat_inbox SET status=? WHERE id=?", (status[:60], row["id"]))
+            self._enqueue(conn, row["openid"], reply, self.clock(), key=f"reply:{row['id']}")

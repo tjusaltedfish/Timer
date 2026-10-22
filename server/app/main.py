@@ -52,8 +52,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
             while True:
                 try:
                     app.state.proactive.tick()
-                    await app.state.wechat.run_once()
-                    await app.state.qq.run_once()
+                    await asyncio.gather(app.state.wechat.run_once(), app.state.qq.run_once())
                 except Exception:  # noqa: BLE001 - the queue keeps its evidence; retry next round
                     logging.getLogger(__name__).exception("Chat worker will retry")
                 await asyncio.sleep(3)

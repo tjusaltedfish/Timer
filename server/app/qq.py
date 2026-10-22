@@ -32,6 +32,7 @@ from .domain import DomainError, identifier, parse, stamp
 log = logging.getLogger(__name__)
 
 API = "https://api.bot.qq.com"
+CHAT_CONCURRENCY = 4  # 每条通道最多同时处理这么多个账号的消息，避免一个人算 45 秒所有人排队
 TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
 INTENTS = 1 << 25  # GROUP_AND_C2C_EVENT：C2C 私聊消息
 OP_DISPATCH, OP_HEARTBEAT, OP_IDENTIFY = 0, 1, 2
@@ -306,10 +307,17 @@ class QQChannel:
 
     async def handle(self, text, request_id=None, image=None, user_id=None):
         """Reply text for one message from a bound account."""
-        commands = self.commands
-        if user_id and user_id != self.store.owner_id:
-            commands = ChatCommands(self.store, self.clock, self.assistant, "qq", user_id)
-        return await commands.reply(text, request_id=request_id, image=image)
+        reply, _meme = await self._answer(text, request_id=request_id, image=image, user_id=user_id)
+        return reply
+
+    async def _answer(self, text, request_id=None, image=None, user_id=None):
+        """回复文字 + 这条消息想要的表情包类别（并发时不和别的消息混）。"""
+        commands = self._commands(user_id)
+        reply = await commands.reply(text, request_id=request_id, image=image)
+        return reply, commands.meme
+
+    def _commands(self, user_id=None):
+        return ChatCommands(self.store, self.clock, self.assistant, "qq", user_id or self.store.owner_id)
 
     # ---- Outbound --------------------------------------------------------
     def _enqueue(self, conn, openid, text, now, key=None, not_before=None, expires_at=None,
@@ -545,36 +553,14 @@ class QQChannel:
             with self.store.connect() as conn:
                 pending = conn.execute("SELECT * FROM qq_inbox WHERE status IN ('pending','processing') "
                                        "ORDER BY received_at, rowid").fetchall()
-            for row in pending:
+            groups, unbound = self._group_pending(pending)
+            if unbound:
                 with self.store.connect() as conn:
-                    conn.execute("UPDATE qq_inbox SET status='processing' WHERE id=?", (row["id"],))
-                    user_id = self.identities.user_of(conn, "qq", row["openid"])
-                if not user_id:
-                    with self.store.connect() as conn:
+                    for row in unbound:
                         conn.execute("UPDATE qq_inbox SET status='done', note='unbound' WHERE id=?", (row["id"],))
-                    continue
-                image, refused = None, ""
-                if row["kind"] == "image" and row["media_url"]:
-                    try:
-                        image = await self._fetch_image(row["media_url"], row["media_type"])
-                    except DomainError as error:
-                        refused = error.message
-                try:
-                    reply = refused or await self.handle(row["content"], request_id=row["id"], image=image, user_id=user_id)
-                    status = "failed:image" if refused else "done"
-                except Exception as error:  # noqa: BLE001 - 队列不能停，证据要留下
-                    log.exception("QQ message handling failed")
-                    reply, status = "这条消息处理出错了，已记下，稍后再试一次？", f"failed:{type(error).__name__}"
-                with self.store.connect() as conn:
-                    conn.execute("UPDATE qq_inbox SET status=? WHERE id=?", (status[:60], row["id"]))
-                    self._enqueue(conn, row["openid"], reply, self.clock(), key=f"reply:{row['id']}",
-                                  msg_id=row["msg_id"], msg_at=parse(row["received_at"]))
-                    category = getattr(self.commands, "meme", "")
-                    name = self._pick_meme(category) if category else None
-                    if name:  # 文字在前，图在后：同一 not_before 下按 rowid 定序
-                        self._enqueue_meme(conn, row["openid"], name, self.clock(),
-                                           key=f"reply:{row['id']}", msg_id=row["msg_id"],
-                                           msg_at=parse(row["received_at"]))
+            if groups:
+                limit = asyncio.Semaphore(CHAT_CONCURRENCY)
+                await asyncio.gather(*(self._reply_in_order(limit, user_id, rows) for user_id, rows in groups.items()))
             if not self.settings.configured():
                 return
             with self.store.connect() as conn:
@@ -650,3 +636,49 @@ class QQChannel:
                 await self.run_once()
         except Exception:  # noqa: BLE001 - 单条消息失败不能拖垮长连接
             log.exception("QQ 消息处理失败")
+
+    def _group_pending(self, pending):
+        """按账号分组：未绑定的消息直接给出说明，不占用模型。"""
+        groups, unbound = {}, []
+        with self.store.connect() as conn:
+            for row in pending:
+                user_id = self.identities.user_of(conn, "qq", row["openid"])
+                if user_id:
+                    groups.setdefault(user_id, []).append(row)
+                else:
+                    unbound.append(row)
+        return groups, unbound
+
+    async def _reply_in_order(self, limit, user_id, rows):
+        """同一个账号的消息保持到达顺序；不同账号并行，谁也堵不住谁。"""
+        async with limit:
+            for row in rows:
+                await self._process_row(user_id, row)
+
+    async def _process_row(self, user_id, row):
+        with self.store.connect() as conn:
+            conn.execute("UPDATE qq_inbox SET status='processing' WHERE id=?", (row["id"],))
+        image, refused = None, ""
+        if row["kind"] == "image" and row["media_url"]:
+            try:
+                image = await self._fetch_image(row["media_url"], row["media_type"])
+            except DomainError as error:
+                refused = error.message
+        if refused:
+            reply, meme, status = refused, "", "failed:image"
+        else:
+            try:
+                reply, meme = await self._answer(row["content"], request_id=row["id"], image=image, user_id=user_id)
+                status = "done"
+            except Exception as error:  # noqa: BLE001 - 队列不能停，证据要留下
+                log.exception("QQ message handling failed")
+                reply, meme, status = "这条消息处理出错了，已记下，稍后再试一次？", "", f"failed:{type(error).__name__}"
+        with self.store.connect() as conn:
+            conn.execute("UPDATE qq_inbox SET status=? WHERE id=?", (status[:60], row["id"]))
+            self._enqueue(conn, row["openid"], reply, self.clock(), key=f"reply:{row['id']}",
+                          msg_id=row["msg_id"], msg_at=parse(row["received_at"]))
+            name = self._pick_meme(meme) if meme else None
+            if name:  # 文字在前，图在后：同一 not_before 下按 rowid 定序
+                self._enqueue_meme(conn, row["openid"], name, self.clock(),
+                                   key=f"reply:{row['id']}", msg_id=row["msg_id"],
+                                   msg_at=parse(row["received_at"]))
