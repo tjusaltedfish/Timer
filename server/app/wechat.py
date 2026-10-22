@@ -395,6 +395,9 @@ class WeChatChannel:
             error = f"多次连不上微信服务器：{type(exc).__name__}"
         except DomainError as exc:
             error = exc.message
+        if status == "sent":
+            timings.record(self.store.directory, "wechat.deliver", user=(row["openid"] or "")[:8],
+                           ms=int((self.clock() - now).total_seconds() * 1000), channel=channel)
         with self.store.connect() as conn:
             conn.execute("UPDATE wechat_outbox SET status=?, channel=?, last_error=?, sent_at=? WHERE id=?",
                          (status, channel, error, stamp(self.clock()) if status == "sent" else None, row["id"]))

@@ -522,6 +522,13 @@ class QQChannel:
             hint = ERR_HINTS.get(errcode)
             error = (f"{errcode}：{hint}" if hint else f"{errcode}：{data.get('message', '')}")[:300]
             break
+        if status != "sent" and not error:
+            # 被动凭证失效/重复码换 seq 这几条 continue 路径用尽后没有错误文案，
+            # 后台看起来就是「发送失败但没原因」，补一句可读的。
+            error = "重试后仍未发出：可能被动凭证已过期或接口拒绝，稍等它改走主动消息"
+        if status == "sent":
+            timings.record(self.store.directory, "qq.deliver", user=(row["openid"] or "")[:8],
+                           ms=int((self.clock() - now).total_seconds() * 1000), channel=channel)
         with self.store.connect() as conn:
             conn.execute("UPDATE qq_outbox SET status=?, channel=?, last_error=?, sent_at=? WHERE id=?",
                          (status, channel, error, stamp(self.clock()) if status == "sent" else None, row["id"]))

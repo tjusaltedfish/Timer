@@ -190,6 +190,9 @@ class AssistantService:
         try:
             raw = await assistant.complete(conf, key, messages, transport=self.transport())
         except DomainError as error:
+            timings.record(self.store.directory, "assistant.failure", user=(user_id or "")[:8],
+                           ms=int((time.monotonic() - started) * 1000), code=error.code,
+                           image=bool(image))
             if image:
                 return self._exchange(
                     text,
