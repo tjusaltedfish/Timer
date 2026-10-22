@@ -170,6 +170,30 @@ class PlannerController extends ChangeNotifier {
     serverUrl = normalized;
     _token = '';
     await auth.login(normalized, username.trim(), password);
+    return _adoptSession();
+  }
+
+  /// Creates the user's own account (the owner must have opened sign-ups) and
+  /// continues into the app exactly like a login.
+  Future<Json?> register(
+    String url,
+    String username,
+    String password, {
+    String displayName = '',
+  }) async {
+    final normalized = normalizeServerUrl(url);
+    serverUrl = normalized;
+    _token = '';
+    await auth.register(
+      normalized,
+      username.trim(),
+      password,
+      displayName: displayName.trim(),
+    );
+    return _adoptSession();
+  }
+
+  Future<Json?> _adoptSession() async {
     serverUrl = auth.baseUrl;
     _token = auth.token;
     connected = false;

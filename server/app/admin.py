@@ -58,10 +58,26 @@ def main(argv: list[str] | None = None) -> int:
                                                "promote": "提升为管理员"}[name])
         action.add_argument("--username", required=True)
 
+    merge = actions.add_parser("merge", help="把一个账号的全部数据并到另一个账号（一次性换账号）")
+    merge.add_argument("--from", dest="source", required=True)
+    merge.add_argument("--to", dest="target", required=True)
+
     actions.add_parser("list", help="列出账号")
+
+    config = sub.add_parser("config", help="服务器开关")
+    toggles = config.add_subparsers(dest="action", required=True)
+    allow = toggles.add_parser("allow-registration", help="允许/禁止自助注册")
+    allow.add_argument("value", choices=("on", "off"))
 
     args = parser.parse_args(argv)
     store = Store(_directory())
+
+    if args.command == "config":
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            auth.set_registration(conn, args.value == "on")
+        print(f"自助注册现在是 {'开（用完记得关）' if args.value == 'on' else '关'}。")
+        return 0
 
     with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -69,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
             for row in conn.execute("SELECT * FROM users ORDER BY created_at"):
                 print(f"{row['username']:<16} {row['display_name']:<12} {row['role']:<7}"
                       f" {row['status']:<9} {row['created_at']}")
+            print(f"自助注册：{'开' if auth.registration_open(conn) else '关'}"
+                  f"（python -m app.admin config allow-registration on|off）")
         elif args.action == "add":
             password = args.password or _prompt_password(confirm=True)
             user = auth.create_user(
@@ -115,6 +133,15 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             conn.execute("UPDATE users SET role = 'admin' WHERE id = ?", (row["id"],))
             print(f"{row['username']} 现在是管理员。")
+        elif args.action == "merge":
+            source = auth.find_user(conn, args.source)
+            target = auth.find_user(conn, args.target)
+            if source is None or target is None:
+                print("源账号或目标账号不存在。", file=sys.stderr)
+                return 1
+            moved = auth.merge_user_data(conn, store.directory, source["id"], target["id"])
+            print(f"已把 {source['username']} 的数据并到 {target['username']}：{moved}；"
+                  f"{source['username']} 已停用，{target['username']} 现在是管理员。")
     return 0
 
 

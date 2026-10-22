@@ -21,6 +21,7 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .domain import DomainError
@@ -263,6 +264,15 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=1, max_length=200)
 
 
+class RegisterIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=1, max_length=40)
+    password: str = Field(min_length=1, max_length=200)
+    display_name: str = Field(default="", max_length=40)
+    timezone: str | None = Field(default=None, max_length=64)
+    device: DeviceIn = Field(default_factory=DeviceIn)
+
+
 def resolve_token(conn, token: str, now: datetime | None = None) -> dict | None:
     if not token:
         return None
@@ -360,3 +370,111 @@ def revoke_device(conn, user_id: str, device_id: str, keep_device_id: str | None
     if keep_device_id == device_id:
         raise DomainError("不能把当前正在用的设备下线", "CANNOT_REVOKE_SELF", 409)
     conn.execute("UPDATE devices SET revoked = 1 WHERE id = ?", (device_id,))
+
+
+# ---- Self-service registration (v2.1) ---------------------------------------
+REGISTRATION_KEY = "allow_registration"
+DEFAULT_TIMEZONE = "Asia/Shanghai"
+
+
+def registration_open(conn) -> bool:
+    """True when the owner opened sign-ups from the admin console."""
+    row = conn.execute(
+        "SELECT value FROM app_config WHERE key = ?", (REGISTRATION_KEY,)
+    ).fetchone()
+    return row is not None and str(row["value"]).strip().lower() in ("on", "true", "1")
+
+
+def set_registration(conn, allowed: bool) -> None:
+    conn.execute(
+        "INSERT INTO app_config(key, value) VALUES(?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (REGISTRATION_KEY, "on" if allowed else "off"),
+    )
+
+
+def register(
+    conn,
+    *,
+    username: str,
+    password: str,
+    display_name: str = "",
+    timezone_name: str = DEFAULT_TIMEZONE,
+    device_name: str = "",
+    platform: str = "android",
+    now: datetime | None = None,
+) -> dict:
+    """Create an account and sign it in.
+
+    A server with zero accounts always accepts its first registrant and makes
+    them the owner; after that sign-ups need the ``allow_registration`` switch
+    (or the admin CLI) so a stray visitor cannot create accounts.
+    """
+    if user_count(conn) == 0:
+        role = "admin"
+    elif registration_open(conn):
+        role = "member"
+    else:
+        raise DomainError("这个服务器没开注册，请让站长开一下，或用站长开的账号", "REGISTRATION_CLOSED", 403)
+    create_user(
+        conn,
+        username=username,
+        password=password,
+        display_name=display_name,
+        timezone_name=timezone_name,
+        role=role,
+        now=now,
+    )
+    return login(
+        conn,
+        username,
+        password,
+        device_name=device_name,
+        platform=platform,
+        now=now,
+    )
+
+
+def merge_user_data(conn, directory: Path | str, source_id: str, target_id: str) -> dict:
+    """Move everything one account owns onto another (one-off owner transfer).
+
+    Used when someone registers a fresh account and wants their existing
+    data: every table with a ``user_id`` column is re-pointed with
+    ``UPDATE OR REPLACE`` (so user-keyed rows such as the state document and
+    the assistant config replace the target's blank ones), material files move
+    directories, the source account is disabled and the target becomes admin.
+    """
+    if source_id == target_id:
+        raise DomainError("源账号和目标账号是同一个", "INVALID_MERGE", 422)
+    if get_user(conn, source_id) is None or get_user(conn, target_id) is None:
+        raise DomainError("账号不存在", "USER_NOT_FOUND", 404)
+    moved: dict[str, int] = {}
+    tables = [
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        if row["name"] not in ("users", "sqlite_sequence")
+    ]
+    for table in tables:
+        columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
+        if "user_id" not in columns:
+            continue
+        count = conn.execute(
+            f"UPDATE OR REPLACE {table} SET user_id = ? WHERE user_id = ?",
+            (target_id, source_id),
+        ).rowcount
+        if count:
+            moved[table] = count
+    root = Path(directory)
+    source_dir = root / "materials" / source_id
+    target_dir = root / "materials" / target_id
+    if source_dir.is_dir():
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for item in source_dir.iterdir():
+            item.replace(target_dir / item.name)
+        source_dir.rmdir()
+        moved["materials_files"] = 1
+    conn.execute("UPDATE devices SET revoked = 1 WHERE user_id = ?", (source_id,))
+    conn.execute("UPDATE users SET role = 'admin' WHERE id = ?", (target_id,))
+    conn.execute("UPDATE users SET status = 'disabled' WHERE id = ?", (source_id,))
+    return moved
+

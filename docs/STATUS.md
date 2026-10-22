@@ -1,5 +1,15 @@
 # 当前状态
 
+## v2 账号：支持自助注册（2026-10-22）
+
+- 收（USER m03096「我的账号密码呢，我想自己注册」）：v2 原来只能站长用 `python -m app.admin user add` 建号，客户端只有登录页。现在加自助注册，并把「开关 + 账号合并」一起做掉。
+- 开关：新表 `app_config`（迁移 `server/app/migrations/0004_registration.sql`）。默认**关闭**；关闭时 `POST /api/v1/auth/register` 返回 403 `REGISTRATION_CLOSED`。站长用 `python -m app.admin config allow-registration on|off` 开关，命令会顺手打印当前状态。
+- 注册规则：开关打开、或库里的用户数为 0（全新部署）才允许注册；**第一个注册的人自动成为 `admin`**，之后都是 `member`。用户名 3–32 位 `[A-Za-z0-9_.-]`、密码至少 10 位；注册成功直接返回 token/device/user，并给新账号写入自己的 `user_state`（时区取请求里的 `timezone`，缺省 `Asia/Shanghai`）。限流沿用登录那套（每 IP 每分钟 10 次）。
+- 账号合并：`python -m app.admin user merge --from me --to <新用户名>`。把所有带 `user_id` 的表按 `UPDATE OR REPLACE` 迁到目标账号（users 表本身不动，避免 id 语义漂移），材料文件目录 `materials/<source>/` 整个挪到目标目录，然后禁用源账号、吊销其设备、把目标提成 admin。给「先用临时账号跑起来、后来自己注册」这种情况收尾用。
+- 客户端：登录页加「注册」模式（`login.toggle-mode` 切换，无独立路由，避免登录门导航问题）：显示名、密码、确认密码三个字段（`login.display-name` / `login.password-confirm`），本地先校验两次密码一致，服务端 code 翻成「用户名已被占用」「注册开关没开，找站长开一下」「密码太短了，至少 10 位」「用户名只能用 3–32 位字母、数字、下划线、点或横线」。会话侧 `AuthSession.register` 与 `_adoptCredentials` 复用登录成功后的持久化路径（`controller.register`）。
+- 验证（真实跑过）：后端 `server/tests/test_auth.py` 12 passed（新增开关默认关闭/打开后注册成功/第一个人是 admin/关掉后拒绝/密码不一致 409 等），全量 `PLANNER_DATA_DIR=.review-data ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **209 passed**；客户端 `flutter test` → **106 passed**（新增「可以自己注册」用例：切换模式、两次密码不一致被拦、一致后调 `/api/v1/auth/register` 进首页），`dart analyze` 无问题。
+- 未做：没有「注册需要邀请码/站长审批」；没有改用户名；`app_config` 只有注册开关一个键；登录页在桌面端也露出注册入口（桌面本来就能自助开）；注册后没有自动登录微信绑定引导（绑定码流程不变，去设置里拿）。
+
 ## v2 P4 修：手机 release 包停在启动页（2026-10-22）
 
 - 症状：`app.releases` 发布的 1.2.1+11 / 1.2.2+12 release 包装到 OPPO（Android 17）后，点开只停在系统启动页或闪退；`dumpsys gfxinfo` 显示 `Total frames rendered: 0`，logcat 里没有任何 Dart 日志；同一份代码的 debug 包能正常进登录页。

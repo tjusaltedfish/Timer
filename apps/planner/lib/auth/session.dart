@@ -75,6 +75,27 @@ class AuthSession {
         'device': {'name': '瞬时客户端', 'platform': _platform()},
       },
     );
+    await _adoptCredentials(url, value);
+  }
+
+  /// Creates a fresh account on a server whose owner opened sign-ups, then
+  /// adopts the session exactly like a login would.
+  Future<void> register(
+    String url,
+    String username,
+    String password, {
+    String displayName = '',
+  }) async {
+    final value = await _send(url, 'POST', '/api/v1/auth/register', {
+      'username': username,
+      'password': password,
+      'display_name': displayName,
+      'device': {'name': '瞬时客户端', 'platform': _platform()},
+    });
+    await _adoptCredentials(url, value);
+  }
+
+  Future<void> _adoptCredentials(String url, Json value) async {
     final issued = value['token'] as String?;
     if (issued == null || issued.isEmpty) {
       throw ApiFailure('服务器没有返回登录令牌', 500);

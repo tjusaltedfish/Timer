@@ -89,6 +89,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     app.state.desktop_token = store.desktop_token
     pairing_attempts = {}
     login_attempts = {}
+    register_attempts = {}
     app.state.llm_transport = llm_transport
     app.state.wechat_transport = wechat_transport
     app.state.qq_transport = qq_transport
@@ -167,6 +168,25 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                 platform=data.device.platform,
                 now=clock(),
             )
+
+    @app.post("/api/v1/auth/register")
+    def auth_register(data: auth.RegisterIn, request: Request):
+        rate_limit(register_attempts, client_address(request))
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            result = auth.register(
+                conn,
+                username=data.username,
+                password=data.password,
+                display_name=data.display_name,
+                timezone_name=data.timezone or auth.DEFAULT_TIMEZONE,
+                device_name=data.device.name,
+                platform=data.device.platform,
+                now=clock(),
+            )
+            # A fresh account needs its own state row before the client syncs.
+            store.save(conn, store.initial_state(result["user"]["timezone"]), result["user"]["id"])
+            return result
 
     @app.post("/api/v1/auth/logout")
     def auth_logout(device=Depends(authenticated)):

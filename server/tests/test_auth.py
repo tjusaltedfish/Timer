@@ -135,3 +135,67 @@ def test_login_attempts_are_rate_limited(client, app):
     attempts = [login(client, "shidi", "wrong-pass-1") for _ in range(10)]
     assert {response.status_code for response in attempts} == {401}
     assert login(client, "shidi", PASSWORD).status_code == 429
+
+
+def register(client, username="newbie", password=PASSWORD, **extra):
+    payload = {
+        "username": username,
+        "password": password,
+        "display_name": extra.pop("display_name", "新同学"),
+        "device": {"name": "新手机", "platform": "android"},
+        **extra,
+    }
+    return client.post("/api/v1/auth/register", json=payload)
+
+
+def test_registration_is_closed_until_the_owner_opens_it(client, app):
+    closed = register(client)
+    assert closed.status_code == 403, closed.text
+    assert closed.json()["code"] == "REGISTRATION_CLOSED"
+
+
+def test_registration_opens_with_the_admin_switch(client, app):
+    with app.state.store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        auth.set_registration(conn, True)
+    created = register(client, username="newbie")
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["user"]["username"] == "newbie"
+    assert body["user"]["role"] == "member"
+    token = body["token"]
+    # The new account gets its own document and cannot see the owner's.
+    snapshot = client.get("/api/v1/snapshot", headers=bearer(token)).json()
+    assert snapshot["tasks"] == []
+    assert snapshot["settings"]["timezone"] == "Asia/Shanghai"
+    assert login(client, "newbie").status_code == 200
+    # Closing the switch stops further sign-ups.
+    with app.state.store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        auth.set_registration(conn, False)
+    assert register(client, username="stranger").status_code == 403
+
+
+def test_first_registrant_on_an_empty_server_becomes_admin(client, app):
+    with app.state.store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM users")
+        conn.execute("DELETE FROM user_state")
+        conn.execute("DELETE FROM devices")
+    created = register(client, username="founder", display_name="站长")
+    assert created.status_code == 200, created.text
+    assert created.json()["user"]["role"] == "admin"
+    me = client.get("/api/v1/me", headers=bearer(created.json()["token"]))
+    assert me.json()["user"]["username"] == "founder"
+
+
+def test_registration_rejects_bad_names_and_weak_passwords(client, app):
+    with app.state.store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        auth.set_registration(conn, True)
+    assert register(client, username="a").status_code == 422
+    assert register(client, password="short").status_code == 422
+    assert register(client, username="has space").status_code == 422
+    make_user(app, username="taken")
+    assert register(client, username="taken").status_code == 409
+

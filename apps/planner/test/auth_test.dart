@@ -14,6 +14,7 @@ import 'package:time_planner/planner_app.dart';
 class _Backend {
   final List<http.Request> requests = [];
   Future<http.Response> Function(http.Request request)? login;
+  Future<http.Response> Function(http.Request request)? register;
   Future<http.Response> Function(http.Request request)? me;
   int snapshotStatus = 200;
   int logoutStatus = 200;
@@ -23,6 +24,8 @@ class _Backend {
     switch (request.url.path) {
       case '/api/v1/auth/login':
         return (login ?? _defaultLogin)(request);
+      case '/api/v1/auth/register':
+        return (register ?? _defaultRegister)(request);
       case '/api/v1/me':
         return (me ?? _defaultMe)(request);
       case '/api/v1/auth/logout':
@@ -73,6 +76,21 @@ class _Backend {
         'role': 'member',
       },
       'device': {'id': 'd1', 'name': '瞬时客户端', 'role': 'member'},
+    });
+  }
+
+  static Future<http.Response> _defaultRegister(http.Request request) async {
+    final body = jsonDecode(request.body) as Json;
+    final device = body['device'] as Json? ?? <String, dynamic>{};
+    return _json({
+      'token': 'tok-2',
+      'user': {
+        'id': 'u2',
+        'username': body['username'],
+        'display_name': body['display_name'] ?? body['username'],
+        'role': 'member',
+      },
+      'device': {'id': 'd2', 'role': 'member', ...device},
     });
   }
 }
@@ -245,6 +263,62 @@ void main() {
         contains('Bearer tok-1'),
         reason: '所有请求都要带 Bearer token',
       );
+      expect(find.byKey(const Key('login.submit')), findsNothing);
+      expect(find.text('今日尚空。先落一笔有结果的事。'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      controller.dispose();
+    });
+
+    testWidgets('可以自己注册：确认密码不一致会被拦下，一致后进入首页', (tester) async {
+      _primeView(tester);
+      final backend = _Backend();
+      final controller = _controller(MemoryStore(), backend.client);
+      await controller.initialize();
+      await tester.pumpWidget(
+        PlannerApp(controller: controller, requireLogin: true),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('login.toggle-mode')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('login.password-confirm')), findsOneWidget);
+      expect(find.text('注册并进入'), findsOneWidget);
+
+      await tester.enterText(find.byKey(const Key('login.username')), 'newbie');
+      await tester.enterText(find.byKey(const Key('login.display-name')), '新同学');
+      await tester.enterText(
+        find.byKey(const Key('login.password')),
+        'long-enough-pw-1',
+      );
+      await tester.enterText(
+        find.byKey(const Key('login.password-confirm')),
+        'different-pw-2',
+      );
+      await tester.tap(find.byKey(const Key('login.submit')));
+      await tester.pumpAndSettle();
+      expect(find.text('两次输入的密码不一样'), findsOneWidget);
+      expect(
+        backend.requests.where(
+          (request) => request.url.path == '/api/v1/auth/register',
+        ),
+        isEmpty,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('login.password-confirm')),
+        'long-enough-pw-1',
+      );
+      await tester.tap(find.byKey(const Key('login.submit')));
+      await tester.pumpAndSettle();
+
+      final registered = backend.requests.lastWhere(
+        (request) => request.url.path == '/api/v1/auth/register',
+      );
+      final body = jsonDecode(registered.body) as Json;
+      expect(body['username'], 'newbie');
+      expect(body['display_name'], '新同学');
+      expect(body['password'], 'long-enough-pw-1');
+      expect(controller.authenticated, isTrue);
       expect(find.byKey(const Key('login.submit')), findsNothing);
       expect(find.text('今日尚空。先落一笔有结果的事。'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
