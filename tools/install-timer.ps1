@@ -18,6 +18,22 @@ if (-not $Build) {
 if (-not (Test-Path -LiteralPath (Join-Path $Build 'time_planner.exe'))) { throw "Build folder has no time_planner.exe: $Build" }
 $python = Join-Path $repo 'server\.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Backend environment missing: server\.venv' }
+# 兜底解释器：托管/沙箱环境可能按「可执行文件路径」限制进程只能写工作区，
+# 那时 venv 里的 python 起得来、却写不了 %USERPROFILE%\TimePlanner\data。
+# 这里记下 pyvenv.cfg 指向的基础解释器（必须在仓库外），启动失败时换它重试一次。
+$fallbackPython = ''
+$venvSitePackages = Join-Path $repo 'server\.venv\Lib\site-packages'
+$venvConfig = Join-Path $repo 'server\.venv\pyvenv.cfg'
+if (Test-Path -LiteralPath $venvConfig) {
+    $homeLine = Get-Content -LiteralPath $venvConfig | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+    if ($homeLine) {
+        $baseHome = ($homeLine -split '=', 2)[1].Trim()
+        $basePython = Join-Path $baseHome 'python.exe'
+        if ((Test-Path -LiteralPath $basePython) -and -not $basePython.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase)) {
+            $fallbackPython = $basePython
+        }
+    }
+}
 
 $home_ = Join-Path $env:USERPROFILE 'Apps\Timer'
 $client = Join-Path $home_ 'client'
@@ -55,6 +71,20 @@ if (-not (Test-Backend)) {
         -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8787','--log-level','warning' ``
         -RedirectStandardOutput (Join-Path `$logs 'server.out.log') -RedirectStandardError (Join-Path `$logs 'server.err.log')
     foreach (`$i in 1..30) { if (Test-Backend) { break }; Start-Sleep -Milliseconds 500 }
+}
+# Retry once with the base interpreter pyvenv.cfg points at, reusing the venv
+# site-packages. Managed hosts that confine writes by executable path (the venv
+# python lives inside the checkout) would otherwise leave the backend dead.
+if ((-not (Test-Backend)) -and '$fallbackPython') {
+    try {
+        `$env:PYTHONPATH = '$venvSitePackages'
+        Start-Process -FilePath '$fallbackPython' -WorkingDirectory `$server -WindowStyle Hidden ``
+            -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8787','--log-level','warning' ``
+            -RedirectStandardOutput (Join-Path `$logs 'server-fallback.out.log') -RedirectStandardError (Join-Path `$logs 'server-fallback.err.log')
+        foreach (`$i in 1..30) { if (Test-Backend) { break }; Start-Sleep -Milliseconds 500 }
+    } catch {
+        Add-Content -LiteralPath (Join-Path `$logs 'launcher.log') -Value ('fallback interpreter failed: ' + `$_.Exception.Message)
+    }
 }
 # The tunnel (only the app API and the WeChat callback are public); see docs/guides.
 `$cloudflared = Join-Path `$env:USERPROFILE 'Apps\cloudflared\cloudflared.exe'
