@@ -130,7 +130,8 @@ def test_only_the_bound_account_is_answered(env):
     token = configure(client)["token"]
     push(client, token, STRANGER, "今天", msg_id="s1")
     run(client, app)
-    assert wechat.custom == []
+    # An unbound follower only gets the "how to bind" note, never the owner's day.
+    assert wechat.custom and "还没绑定瞬时账号" in wechat.custom[-1][1]["text"]["content"]
     push(client, token, STRANGER, "000000", msg_id="s2")  # wrong code
     code = client.post("/api/v1/wechat/bind-code").json()["code"]
     push(client, token, OWNER, code, msg_id="b1")
@@ -138,14 +139,15 @@ def test_only_the_bound_account_is_answered(env):
     assert client.get("/api/v1/wechat/config").json()["bound_hint"] == "····1234"
     # Before binding, a wrong code only earns a "code is wrong" note.
     to_stranger = [b["text"]["content"] for _, b in wechat.custom if b["touser"] == STRANGER]
-    assert to_stranger == ["这个绑定码不对或已经过期了，请在电脑上的瞬时里重新生成。"]
+    assert "这个绑定码不对，请检查有没有发错或发漏。" in to_stranger
     assert "绑定好了" in wechat.custom[-1][1]["text"]["content"] and wechat.custom[-1][1]["touser"] == OWNER
-    sent = len(wechat.custom)
     push(client, token, STRANGER, code, msg_id="s3")  # replayed code after binding
     push(client, token, STRANGER, "今天", msg_id="s4")
     push(client, token, STRANGER, "123456", msg_id="s5")
     run(client, app)
-    assert len(wechat.custom) == sent  # once bound, other accounts get nothing
+    # Other accounts only ever see binding guidance; the used code binds nobody.
+    to_stranger = [b["text"]["content"] for _, b in wechat.custom if b["touser"] == STRANGER]
+    assert sum("还没绑定瞬时账号" in text for text in to_stranger) >= 2
     assert client.get("/api/v1/wechat/config").json()["bound_hint"] == "····1234"
 
 
@@ -288,7 +290,7 @@ def test_bind_code_survives_a_backend_restart_and_bad_codes_get_an_answer(tmp_pa
         wrong = "000000" if code != "000000" else "111111"
         push(client, token, OWNER, wrong, msg_id="r1")
         run(client, restarted)
-        assert "不对或已经过期" in wechat.custom[-1][1]["text"]["content"]
+        assert "绑定码不对" in wechat.custom[-1][1]["text"]["content"]
         push(client, token, OWNER, code, msg_id="r2")
         run(client, restarted)
         assert "绑定好了" in wechat.custom[-1][1]["text"]["content"]
@@ -296,7 +298,10 @@ def test_bind_code_survives_a_backend_restart_and_bad_codes_get_an_answer(tmp_pa
         # Re-binding to another account needs a fresh code; the used one is void.
         push(client, token, STRANGER, code, msg_id="r3")
         run(client, restarted)
-        assert all(body["touser"] == OWNER for _, body in wechat.custom)
+        stranger = [b["text"]["content"] for _, b in wechat.custom if b["touser"] == STRANGER]
+        assert stranger  # the stranger is told something binding-related
+        assert all("今天" not in text and "安排" not in text for text in stranger)
+        assert client.get("/api/v1/wechat/config").json()["bound"] is True
         fresh = client.post("/api/v1/wechat/bind-code").json()["code"]
         push(client, token, STRANGER, fresh, msg_id="r4")
         run(client, restarted)

@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from . import assistant, auth, releases, tenancy
 from .assistant_service import AssistantService
+from .channel_identity import CHANNELS, IdentityStore
 from .proactive import Proactive
 from .weekly import WeeklyBrief
 from .materials import MaterialService, GenerateReview, MAX_FILE
@@ -461,6 +462,33 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     @app.get("/api/v1/wechat/outbox")
     def wechat_outbox(device=Depends(owner_desktop)):
         return {"messages": channel.outbox()}
+
+    # ---- Chat identities: one WeChat/QQ handle per account -----------------
+    identities = IdentityStore(store, clock)
+
+    @app.post("/api/v1/channels/{channel}/bind-code")
+    def channel_bind_code(channel: str, device=Depends(authenticated)):
+        if channel not in CHANNELS:
+            raise DomainError("暂时只支持微信和 QQ", "NOT_FOUND", 404)
+        with store.connect() as conn:
+            return identities.new_code(conn, channel, tenancy.user_id(store, device))
+
+    @app.get("/api/v1/channels/bindings")
+    def channel_bindings(device=Depends(authenticated)):
+        with store.connect() as conn:
+            return {"items": identities.bindings(conn, tenancy.user_id(store, device))}
+
+    @app.delete("/api/v1/channels/{channel}/binding")
+    def channel_unbind(channel: str, device=Depends(authenticated)):
+        if channel not in CHANNELS:
+            raise DomainError("暂时只支持微信和 QQ", "NOT_FOUND", 404)
+        user_id = tenancy.user_id(store, device)
+        with store.connect() as conn:
+            rows = conn.execute("SELECT external_id FROM channel_identities WHERE channel=? AND user_id=?",
+                                (channel, user_id)).fetchall()
+            for row in rows:
+                identities.unbind(conn, channel, row["external_id"], user_id)
+        return {"unbound": len(rows)}
 
     # ---- QQ official-bot channel -----------------------------------------
     @app.get("/api/v1/qq/config")

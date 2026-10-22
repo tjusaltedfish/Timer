@@ -2,6 +2,14 @@
 
 日期：2026-10-22。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
 
+## v2 多用户 P2 通道：一个公众号多人用（2026-10-22）
+
+- 收（`m00732` 方案「通道多账号」）：绑定不再只认主账号。`0003_channel_identity.sql` 建 `channel_identities`（微信/QQ 的 openid → 用户）与 `channel_bind_codes`（6 位码、10 分钟有效、一次性）；`server/app/channel_identity.py` 的 `IdentityStore` 负责绑定/解绑/换绑与旧文件绑定迁移。旧安装的 `wechat.json`/`qq.json` 里已有的 openid 第一次收消息时自动归给主账号，不用重绑。
+- 绑定入口：App「账号」页 POST `/api/v1/channels/wechat/bind-code` 生成 6 位码（`GET /channels/bindings` 查绑定、`DELETE /channels/{channel}/binding` 解绑）。未绑定的微信号发消息只收到「打开瞬时 App → 账号 → 绑定微信」的引导；绑定码发错、过期、被用过都有具体说明；已绑定用户发 6 位码不会被误当成指令。
+- 路由：`wechat.receive` 先按 openid 查用户，再以该用户身份跑 `ChatCommands`（`state(user_id=…)`、助手会话与草稿都按用户隔离）；`run_once` 逐条解析身份，未绑定的消息标记完成、不建助手消息。跨账号隔离测试覆盖：两个微信号各改各的日程、A 的绑定码不能绑到 B、解绑后回落到引导。
+- 验证（真实跑过）：`PLANNER_DATA_DIR=.test-data ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **194 passed**（189 + 5：`test_channel_identity.py`）。原 `test_wechat.py` 三条断言按多人语义更新（陌生人收到引导而非静默、错误码文案、已用码不泄露主账号数据）。
+- 未做：QQ 侧同一套绑定（结构已就位，待 `qq.py` 接 `IdentityStore`）、材料/复盘/周报按用户、真实公众号测试号联调（需 appid/appsecret 与公网回调）。
+
 ## v2 多用户 P2：每人自己的助手（2026-10-22）
 
 - 收（`m00732` 方案、`m00671` 拍板「每人自带 key、新用户默认直接执行」）：`assistant_messages/drafts/undo/memes` 五表加 `user_id`（旧库由 `assistant.ensure_schema` 补列并把 v1 行归给主账号，不重建表）；新增 `assistant_configs`、`assistant_keys`、`assistant_usage_by_user`、`assistant_questions`（`server/app/migrations/0002_assistant_multiuser.sql`）。主账号第一次读配置时，把 v1 的 `assistant.json` 与 `secrets/llm-key` 一次性导入数据库，旧安装不用重填。

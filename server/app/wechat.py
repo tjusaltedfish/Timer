@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .channel_identity import IdentityStore
 from .chat_commands import HELP, ChatCommands, split_text
 from .domain import DomainError, identifier, parse, stamp
 
@@ -181,6 +182,7 @@ class WeChatChannel:
         self.lock = asyncio.Lock()
         self._token, self._token_expiry = None, None
         self.commands = ChatCommands(store, clock, assistant_service, "wechat")
+        self.identities = IdentityStore(store, clock)
         with store.connect() as conn:
             conn.executescript(SCHEMA)
             # A send interrupted mid-request may or may not have reached WeChat.
@@ -219,7 +221,6 @@ class WeChatChannel:
         content = (message.get("Content") or message.get("Event") or "").strip()[:2000]
         dedup = message.get("MsgId") or f"{openid}:{message.get('CreateTime')}:{kind}:{message.get('Event', '')}"
         conf = self.settings.load()
-        bound = conf["bound_openid"]
         with self.store.connect() as conn:
             inserted = conn.execute(
                 "INSERT OR IGNORE INTO wechat_inbox VALUES(?,?,?,?,?,?,?,?)",
@@ -229,24 +230,37 @@ class WeChatChannel:
             def mark(status, note=None):
                 conn.execute("UPDATE wechat_inbox SET status=?, note=? WHERE dedup_key=?", (status, note, dedup))
 
-            is_code = kind == "text" and re.fullmatch(r"\d{6}", content) is not None
-            if is_code and self._bind_code_matches(conf, content, now):
-                # A valid code binds (or re-binds) whoever sent it; it works once.
-                conf.update(bound_openid=openid, bound_at=stamp(now), bind_code_hash=None, bind_expires_at=None)
-                self.settings.save(conf)
-                mark("done", "bound")
-                self._enqueue(conn, openid, "绑定好了。以后在这里跟我说要安排什么就行。\n\n" + HELP, now)
-                return True
-            if not bound:
+            is_code = kind == "text" and re.fullmatch(r"[0-9A-Za-z]{6}", content) is not None
+            self._migrate_legacy_binding(conn, openid, conf, now)
+            user_id = self.identities.user_of(conn, "wechat", openid)
+            if user_id is None:
                 if is_code:
-                    mark("done", "bad code")
-                    self._enqueue(conn, openid, "这个绑定码不对或已经过期了，请在电脑上的瞬时里重新生成。", now)
-                else:
-                    mark("ignored", "not bound")
+                    if self._bind_code_matches(conf, content, now):
+                        # The v1 desktop page still writes the code into wechat.json.
+                        conf.update(bound_openid=openid, bound_at=stamp(now), bind_code_hash=None, bind_expires_at=None)
+                        self.settings.save(conf)
+                        self.identities.bind(conn, "wechat", openid, self.store.owner_id, "主账号")
+                        mark("done", "bound")
+                        self._enqueue(conn, openid, "绑定好了。以后在这里跟我说要安排什么就行。\n\n" + HELP, now)
+                        return True
+                    user_id, problem = self.identities.redeem(conn, "wechat", content, openid)
+                    self.identities.touch(conn, "wechat", openid)
+                    if not user_id:
+                        mark("done", "bad code")
+                        self._enqueue(conn, openid, problem, now)
+                        return True
+                    mark("done", "bound")
+                    self._enqueue(conn, openid, f"绑定好了，以后这个号就是「{self.identities.bindings(conn, user_id)[0]['hint']}」对应的瞬时账号。\n\n" + HELP, now)
+                    return True
+                if kind == "event" and content == "subscribe":
+                    mark("done", "bound")
+                    self._enqueue(conn, openid, "欢迎关注。我是瞬时助手：先在瞬时 App 的「账号 · 绑定微信」里生成 6 位绑定码，发给我，就绑定到你的日程。", now)
+                    return True
+                # Unbound follower: answer once per message with the way to bind.
+                mark("done", "unbound")
+                self._enqueue(conn, openid, "这个微信号还没绑定瞬时账号。打开瞬时 App →「账号」→「绑定微信」，把 6 位绑定码发给我即可。", now)
                 return True
-            if openid != bound:
-                mark("ignored", "other account")
-                return True
+            self.identities.touch(conn, "wechat", openid)
             if kind == "event":
                 mark("done", content)
                 if content == "subscribe":
@@ -259,9 +273,19 @@ class WeChatChannel:
             mark("pending")
             return True
 
-    async def handle(self, text, request_id=None):
-        """Reply text for one bound-user message."""
-        return await self.commands.reply(text, request_id)
+    def _migrate_legacy_binding(self, conn, openid, conf, now):
+        """v1 kept exactly one bound openid in wechat.json; it belonged to the owner."""
+        legacy = conf.get("bound_openid") or ""
+        if legacy and openid == legacy and not self.identities.user_of(conn, "wechat", openid):
+            self.identities.bind(conn, "wechat", openid, self.store.owner_id, "主账号")
+
+
+    async def handle(self, text, request_id=None, user_id=None):
+        """Reply text for one message from a bound account."""
+        commands = self.commands
+        if user_id and user_id != self.store.owner_id:
+            commands = ChatCommands(self.store, self.clock, self.assistant, "wechat", user_id)
+        return await commands.reply(text, request_id)
 
     # ---- Outbound --------------------------------------------------------
     @staticmethod
@@ -375,8 +399,13 @@ class WeChatChannel:
             for row in pending:
                 with self.store.connect() as conn:
                     conn.execute("UPDATE wechat_inbox SET status='processing' WHERE id=?", (row["id"],))
+                    user_id = self.identities.user_of(conn, "wechat", row["openid"])
+                if not user_id:
+                    with self.store.connect() as conn:
+                        conn.execute("UPDATE wechat_inbox SET status='done', note='unbound' WHERE id=?", (row["id"],))
+                    continue
                 try:
-                    reply = await self.handle(row["content"], request_id=row['id'])
+                    reply = await self.handle(row["content"], request_id=row['id'], user_id=user_id)
                     status = "done"
                 except Exception as error:  # noqa: BLE001 - keep the queue moving, keep the evidence
                     log.exception("WeChat message handling failed")

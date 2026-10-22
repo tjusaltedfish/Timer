@@ -51,8 +51,9 @@ def split_text(text, size):
 class ChatCommands:
     """把一句话变成一次回复。device 只影响记账和幂等前缀，不影响语义。"""
 
-    def __init__(self, store, clock, assistant, device):
+    def __init__(self, store, clock, assistant, device, user_id=None):
         self.store, self.clock, self.assistant, self.device = store, clock, assistant, device
+        self.user_id = user_id
         self.meme = ""  # 上一条回复想要的表情包类别（通道自己决定发不发）
 
     async def reply(self, text, request_id=None, image=None):
@@ -64,7 +65,8 @@ class ChatCommands:
         compact = text.strip()
         if image:
             try:
-                rows = await self.assistant.converse(compact, request_id=request_id, device_id=self.device, image=image)
+                rows = await self.assistant.converse(compact, request_id=request_id, device_id=self.device, image=image,
+                                                     user_id=self.user_id)
             except DomainError as error:
                 if error.code == "ASSISTANT_NOT_CONFIGURED":
                     return "模型服务还没在电脑上配置好，我暂时看不了图。"
@@ -80,8 +82,10 @@ class ChatCommands:
             if previous:
                 return '这条反馈已经记录，日程已同步。'
         if review:
-            day = self.clock().astimezone(ZoneInfo(self.store.state()['settings']['timezone'])).date().isoformat()
-            self.assistant.apply_operation('review.save', {'date': day, 'text': review.group(1)}, self.device, operation_id)
+            state = self.store.state(user_id=self.user_id)
+            day = self.clock().astimezone(ZoneInfo(state['settings']['timezone'])).date().isoformat()
+            self.assistant.apply_operation('review.save', {'date': day, 'text': review.group(1)}, self.device,
+                                            operation_id, user_id=self.user_id)
             return '今日原文已保留并安排电脑归档。材料复盘可在瞬时的回顾页生成。'
         if command:
             return self.finish(command, request_id, operation_id)
@@ -90,7 +94,7 @@ class ChatCommands:
         if compact in ("今天", "今日", "今天的安排"):
             return self.today_summary()
         if compact in ('记忆', '你记住了什么'):
-            memories = self.store.state().get('memories', [])
+            memories = self.store.state(user_id=self.user_id).get('memories', [])
             return '\n'.join(['你明确让我记住的事：', *[m['text'] for m in memories]]) if memories else '目前还没有保存的长期偏好。'
         undo = UNDO.match(compact)
         if undo:
@@ -106,7 +110,8 @@ class ChatCommands:
             if answer is not None:
                 return answer
         try:
-            rows = await self.assistant.converse(compact, request_id=request_id, device_id=self.device)
+            rows = await self.assistant.converse(compact, request_id=request_id, device_id=self.device,
+                                                 user_id=self.user_id)
         except DomainError as error:
             if error.code == "ASSISTANT_NOT_CONFIGURED":
                 return "模型服务还没在电脑上配置好，我暂时只能回答「今天」「帮助」。"
@@ -117,8 +122,8 @@ class ChatCommands:
     def finish(self, command, request_id, operation_id):
         """「完成了」「再给我15分钟」这类到点反馈。"""
         from .maintenance import expire_due
-        expire_due(self.store, self.clock())
-        state = self.store.state()
+        expire_due(self.store, self.clock(), self.user_id)
+        state = self.store.state(user_id=self.user_id)
         candidates = [s for s in state['sessions'] if s['state'] in ('running', 'paused', 'awaiting_feedback')]
         if command.group(2):
             candidates = [s for s in candidates if s['id'].startswith(command.group(2).lower())]
@@ -128,7 +133,8 @@ class ChatCommands:
         if command.group(1).startswith(('再给我', '续时')):
             minutes = int(re.search(r'15|30', command.group(1)).group())
             try:
-                changed = self.assistant.apply_operation('session.extend', {'id': session['id'], 'minutes': minutes}, self.device, operation_id)['entity']
+                changed = self.assistant.apply_operation('session.extend', {'id': session['id'], 'minutes': minutes},
+                                                         self.device, operation_id, user_id=self.user_id)['entity']
                 end = parse(changed['expected_end_at']).astimezone(ZoneInfo(state['settings']['timezone']))
                 adjustment = changed.get('adjustment', {}).get('status')
                 tail = '后续弹性安排已顺延。' if adjustment == 'applied' else '后续有冲突或需要确认，请到瞬时查看调整。' if adjustment in ('proposal', 'blocked') else ''
@@ -136,9 +142,12 @@ class ChatCommands:
             except DomainError as error:
                 return error.message
         if session['state'] in ('running', 'paused'):
-            self.assistant.apply_operation('session.end', {'id': session['id']}, self.device, f'{self.device}-end:{request_id}' if request_id else None)
+            self.assistant.apply_operation('session.end', {'id': session['id']}, self.device,
+                                            f'{self.device}-end:{request_id}' if request_id else None,
+                                            user_id=self.user_id)
         self.assistant.apply_operation('feedback.create', {'session_id': session['id'], 'choice': 'done',
-                                                          'outcome_text': f'用户在{self.channel_name}确认完成'}, self.device, operation_id)
+                                                           'outcome_text': f'用户在{self.channel_name}确认完成'},
+                                       self.device, operation_id, user_id=self.user_id)
         return '已记录完成，相关追问已停止。'
 
     @property
@@ -162,7 +171,8 @@ class ChatCommands:
     def undo(self, code):
         with self.store.connect() as conn:
             rows = conn.execute("SELECT d.id, d.summary, d.created_at FROM assistant_drafts d JOIN assistant_undo u "
-                                "ON u.draft_id=d.id WHERE d.status='applied' ORDER BY d.created_at DESC").fetchall()
+                                "ON u.draft_id=d.id WHERE d.status='applied' AND d.user_id=? "
+                                "ORDER BY d.created_at DESC", (self.user_id or self.store.owner_id,)).fetchall()
         if code:
             matches = [r for r in rows if r["id"][:4].lower() == code.lower()]
         else:  # A bare "撤销" means the assistant's latest change, if it is recent.
@@ -170,14 +180,14 @@ class ChatCommands:
         if len(matches) != 1:
             return "没有找到可以撤销的这条改动，可能已经撤销过了。请到瞬时的助手页查看。"
         try:
-            self.assistant.undo_draft(matches[0]["id"], self.device)
+            self.assistant.undo_draft(matches[0]["id"], self.device, user_id=self.user_id)
         except DomainError as error:
             return error.message
         return f"已撤销：{matches[0]['summary']}。"
 
     def apply_early(self, code, operation_id=None):
         """Apply a pending pull-earlier proposal created after an early end."""
-        state = self.store.state()
+        state = self.store.state(user_id=self.user_id)
         now = self.clock()
         drafts = [p for p in state.get('proposals', [])
                   if p['status'] == 'draft' and p.get('kind') == 'early'
@@ -191,7 +201,8 @@ class ChatCommands:
             return f'有几份提前建议在等你：{codes}。请带上编号，比如「提前 {drafts[0]["id"][:4].upper()}」。'
         proposal = drafts[0]
         try:
-            self.assistant.apply_operation('plan.apply', {'proposal_id': proposal['id']}, self.device, operation_id)
+            self.assistant.apply_operation('plan.apply', {'proposal_id': proposal['id']}, self.device,
+                                            operation_id, user_id=self.user_id)
         except DomainError as error:
             return error.message
         first = proposal['new_blocks'][0]
@@ -202,7 +213,8 @@ class ChatCommands:
     def decide(self, accept, code):
         with self.store.connect() as conn:
             rows = conn.execute("SELECT id, summary, created_at FROM assistant_drafts WHERE status='pending' "
-                                "ORDER BY created_at DESC").fetchall()
+                                "AND user_id=? ORDER BY created_at DESC",
+                                (self.user_id or self.store.owner_id,)).fetchall()
         if code:
             matches = [r for r in rows if r["id"][:4].lower() == code.lower()]
         else:  # A bare "确认" only counts when exactly one recent draft is waiting.
@@ -220,15 +232,15 @@ class ChatCommands:
         draft = matches[0]
         try:
             if accept:
-                self.assistant.apply_draft(draft["id"], self.device)
+                self.assistant.apply_draft(draft["id"], self.device, user_id=self.user_id)
                 return f"已照此办理：{draft['summary']}。"
-            self.assistant.dismiss_draft(draft["id"])
+            self.assistant.dismiss_draft(draft["id"], user_id=self.user_id)
             return f"好，放下了：{draft['summary']}。"
         except DomainError as error:
             return f"没能执行：{error.message}"
 
     def today_summary(self):
-        state = self.store.state()
+        state = self.store.state(user_id=self.user_id)
         zone = ZoneInfo(state["settings"]["timezone"])
         now = self.clock().astimezone(zone)
         blocks = sorted((b for b in state["blocks"] if b["status"] in ("scheduled", "completed", "skipped")
