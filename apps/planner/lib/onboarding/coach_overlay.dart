@@ -134,17 +134,16 @@ class _CoachOverlayState extends State<CoachOverlay>
       label: '使用引导，第 ${index + 1} 步，共 ${c.stepCount} 步',
       child: Stack(
         children: [
+          // Painted scrim; never takes pointer events so the highlighted control
+          // underneath stays usable — the tour copy tells people to tap it.
           Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              // The dimmed layer owns input while the tour is up: a tap on the
-              // backdrop must not trigger the control underneath the card.
-              onTap: () {},
+            child: IgnorePointer(
               child: CustomPaint(
                 painter: _SpotlightPainter(hole: hole, accent: palette.accent),
               ),
             ),
           ),
+          ..._blockers(size, hole),
           Positioned(
             left: left,
             top: top,
@@ -208,6 +207,34 @@ class _CoachOverlayState extends State<CoachOverlay>
         ],
       ),
     );
+  }
+
+  /// Blocks every area except the spotlight hole, so taps on the highlighted
+  /// control reach it (the step copy says "点这个按钮…"). The tour card still
+  /// floats above with 跳过/下一步.
+  List<Widget> _blockers(Size size, Rect? hole) {
+    Widget block(double left, double top, double width, double height) {
+      if (width <= 0 || height <= 0) return const SizedBox.shrink();
+      return Positioned(
+        left: left,
+        top: top,
+        width: width,
+        height: height,
+        child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: () {}),
+      );
+    }
+
+    if (hole == null) return [block(0, 0, size.width, size.height)];
+    final top = hole.top.clamp(0.0, size.height);
+    final bottom = hole.bottom.clamp(0.0, size.height);
+    final left = hole.left.clamp(0.0, size.width);
+    final right = hole.right.clamp(0.0, size.width);
+    return [
+      block(0, 0, size.width, top),
+      block(0, bottom, size.width, size.height - bottom),
+      block(0, top, left, bottom - top),
+      block(right, top, size.width - right, bottom - top),
+    ];
   }
 
   Widget _progressDots(int index, InkPalette palette) => Row(

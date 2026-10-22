@@ -204,6 +204,22 @@ void main() {
     await _stop(tester, controller);
   });
 
+  testWidgets('教程高亮处的按钮能真的点开', (tester) async {
+    _primeView(tester);
+    final controller = await _pumpApp(tester, _Backend(), _seededStore());
+    await _finishSetup(tester);
+
+    // 第 1 步指向「今日」标签，第 2 步指向新增按钮。
+    await _tapNext(tester);
+    expect(find.text('先安排一件事'), findsOneWidget);
+
+    // 蒙层不该挡住高亮位置：点 FAB 要真的打开安排表单。
+    await _tap(tester, find.byKey(const Key('action.create')));
+    expect(find.byKey(const Key('action.save-task')), findsOneWidget);
+
+    await _stop(tester, controller);
+  });
+
   testWidgets('跳过教程后不再出现', (tester) async {
     _primeView(tester);
     final backend = _Backend();
