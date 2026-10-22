@@ -229,20 +229,29 @@ venv 的 site-packages，计划任务无需手工 `-Python`。仍失败时再显
 
 ## 10. 给新成员开账号（师弟加入）
 
-账号不在 App 里自助注册，主账号用本机命令开号（需要能 `cd` 到 `server`、拿到后端数据目录）：
+默认是「自己注册」：服务器默认关闭自助注册，站长先打开开关：
 
 ```powershell
 cd C:\Users\ASUS\Documents\Timer\server
-.\.venv\Scripts\python.exe -m app.admin user add --username shidi --display-name 师弟 --timezone Asia/Shanghai
-# 不给 --password 时会打印一次性随机密码；忘记密码用 reset-password
-.\.venv\Scripts\python.exe -m app.admin user list
+.\.venv\Scripts\python.exe -m app.admin config allow-registration on
+.\.venv\Scripts\python.exe -m app.admin user list      # 打印当前开关状态
 ```
 
 对方四步加入：
 
-1. 手机装 App：浏览器打开 `https://timer.studydazi.top/api/v1/app/download`（`/api/v1/app/latest` 给版本号），装好后用开号时给的 `用户名 + 密码` 登录，首次进入会走基础设置（显示名、时区、每天时段）和 10 步引导。
-2. 填自己的模型 key：设置页「助手」→ 填自己的 DeepSeek API key（每人各存各的，服务端只存密文；填之前助手只会回「模型服务还没在电脑上配置好」）。
-3. 关注你的公众号测试号（公众平台测试号页面扫码，最多 20 个关注者），再在 App「账号 · 绑定微信」生成 6 位绑定码，把码发给公众号——收到「绑定好了」即成功；发错/过期会收到说明。
-4. 验收隔离：对方发「今天」只看到自己的空日程；你这边的数据不会变。解绑在「账号 · 绑定微信 → 解绑」。
+1. 安装包不用登录就能下：浏览器打开 `https://timer.studydazi.top/api/v1/app/download`（`/api/v1/app/latest` 给版本号）；这俩接口是公开的，只暴露安装包本身。
+2. 打开 App，登录页切到「注册」：填用户名（3–32 位字母/数字/`.`/`_`/`-`）、显示名、密码（至少 10 位，填两次）；注册成功直接进入，首次会走基础设置（时区、每天时段）和 10 步引导。
+3. 填自己的模型 key：设置页「助手」→ 填自己的 DeepSeek API key（每人各存各的，服务端只存密文；填之前助手只会回「模型服务还没在电脑上配置好」）。
+4. 关注你的公众号测试号（公众平台测试号页面扫码，最多 20 个关注者），再在 App「账号 · 绑定微信」生成 6 位绑定码，把码发给公众号——收到「绑定好了」即成功；发错/过期会收到说明。验收隔离：对方发「今天」只看到自己的空日程。
+
+站长也可以继续用命令开号（重置密码、停用）：`python -m app.admin user add --username shidi --display-name 师弟 --timezone Asia/Shanghai`、`reset-password`、`disable`。
+
+**把老账号的数据换到新账号**（比如先用临时账号跑、后来自己注册了正式用户名）：
+
+```powershell
+.\.venv\Scripts\python.exe -m app.admin user merge --from me --to <新用户名>
+```
+
+会把所有带 `user_id` 的表和材料目录整体迁到目标账号，禁用源账号并吊销它的设备，把目标账号提成 `admin`。弄完记得关开关：`config allow-registration off`。
 
 注意：测试号是订阅号语义，只能 5 秒内被动回复，主动提醒/到点追问受 48 小时客服窗口限制；要完整体验需认证服务号。

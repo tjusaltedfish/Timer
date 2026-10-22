@@ -576,14 +576,14 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
 
     # ---- Phone app releases (published by tools/release.ps1) -------------
     @app.get("/api/v1/app/latest")
-    def app_latest(device=Depends(authenticated)):
+    def app_latest():
         latest = releases.read_latest(store.directory)
         if not latest:
             raise DomainError("电脑上还没有发布手机版安装包", "NO_RELEASE", 404)
         return releases.public(latest)
 
     @app.get("/api/v1/app/download")
-    def app_download(request: Request, device=Depends(authenticated)):
+    def app_download(request: Request):
         latest = releases.read_latest(store.directory)
         if not latest:
             raise DomainError("电脑上还没有发布手机版安装包", "NO_RELEASE", 404)
