@@ -423,9 +423,8 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                                                      transport=app.state.llm_transport)
                 except DomainError:
                     raise error from None
-                with store.connect() as conn:
-                    conn.execute("BEGIN IMMEDIATE")
-                    configs.update(conn, user_id, assistant.AssistantConfigIn(base_url=candidate["base_url"]))
+                # Do not rewrite the stored address behind the user's back: the app
+                # shows the suggestion and the user decides (plan §11 P1).
                 fixed = candidate["base_url"]
             elif error.code == "LLM_MODEL":
                 models = await assistant.list_models(conf, key, app.state.llm_transport)

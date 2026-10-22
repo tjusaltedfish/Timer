@@ -61,7 +61,9 @@ def test_missing_v1_is_detected_and_fixed_by_the_connection_test(tmp_path, monke
     assert chat.status_code == 502 and "/v1" in chat.json()["message"]
     tested = client.post("/api/v1/assistant/test").json()
     assert tested["ok"] is True and tested["fixed_base_url"] == "https://relay.example/v1"
-    assert client.get("/api/v1/assistant/config").json()["base_url"] == "https://relay.example/v1"
+    # The suggestion is returned, not silently written: the user still types the address.
+    assert client.get("/api/v1/assistant/config").json()["base_url"] == "https://relay.example"
+
 
 
 def test_unknown_model_lists_what_the_service_offers(tmp_path, monkeypatch, relay):

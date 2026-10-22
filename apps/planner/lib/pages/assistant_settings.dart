@@ -95,7 +95,7 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
     if (fixed != null) url.text = fixed;
     setState(
       () => note =
-          '${fixed == null ? '' : '服务地址缺了 /v1，已自动改为 $fixed。\n'}'
+          '${fixed == null ? '' : '服务地址要补成 $fixed 才通，点「保存」后生效。\n'}'
           '连上了：${value['model']} 回复「${value['reply']}」，用时 ${value['latency_ms']} 毫秒。',
     );
   });

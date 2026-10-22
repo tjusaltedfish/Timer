@@ -1,5 +1,19 @@
 # 当前状态
 
+## v2 意图评测：14 条真实说法 × 固定状态（2026-10-22）
+
+- 依据 plan §9.6：离线用 MockLLM 回放，CI 必跑。衡量的是「模型这么说了，系统有没有按说的做对」——草稿解析、时段换算、护栏、失败降级都在这条链上，不是模型智商。
+- 新增 `server/app/eval.py`：读 fixture → 在临时数据目录里建 app（固定时钟 2026-10-19 09:00 洛杉矶 / 固定假模型）→ 种下用例状态 → 走 `/api/v1/assistant/messages` → 把快照归一成 tasks / cancelled / blocks（本地时间 + 分钟）/ memories / pending / running / answer 再和期望比对；`python -m app.eval` 打印 `x/y passed (z% aligned)`。
+- 新增 `server/tests/fixtures/intent_eval.jsonl`（14 条）：新排、再排、改期、撤段、撤任务、留白、做完、被打断、直接开始、记偏好、信息不足先问、跨两天先确认、引用不存在任务不炸、撤任务+撤段一起。
+- 新增 `server/tests/test_intent_eval.py`：fixture 必须全绿 + 用例格式自检。当前 **14/14（100%）**；后端全量 **233 passed**。
+- 未做：没有 `--live`（真实模型在线跑）模式；fixture 没有覆盖澄清队列的追问轮次。
+
+## v2 助手连接测试不再偷偷改你的地址（2026-10-22）
+
+- plan §11 P1：`assistant_test` 在自动补 `/v1` 后把新地址直接写回配置，用户没点「保存」也生效。
+- 现在后端只把建议作为 `fixed_base_url` 返回，不改库；客户端把地址填进输入框并提示「点保存后生效」。
+- 测试：`server/tests/test_assistant_errors.py` 断言返回建议但 `base_url` 保持原样。后端 233 passed。
+
 ## v2 助手记忆：同一句话不再长两条（2026-10-22）
 
 - 依据 plan §9.4：记忆 ≤50 条、每轮最多记 2 条、去重按归一化文本。
