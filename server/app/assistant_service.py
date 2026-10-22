@@ -74,6 +74,50 @@ def ask_question(conn, user_id, now, question):
                   stamp(now), stamp(now + timedelta(minutes=10))))
 
 
+def recent_entities(conn, user_id, now, ttl_minutes=45):
+    """What the last turn was about, so「它 / 那个」has a referent."""
+    row = conn.execute("SELECT entities, updated_at FROM assistant_context WHERE user_id=?",
+                       (user_id,)).fetchone()
+    if not row or parse(row["updated_at"]) < now - timedelta(minutes=ttl_minutes):
+        return []
+    try:
+        items = json.loads(row["entities"])
+    except ValueError:
+        return []
+    return [item for item in items if isinstance(item, dict) and item.get("id") and item.get("title")]
+
+
+def remember_entities(conn, user_id, items, now, limit=6):
+    """Keep the newest few entities from this turn in front of the older ones."""
+    items = [item for item in items if item.get("id") and item.get("title")]
+    if not items:
+        return
+    merged = []
+    for item in [*items, *recent_entities(conn, user_id, now)]:
+        if all(existing["id"] != item["id"] for existing in merged):
+            merged.append(item)
+    conn.execute("INSERT OR REPLACE INTO assistant_context VALUES(?,?,?)",
+                 (user_id, json.dumps(merged[:limit], ensure_ascii=False), stamp(now)))
+
+
+def touched_entities(state, drafts):
+    """Task/block titles a turn proposed or changed — what later「它」should point at."""
+    tasks = {task["id"]: task for task in state.get("tasks", [])}
+    blocks = {block["id"]: block for block in state.get("blocks", [])}
+    items = []
+    for draft in drafts:
+        for action in draft.get("actions", []):
+            kind = action.get("type", "")
+            ids = [action.get(key) for key in ("task_id", "block_id", "id") if action.get(key)]
+            for form, collection in (("任务", tasks), ("安排", blocks)):
+                found = next((collection[item_id] for item_id in ids if item_id in collection), None)
+                if found:
+                    items.append({"kind": form, "id": found["id"], "title": found["title"]})
+            if kind in ("schedule_new", "schedule_task", "protect") and action.get("title"):
+                items.append({"kind": "安排", "id": action.get("task_id") or "", "title": action["title"]})
+    return [item for item in items if item["id"]]
+
+
 class AssistantService:
     def __init__(self, store, clock, transport=lambda: None):
         self.store, self.clock, self.transport = store, clock, transport
@@ -156,6 +200,7 @@ class AssistantService:
                                    "ORDER BY created_at DESC, rowid DESC LIMIT 10",
                                    (user_id, stamp(now - timedelta(minutes=45)))).fetchall()
             waiting_on = pending_question(conn, user_id, now)
+            entities = recent_entities(conn, user_id, now)
         if image and not conf.get("vision"):
             return self._exchange(
                 text,
@@ -165,7 +210,7 @@ class AssistantService:
             )
         # Removing a memory must also keep the original memory command out of model context.
         history = [row for row in history if not (row['role'] == 'user' and re.match(r'^(?:请)?(?:记住|忘记)[：:]', row['text']))]
-        context, refs = assistant.build_context(state, now)
+        context, refs = assistant.build_context(state, now, entities=entities)
         if waiting_on:
             options = json.loads(waiting_on["options"] or "[]")
             listed = " ".join(f"{index}. {option}" for index, option in enumerate(options, 1))
@@ -261,6 +306,16 @@ class AssistantService:
                 except DomainError as error:
                     self.dismiss_draft(draft_id, user_id)
                     notes.append(error.message)
+        # Remember what this turn was about, so「它 / 那个」has a referent next turn.
+        record = touched_entities(state, drafts)
+        before_ids = {item["id"] for item in state.get("tasks", [])} | {item["id"] for item in state.get("blocks", [])}
+        after_state = self.store.state(user_id=user_id)
+        for item in after_state.get("tasks", []):
+            if item["id"] not in before_ids:
+                record.append({"kind": "任务", "id": item["id"], "title": item["title"]})
+        for item in after_state.get("blocks", []):
+            if item["id"] not in before_ids:
+                record.append({"kind": "安排", "id": item["id"], "title": item["title"]})
         answer = self._answer(reply.reply, mode, len(drafts), applied, notes, remembered)
         if reply.question:
             listed = " ".join(f"{index}. {option}" for index, option in enumerate(reply.question.options, 1))
@@ -270,6 +325,7 @@ class AssistantService:
         answer = assistant.visible_text(answer, state, refs)
         with self.store.connect() as conn:
             close_pending_questions(conn, user_id, now)
+            remember_entities(conn, user_id, record, now)
             if reply.question:
                 ask_question(conn, user_id, now, reply.question)
             conn.execute("UPDATE assistant_messages SET text=? WHERE id=? AND user_id=?", (answer, reply_id, user_id))

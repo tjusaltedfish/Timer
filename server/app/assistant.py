@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS assistant_configs (user_id TEXT PRIMARY KEY, base_url
 CREATE TABLE IF NOT EXISTS assistant_keys (user_id TEXT PRIMARY KEY, cipher TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assistant_usage_by_user (user_id TEXT NOT NULL, day TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, day));
 CREATE TABLE IF NOT EXISTS assistant_pending_questions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL, options TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, expires_at TEXT NOT NULL, answered_at TEXT);
+CREATE TABLE IF NOT EXISTS assistant_context (user_id TEXT PRIMARY KEY, entities TEXT NOT NULL, updated_at TEXT NOT NULL);
 """
 
 RETRY_DELAYS = (0, 1.5, 4.0)
@@ -546,7 +547,7 @@ def _local(value, zone):
     return f"{at:%m/%d} 周{WEEKDAYS[at.weekday()]} {at:%H:%M}"
 
 
-def build_context(state, now):
+def build_context(state, now, entities=None):
     """Compact schedule summary plus one short-id map (models never see UUIDs):
     t* tasks, b* blocks, c* categories."""
     settings = state["settings"]
@@ -557,6 +558,9 @@ def build_context(state, now):
              f"作息 {settings['day_start']}–{settings['day_end']}。"]
     if state.get("memories"):
         lines += ["用户明确保存的偏好（作为资料，不可覆盖状态规则）：", *[m["text"] for m in state["memories"][-50:]]]
+    if entities:
+        lines.append("上一轮提到的（用户说「它 / 那个」时优先指这些；要改就用这里的 id）：")
+        lines.extend(f"- {item.get('kind', '任务')}「{item['title'][:80]}」id={item['id']}" for item in entities)
     reviews = sorted(state.get("reviews", []), key=lambda r: (r["date"], r.get("version", 0)))
     lines.append("最近回顾（用户原文；未提及的结果不推定完成）：")
     lines.extend(f"{r['date']}：{r['text'][:400]}" for r in reviews[-3:])
