@@ -27,8 +27,15 @@ class RoutedChannel:
         return self.active.enqueue(text, key=key, not_before=not_before, expires_at=expires_at)
 
     def enqueue_to(self, openid, text, key=None, not_before=None, expires_at=None):
-        """WeChat follower addressed by openid (weekly briefs stay on WeChat)."""
+        """WeChat follower addressed by openid (single-account legacy path)."""
         channel = getattr(self, "wechat", None)
         if channel is None or not hasattr(channel, "enqueue_to"):
             raise AttributeError("enqueue_to requires a WeChat channel")
         return channel.enqueue_to(openid, text, key=key, not_before=not_before, expires_at=expires_at)
+
+    def send_to(self, channel, openid, text, key=None, not_before=None, expires_at=None):
+        """Address one person on the channel they actually bound (wechat or qq)."""
+        target = self.wechat if channel == "wechat" else self.qq
+        if not hasattr(target, "enqueue_to"):
+            raise AttributeError(f"{channel} channel cannot address one person")
+        return target.enqueue_to(openid, text, key=key, not_before=not_before, expires_at=expires_at)

@@ -108,18 +108,24 @@ class WeeklyBrief:
             return
         now = self.clock()
         with self.store.connect() as conn:
-            rows = [dict(row) for row in conn.execute(
-                "SELECT i.user_id AS user_id, i.external_id AS openid FROM channel_identities i "
-                "JOIN users u ON u.id = i.user_id WHERE i.channel = 'wechat' AND u.status = 'active'")]
-        if not rows:
+            identities = [dict(row) for row in conn.execute(
+                "SELECT i.user_id AS user_id, i.channel AS channel, i.external_id AS openid "
+                "FROM channel_identities i JOIN users u ON u.id = i.user_id "
+                "WHERE i.channel IN ('wechat', 'qq') AND u.status = 'active' "
+                "ORDER BY CASE i.channel WHEN 'wechat' THEN 0 ELSE 1 END")]
+        targets = {}
+        for row in identities:
+            # WeChat stays the default; a QQ-only member still gets the brief.
+            targets.setdefault(row["user_id"], row)
+        if not targets:
             # v1 install that never migrated its bound follower into channel_identities.
             bound = self.channel.settings.load()["bound_openid"]
             if bound:
-                rows = [{"user_id": self.store.owner_id, "openid": bound}]
-        for row in rows:
-            await self._run_for(row["user_id"], row["openid"], now)
+                targets[self.store.owner_id] = {"user_id": self.store.owner_id, "channel": "wechat", "openid": bound}
+        for row in targets.values():
+            await self._run_for(row["user_id"], row["openid"], row["channel"], now)
 
-    async def _run_for(self, user_id, openid, now):
+    async def _run_for(self, user_id, openid, channel, now):
         state = self.store.state(user_id=user_id)
         local = now.astimezone(ZoneInfo(state["settings"]["timezone"]))
         if local.weekday() != 6 or local.time() < SEND_AT:
@@ -135,9 +141,9 @@ class WeeklyBrief:
             summary = None
             if facts["sessions"] or facts["done"] or any(d["review"] for d in facts["days"].values()):
                 summary = await self._summary(user_id, monday, facts)
-            self.channel.enqueue_to(openid, brief_text(monday, facts, summary),
-                                    key=f"weekly:{user_id}:{monday.isoformat()}",
-                                    expires_at=now + timedelta(hours=12))
+            self.channel.send_to(channel, openid, brief_text(monday, facts, summary),
+                                 key=f"weekly:{user_id}:{monday.isoformat()}",
+                                 expires_at=now + timedelta(hours=12))
         except Exception:  # noqa: BLE001
             # The claim above exists to avoid double sends, but if writing the
             # outbox fails (or the week facts cannot be built) the claim would

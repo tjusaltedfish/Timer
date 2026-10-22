@@ -113,3 +113,22 @@ def test_no_brief_before_sunday_evening(env):
     asyncio.run(app.state.weekly.run_due())
     run(client, app)
     assert not any('本周简报' in b['text']['content'] for _, b in wechat.custom)
+
+
+def test_a_qq_only_member_still_gets_the_week(env):
+    """只绑了 QQ 的人，周报走 QQ 发件箱，而不是掉进微信黑洞。"""
+    from app.domain import stamp
+    client, app, wechat, _ = env
+    configure_wechat(client)  # no WeChat follower bound in this test
+    store = app.state.store
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO channel_identities(channel, external_id, user_id, created_at, last_seen_at) "
+            "VALUES('qq', ?, ?, ?, ?)",
+            ("o_qq_only_member", store.owner_id, stamp(NOW), stamp(NOW)))
+    app.state.weekly.clock = lambda: sunday_evening()
+    focus_and_finish(client, '实验报告')
+    asyncio.run(app.state.weekly.run_due())
+    with store.connect() as conn:
+        rows = conn.execute("SELECT text FROM qq_outbox").fetchall()
+    assert rows and any('本周简报' in row[0] for row in rows), "QQ-only member should get the brief on QQ"
