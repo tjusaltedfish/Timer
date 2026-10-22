@@ -229,6 +229,55 @@ void main() {
     c.dispose();
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('手机五个主页面与设置页都能打开、不抛异常', (tester) async {
+    tzdata.initializeTimeZones();
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    me = user(
+      onboarding: {
+        'version': 2,
+        'step': 10,
+        'done': ['welcome', 'setup', 'finish'],
+        'skipped': <String>[],
+      },
+    );
+    final storage = MemoryStore();
+    storage.token = 'tok-1';
+    storage.values['auth_session'] = jsonEncode({
+      'base_url': 'http://127.0.0.1:8787',
+      'user': me,
+      'device': {'id': 'd1', 'name': '瞬时客户端', 'role': 'phone'},
+    });
+    final c = PlannerController(
+      storage: storage,
+      transport: backend(),
+      clock: () => DateTime.utc(2026, 10, 19, 17, 30),
+    );
+    await c.initialize();
+    await tester.pumpWidget(PlannerApp(controller: c, requireLogin: true));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home.clock')), findsOneWidget);
+    for (final label in ['一周', '诸事', '回顾', '助手', '今日']) {
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '切到「$label」就抛异常');
+    }
+
+    // 设置页（账号 / 助手 / 公众号 / 外观都在这里）。
+    await tester.tap(find.byTooltip('设置').first);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('助手'), findsWidgets);
+
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
 
 http.Response _json(Object body) => http.Response(
