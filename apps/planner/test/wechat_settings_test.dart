@@ -47,6 +47,12 @@ void main() {
               'code': '482913',
               'expires_at': '2026-10-19T16:10:00Z',
             },
+            '/api/v1/channels/bindings' => {'items': <Json>[]},
+            '/api/v1/channels/wechat/bind-code' => {
+              'code': '482913',
+              'channel': 'wechat',
+              'expires_at': '2026-10-19T16:10:00Z',
+            },
             _ => {},
           };
           if (path == '/api/v1/wechat/config') {
@@ -93,8 +99,9 @@ void main() {
       );
       // The secret field is cleared and only a hint comes back.
       expect(find.text('0123456789abcdef0123456789abcdef'), findsNothing);
-      await tester.ensureVisible(find.text('生成绑定码'));
-      await tester.tap(find.text('生成绑定码'));
+      expect(find.byKey(const Key('wechat.tutorial')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('wechat.bind-mine')));
+      await tester.tap(find.byKey(const Key('wechat.bind-mine')));
       await tester.pumpAndSettle();
       expect(find.text('482913'), findsOneWidget);
       expect(tester.takeException(), isNull);

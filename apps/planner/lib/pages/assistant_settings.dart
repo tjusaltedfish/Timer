@@ -128,10 +128,10 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
             const SizedBox(height: 8),
             Text(
               !c.configured
-                  ? '连接电脑后，在电脑端填写模型服务。'
+                  ? '连接你的账号后，在这台设备上填写模型服务即可。'
                   : ready
                   ? '已接入 ${config!['model']} · 今天用了 ${config!['used_today']}/${config!['daily_limit']} 次'
-                  : '还没有配置模型服务。',
+                  : '还没有配置模型服务。填好下面三项就能开始用。',
               style: theme.textTheme.bodySmall,
             ),
             if (!loaded)
@@ -139,7 +139,7 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
                 padding: EdgeInsets.only(top: 12),
                 child: LinearProgressIndicator(minHeight: 2),
               ),
-            if (c.configured && loaded && desktop) ...[
+            if (c.configured && loaded) ...[
               const SizedBox(height: 16),
               Wrap(
                 spacing: 8,

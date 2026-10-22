@@ -273,18 +273,13 @@ class _AssistantPanelState extends State<AssistantPanel> {
       );
     }
     if (config != null && config!['configured'] != true) {
-      final desktop = c.state['device']?['role'] == 'desktop';
       return notice(
         '还差一把钥匙',
-        desktop
-            ? '在设置的「助手」里填上服务地址、模型名和 API Key（DeepSeek 或 OpenAI 中转站都可以），就能开始用了。Key 只保存在这台电脑上。'
-            : '助手还没在电脑上配置好。到电脑端「设置 · 助手」填好服务地址、模型和 API Key 后，手机就能直接用。',
-        action: desktop
-            ? FilledButton(
-                onPressed: widget.onOpenSettings,
-                child: const Text('去填写'),
-              )
-            : null,
+        '在设置的「助手」里填上服务地址、模型名和 API Key（DeepSeek 或 OpenAI 中转站都可以），就能开始用了。手机上也能填，Key 加密保存在你的账号里。',
+        action: FilledButton(
+          onPressed: widget.onOpenSettings,
+          child: const Text('去填写'),
+        ),
       );
     }
     return Align(

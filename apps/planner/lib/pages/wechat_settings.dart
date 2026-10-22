@@ -1,8 +1,9 @@
 part of '../home.dart';
 
 /// WeChat official-account test account: credentials, the Token to paste into
-/// WeChat, binding the main account, and recent delivery states. Editable on
-/// the computer only; the appsecret is never shown back.
+/// WeChat, binding the main account, and recent delivery states. The shared
+/// bot credentials are editable on the computer only; every member can see the
+/// binding steps and bind their own WeChat from the phone.
 class WechatSettingsPanel extends StatefulWidget {
   const WechatSettingsPanel({super.key, required this.controller});
   final PlannerController controller;
@@ -16,11 +17,15 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
       template = TextEditingController();
   Json? config;
   List<Json> outbox = [];
+  List<Json> bindings = [];
   Json? bindCode;
   String? note;
   bool busy = false, loaded = false;
   PlannerController get c => widget.controller;
   bool get desktop => c.state['device']?['role'] == 'desktop';
+  bool get mine =>
+      bindings.any((item) => item['channel'] == 'wechat') ||
+      config?['bound'] == true;
 
   static const statusLabels = {
     'queued': '排队中',
@@ -61,10 +66,12 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
     try {
       final value = await c.wechatConfig();
       final messages = desktop ? await c.wechatOutbox() : <Json>[];
+      final linked = await c.channelBindings();
       if (mounted) {
         setState(() {
           _fill(value);
           outbox = messages;
+          bindings = linked;
         });
       }
     } catch (error) {
@@ -107,11 +114,27 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
     if (mounted) setState(() => note = '已复制$what。');
   }
 
+  Future<void> _newCode() => _run(() async {
+    final value = await c.channelBindCode('wechat');
+    final linked = await c.channelBindings();
+    if (!mounted) return;
+    setState(() {
+      bindCode = value;
+      bindings = linked;
+    });
+  });
+
+  Future<void> _unbindMine() => _run(() async {
+    await c.channelUnbind('wechat');
+    final linked = await c.channelBindings();
+    if (mounted) setState(() => bindings = linked);
+  });
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final ready = config?['configured'] == true;
-    final bound = config?['bound'] == true;
+    final bound = mine;
     return SizedBox(
       width: double.infinity,
       child: InkCard(
@@ -129,11 +152,11 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
             const SizedBox(height: 8),
             Text(
               !c.configured
-                  ? '连接电脑后，在电脑端设置公众号测试号。'
+                  ? '连接账号后，在电脑端设置公众号测试号；手机也能绑定自己的微信。'
                   : bound
-                  ? '已绑定大号 ${config!['bound_hint']}，在测试号对话里就能安排和反馈。'
+                  ? '已绑定你的微信，在测试号对话里就能安排和反馈。'
                   : ready
-                  ? '测试号已填好，还差绑定你的大号。'
+                  ? '测试号已填好，还差绑定你的微信。'
                   : '用公众号测试号和助手对话：电脑锁屏也能收发，改日程前都会先给你拟办。',
               style: theme.textTheme.bodySmall,
             ),
@@ -142,6 +165,91 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
                 padding: EdgeInsets.only(top: 12),
                 child: LinearProgressIndicator(minHeight: 2),
               ),
+            if (c.configured && loaded) ...[
+              const SizedBox(height: 16),
+              Text(
+                '绑定步骤',
+                key: const Key('wechat.tutorial'),
+                style: theme.textTheme.titleSmall,
+              ),
+              const SizedBox(height: 6),
+              for (final (i, step) in const [
+                '微信里搜索并关注测试号（管理员给的二维码，或测试号页面上的二维码）',
+                '点下面「生成绑定码」，记下 6 位码',
+                '在测试号的对话里把这 6 位码发出去',
+                '收到「绑定好了」就完成了；之后在对话里发消息，就是跟你的助手说话',
+              ].indexed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${i + 1}. $step',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton(
+                    key: const Key('wechat.bind-mine'),
+                    onPressed: busy ? null : _newCode,
+                    child: Text(bound ? '换一个绑定码' : '生成绑定码'),
+                  ),
+                  OutlinedButton(
+                    key: const Key('wechat.refresh'),
+                    onPressed: busy
+                        ? null
+                        : () => _run(() async {
+                            final value = await c.wechatConfig();
+                            final linked = await c.channelBindings();
+                            if (mounted) {
+                              setState(() {
+                                _fill(value);
+                                bindings = linked;
+                              });
+                            }
+                          }),
+                    child: const Text('刷新状态'),
+                  ),
+                  if (bound)
+                    TextButton(
+                      key: const Key('wechat.unbind-mine'),
+                      onPressed: busy ? null : _unbindMine,
+                      child: const Text('解除绑定'),
+                    ),
+                ],
+              ),
+              if (bindCode != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 14),
+                  child: Material(
+                    color: context.inkPalette.wash,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SelectableText(
+                            '${bindCode!['code'] ?? ''}',
+                            style: const TextStyle(
+                              fontFamily: 'WenKai',
+                              fontSize: 30,
+                              letterSpacing: 6,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '把 6 位码发到测试号对话里，10 分钟内有效；绑定后只回应你的微信号。',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
             if (c.configured && loaded && desktop) ...[
               const SizedBox(height: 16),
               TextField(
@@ -200,15 +308,6 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
                     child: Text(busy ? '请稍候…' : '保存'),
                   ),
                   OutlinedButton(
-                    onPressed: busy || !ready
-                        ? null
-                        : () => _run(() async {
-                            final code = await c.wechatBindCode();
-                            if (mounted) setState(() => bindCode = code);
-                          }),
-                    child: Text(bound ? '换绑大号' : '生成绑定码'),
-                  ),
-                  OutlinedButton(
                     onPressed: busy || !bound
                         ? null
                         : () => _run(() async {
@@ -221,49 +320,8 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
                           }),
                     child: const Text('发一条测试消息'),
                   ),
-                  if (bound)
-                    TextButton(
-                      onPressed: busy
-                          ? null
-                          : () => _run(() async {
-                              final value = await c.wechatUnbind();
-                              if (mounted) {
-                                setState(() => config = {...?config, ...value});
-                              }
-                            }),
-                      child: const Text('解除绑定'),
-                    ),
                 ],
               ),
-              if (bindCode != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 14),
-                  child: Material(
-                    color: context.inkPalette.wash,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SelectableText(
-                            bindCode!['code'],
-                            style: const TextStyle(
-                              fontFamily: 'WenKai',
-                              fontSize: 30,
-                              letterSpacing: 6,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '用大号在测试号的对话里发送这 6 位数字，10 分钟内有效。绑定后只回应这个微信号。',
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
               const SizedBox(height: 18),
               Text('填到测试号「接口配置信息」里', style: theme.textTheme.titleSmall),
               const SizedBox(height: 8),

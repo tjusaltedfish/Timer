@@ -1,5 +1,14 @@
 # 当前状态
 
+## v2 修：手机配助手、公众号绑定教程与键盘焦点（2026-10-22）
+
+- 收（USER m03935）：手机上没法配置助手 API；没有绑定公众号的教程；还有输入法调不出来之类的 bug。
+- 手机配助手：`apps/planner/lib/pages/assistant_settings.dart` 整张表单原来被 `desktop`（`device.role`）门禁，手机上只显示「在电脑上配」。现在人人可见：服务地址、Key、模型、每日上限都能填，保存仍走 `/api/v1/assistant/config`（v2 已是每用户自己的助手，Key 只写不读、`key_hint` 只露尾号）。
+- 公众号绑定教程：`apps/planner/lib/pages/wechat_settings.dart` 原来只有「站长」视角的 AppID/Token 配置，成员没有绑定入口。现在页首是 3 步教程（关注测试号 → 发 6 位绑定码 → 绑定成功），成员可一键生成本人的码（`controller.channelBindCode('wechat')` → `/api/v1/channels/wechat/bind-code`），可看已绑定账号并解绑（`/api/v1/channels/bindings`、`DELETE /api/v1/channels/wechat/binding`）；旧的站长接口保留给管理员配应用凭证。
+- 输入法：给「新建待办弹层」加了回归测试——360dp、键盘弹起时点名字输入框，`testTextInput.hasAnyClients` 必须为 true（框架层真正连上 IME）。真机没复现到「调不出输入法」的具体页面，先用测试兜住焦点→IME 这条链；已排查 `CoachOverlay` 引导层是全屏 `GestureDetector`，教程没走完时它确实会吞点击（不影响输入法），走完自动消失。
+- 验证：`dart analyze lib test` → No issues found!；`flutter test --no-pub` → **107 passed**（新增 `test/phone_member_settings_test.dart` 2 例：手机成员配助手并生成绑定码、待办弹层点输入框连上 IME）。
+- 未做：iOS/桌面没有单独回归；测试号二维码没内置进 App（教程里写了「微信后台 → 测试号二维码」路径）；如果输入法问题是「键盘盖住输入框」这种遮挡，得拿到具体页面截图才能定位。
+
 ## v2 P4 修：登录成功却被判「连不上」——release 包插件类错位（2026-10-22）
 
 - 收（USER m03722「已经注册好的登录不进去、没注册好的也无法连接」+ m03786「我已经跑好注册和登录了，就是你先帮我修复这个bug吧」）：真机复现到服务端已经建号/登录成功（`users.last_login_at` 有值、`devices` 有记录），客户端却显示「连不上服务器」。

@@ -707,6 +707,25 @@ class PlannerController extends ChangeNotifier {
   Future<List<Json>> wechatOutbox() async =>
       ((await _wechat('GET', '/outbox'))['messages'] as List).cast<Json>();
 
+  // ---- Per-user channel identities (work on the phone too) ----
+  //
+  // The owner-only `/api/v1/wechat|qq/*` endpoints above configure the shared
+  // bot; these route by the signed-in account, so every member can bind their
+  // own WeChat / QQ and see what they linked.
+
+  Future<Json> channelBindCode(String channel) =>
+      request('POST', '/api/v1/channels/$channel/bind-code', const {});
+
+  Future<List<Json>> channelBindings() async {
+    if (!configured) return const [];
+    final value = await request('GET', '/api/v1/channels/bindings', null);
+    final items = value['items'];
+    return items is List ? items.cast<Json>() : const [];
+  }
+
+  Future<Json> channelUnbind(String channel) =>
+      request('DELETE', '/api/v1/channels/$channel/binding', null);
+
   // ---- QQ official-bot channel (configured on the computer) ----
 
   Future<Json> _qq(String method, String path, [Json? body]) async {
