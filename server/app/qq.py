@@ -229,7 +229,8 @@ class QQChannel:
             if not bound:
                 if re.fullmatch(r"\d{6}", content) and self._bind_code_matches(conf, content, now):
                     conf.update(bound_openid=openid, bound_at=stamp(now),
-                                last_msg_id=msg_id, last_msg_at=stamp(now))
+                                last_msg_id=msg_id, last_msg_at=stamp(now),
+                                bind_code_hash="", bind_expires_at=None)
                     self.settings.save(conf)
                     self._enqueue(conn, openid, "绑定好了，之后在 QQ 里直接说想安排什么就行。\n\n" + HELP,
                                   now, key=f"bind:{msg_id}", msg_id=msg_id, msg_at=now)

@@ -10,7 +10,10 @@
 - **通道选择**：新增 `server/app/channels.py` 的 `RoutedChannel`，按「已配置且已绑定」在 QQ 和微信之间挑一条当提醒投递目标（QQ 优先），`proactive.py`、`weekly.py` 一行未改；`main.py` 增加 `/api/v1/qq/{config,bind-code,unbind,test,outbox}`，形状与微信那组一致，配置接口额外带 `connected`（网关长连接是否就绪）。
 - **人格**：`server/app/assistant.py` 的身份段改成「大肥鱼」——闲时能正常聊两句（`drafts` 留空、reply ≤80 字、不追问、闲聊不写 `remember`），一涉及日程立刻收敛成干活模式（reply ≤40 字）；动作清单、时间规则和 JSON 输出契约一字未动，见 [助手机制](design/assistant-behavior.md)。
 - **验证（真实跑过的）**：后台 `PLANNER_DATA_DIR=<仓库内临时目录> ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **146 passed**（原 119 + 新增 `test_qq.py` 27 项）；`flutter test` → **72 passed**；`flutter analyze` → **No issues found**。`test_qq.py` 覆盖：`QQBot` 鉴权头与 token 复用、重推去重、陌生号静默丢弃、绑定码一次性且跨重启有效、刚聊过天走被动回复、无近期互动走主动消息、长回复分片按 `msg_seq` 递增、超时记 `unknown` 不重发、连不上与限频按退避重排、被动凭证失效转主动、解绑后旧提醒失效。公网侧实测过真实 `/gateway` 与 token 接口响应（假 token 返回 401 / 11244）。
-- **没验证的**：没有真实 AppID/AppSecret，**一条真实 QQ 消息都还没收发过**；「头像可改」「能置顶」是 QQ 客户端行为，未实机确认；单聊界面是否显示机器人头像官方说法不一致。
+- **真实机器人验收（2026-10-21 21:26，用户提供的正式机器人 AppID `1905884176`）**：凭据落在 `%USERPROFILE%\TimePlanner\data\qq.json` 与 `secrets\qq-secret`（不进 Git）。后台取到 `access_token` 后网关长连接就绪（`connected: true`），用户在 QQ 里发 `547913` 完成绑定（openid 尾号 `2876`），随后三种投递方式全部真实送达：① 绑定欢迎语（`channel=passive`）② `POST /api/v1/qq/test` 测试消息（`passive`，借最近一条 `msg_id`）③ 把 `last_msg_at` 拨到 60 分钟前再测 → `channel=active` 主动消息成功（无 `40054013`，说明用户客户端「允许接收主动消息」是开着的）。用户问「你是谁」时按大肥鱼人格回了「大肥鱼啊，你的搭子兼助理…」并顺带提到 10:30 的安排。`qq_outbox` 四条全 `sent`、`attempts=1`。
+- **绑定码用完即焚**：绑定成功时把 `bind_code_hash`/`bind_expires_at` 就地清空（原先只在解绑时清），`test_qq.py` 增加对应断言。
+- **还没验证的**：「头像可改」「能置顶」是 QQ 客户端行为，要在手机上看；单聊界面是否显示机器人头像官方说法不一致；主动消息每天 1000 条配额未压测；`C2C` intent 是否需后台申请、同 AppID 多开是否互踢，也没有实测条件。
+
 - **未做**：表情包/图片发送（要 `POST /v2/users/{openid}/files` 拿 `file_info` 再发富媒体）；随机主动搭话（目前只有到点提醒、日终复盘、周日简报这类规律消息）；群聊。
 - **文档**：接入步骤与限制 `docs/guides/qq-bot.md`，协议契约 `docs/qqbot-c2c-api-spec.md`，HANDOFF/README/助手机制已同步。
 

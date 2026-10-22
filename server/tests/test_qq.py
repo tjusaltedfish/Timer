@@ -154,6 +154,10 @@ def test_bind_code_persists_and_only_works_once(fake):
     run(client, app)
     assert app.state.qq.settings.load()["bound_openid"] == OWNER
     assert "绑定好了" in sent_texts(api)[0]
+    # 绑定成功后码要就地抹掉，别把哈希留在盘上当靶子
+    conf = app.state.qq.settings.load()
+    assert conf.get("bind_code_hash", "") == ""
+    assert conf.get("bind_expires_at") is None
     # 同一个码再来一次：已经不是绑定码了，当普通文字处理
     message(app, openid=STRANGER, content=code, msg_id="m-again")
     run(client, app)
