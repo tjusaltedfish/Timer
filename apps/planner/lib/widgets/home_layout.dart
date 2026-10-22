@@ -30,6 +30,7 @@ extension _HomeLayout on _PlannerHomeState {
   );
   void selectDate(DateTime date) => update(() {
     selectedDay = DateTime(date.year, date.month, date.day);
+    _followingToday = dateKey(selectedDay) == dateKey(now);
     selectedBlock = null;
   });
   Widget dateStrip() => GestureDetector(

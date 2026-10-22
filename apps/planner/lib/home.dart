@@ -150,6 +150,8 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
   );
 
   late DateTime selectedDay;
+  /// 午夜之后，如果用户没在看别的日子，就把「今天」翻到新的一天。
+  bool _followingToday = true;
   String? selectedBlock;
   Timer? clock;
   int _clockMinute = -1;
@@ -187,13 +189,20 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
     super.initState();
     final today = now;
     selectedDay = DateTime(today.year, today.month, today.day);
+    _followingToday = true;
     clock = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted &&
           (page == 0 ||
               c.activeSession != null ||
               now.minute != _clockMinute)) {
         _clockMinute = now.minute;
-        update(() {});
+        update(() {
+          if (_followingToday && dateKey(selectedDay) != dateKey(now)) {
+            // Sitting on the app across midnight used to keep yesterday's
+            // schedule on screen and call it 「今天」.
+            selectedDay = DateTime(now.year, now.month, now.day);
+          }
+        });
       }
     });
     c.startPolling();
