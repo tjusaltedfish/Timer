@@ -59,102 +59,105 @@ extension _TaskSheet on _PlannerHomeState {
           title: Text(
             existing == null ? '落一笔有结果的事' : '再为「${existing['title']}」留一段',
           ),
-          content: SizedBox(
-            width: 460,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (existing == null) ...[
-                    TextField(
-                      controller: name,
-                      maxLength: 200,
-                      decoration: InputDecoration(
-                        labelText: protected ? '这段时间留给' : '要做的事',
-                        hintText: protected ? '午饭、散步、小憩…' : '例如：整理参数扫描脚本',
-                      ),
-                    ),
-                    if (!protected) ...[
-                      const SizedBox(height: 4),
+          content: ConstrainedBox(
+            constraints: sheetBodyConstraints(context),
+            child: SizedBox(
+              width: 460,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (existing == null) ...[
                       TextField(
-                        controller: goal,
-                        maxLines: 2,
-                        maxLength: 2000,
-                        decoration: const InputDecoration(
-                          labelText: '做到什么程度算完成',
-                          hintText: '可以检验的结果，例如：输出一份可复现的 CSV',
+                        controller: name,
+                        maxLength: 200,
+                        decoration: InputDecoration(
+                          labelText: protected ? '这段时间留给' : '要做的事',
+                          hintText: protected ? '午饭、散步、小憩…' : '例如：整理参数扫描脚本',
                         ),
                       ),
-                      label('归到哪一类（可不选）'),
-                      categoryChips(
-                        project,
-                        (value) => setDialog(() => project = value),
-                      ),
-                    ],
-                  ],
-                  label('何时开始'),
-                  Center(
-                    child: InkDateTimeWheel(
-                      key: const Key('task.when'),
-                      initial: initial,
-                      today: current,
-                      minimum: current,
-                      onChanged: (d, h, m) {
-                        day = d;
-                        hour = h;
-                        minute = m;
-                      },
-                    ),
-                  ),
-                  label('留多久'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final m in {...durations, length}.toList()..sort())
-                        ChoiceChip(
-                          label: Text(
-                            m < 60 || m % 60 != 0
-                                ? m >= 60
-                                      ? '${m ~/ 60} 小时 ${m % 60} 分'
-                                      : '$m 分钟'
-                                : '${m ~/ 60} 小时',
+                      if (!protected) ...[
+                        const SizedBox(height: 4),
+                        TextField(
+                          controller: goal,
+                          maxLines: 2,
+                          maxLength: 2000,
+                          decoration: const InputDecoration(
+                            labelText: '做到什么程度算完成',
+                            hintText: '可以检验的结果，例如：输出一份可复现的 CSV',
                           ),
-                          selected: length == m,
-                          onSelected: (_) => setDialog(() => length = m),
                         ),
+                        label('归到哪一类（可不选）'),
+                        categoryChips(
+                          project,
+                          (value) => setDialog(() => project = value),
+                        ),
+                      ],
                     ],
-                  ),
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilterChip(
-                        label: const Text('固定预约 · 不会被挪动'),
-                        selected: fixed,
-                        onSelected: protected
-                            ? null
-                            : (v) => setDialog(() => fixed = v),
+                    label('何时开始'),
+                    Center(
+                      child: InkDateTimeWheel(
+                        key: const Key('task.when'),
+                        initial: initial,
+                        today: current,
+                        minimum: current,
+                        onChanged: (d, h, m) {
+                          day = d;
+                          hour = h;
+                          minute = m;
+                        },
                       ),
-                      if (existing == null)
-                        FilterChip(
-                          label: const Text('留给吃饭、休息'),
-                          selected: protected,
-                          onSelected: (v) => setDialog(() {
-                            protected = v;
-                            if (protected) fixed = false;
-                          }),
-                        ),
-                    ],
-                  ),
-                  if (error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 14),
-                      child: Text(error!, style: TextStyle(color: p.accent)),
                     ),
-                ],
+                    label('留多久'),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final m in {...durations, length}.toList()..sort())
+                          ChoiceChip(
+                            label: Text(
+                              m < 60 || m % 60 != 0
+                                  ? m >= 60
+                                        ? '${m ~/ 60} 小时 ${m % 60} 分'
+                                        : '$m 分钟'
+                                  : '${m ~/ 60} 小时',
+                            ),
+                            selected: length == m,
+                            onSelected: (_) => setDialog(() => length = m),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilterChip(
+                          label: const Text('固定预约 · 不会被挪动'),
+                          selected: fixed,
+                          onSelected: protected
+                              ? null
+                              : (v) => setDialog(() => fixed = v),
+                        ),
+                        if (existing == null)
+                          FilterChip(
+                            label: const Text('留给吃饭、休息'),
+                            selected: protected,
+                            onSelected: (v) => setDialog(() {
+                              protected = v;
+                              if (protected) fixed = false;
+                            }),
+                          ),
+                      ],
+                    ),
+                    if (error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 14),
+                        child: Text(error!, style: TextStyle(color: p.accent)),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
