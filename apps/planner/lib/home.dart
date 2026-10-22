@@ -241,19 +241,21 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
 
   void _openReminder() {
     final reminders = widget.reminders;
-    if (!mounted ||
-        reminders == null ||
-        reminders.openSerial == _lastReminderSerial ||
-        reminders.lastOpen == null) {
+    if (!mounted || reminders == null) return;
+    final payload = reminders.lastOpen;
+    final fresh = reminders.openSerial != _lastReminderSerial && payload != null;
+    if (!fresh) {
+      // 没有新提醒时也要重建：提醒开关和状态文字都读自 reminders，
+      // 不重建的话点了开关看起来“没反应”（值其实已经变了）。
+      setState(() {});
       return;
     }
-    final payload = reminders.lastOpen!;
     final block = c.blocks
         .where((b) => b['id'] == payload['block_id'])
         .firstOrNull;
-    if (payload['block_id'] != null && block == null) return;
-    _lastReminderSerial = reminders.openSerial;
-    update(() {
+    if (payload['block_id'] == null || block != null) {
+      _lastReminderSerial = reminders.openSerial;
+      update(() {
       page = payload['page'] == 'tasks'
           ? 2
           : payload['page'] == 'review'
@@ -267,7 +269,10 @@ class _PlannerHomeState extends State<PlannerHome> with WidgetsBindingObserver {
       if (payload['date'] != null) {
         selectedDay = DateTime.tryParse(payload['date']) ?? selectedDay;
       }
-    });
+      });
+      return;
+    }
+    setState(() {});
   }
 
   void message(Object error) {

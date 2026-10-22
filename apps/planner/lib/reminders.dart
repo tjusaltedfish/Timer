@@ -365,6 +365,10 @@ class ReminderService extends ChangeNotifier {
     enabled = await driver.requestPermission();
     await controller.storage.write('reminders_enabled', enabled.toString());
     await refresh(force: true);
+    if (!enabled) {
+      status = '系统没允许通知。到手机设置里给「瞬时」打开通知权限，再回来打开这个开关。';
+      _notify();
+    }
   }
 
   Future<void> disable() async {

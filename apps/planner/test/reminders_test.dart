@@ -1,5 +1,7 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest.dart' as data;
+import 'package:time_planner/app.dart';
 import 'package:time_planner/controller.dart';
 import 'package:time_planner/reminders.dart';
 
@@ -232,9 +234,56 @@ void main() {
     expect(reminders.any((r) => r.key == 'session:s:followup'), isTrue);
     expect((state['blocks'] as List).first['status'], 'scheduled');
   });
+
+  test('系统拒绝通知权限时，提示要把原因说清楚', () async {
+    final c = PlannerController(storage: MemoryStore());
+    await c.initialize();
+    final driver = FakeDriver()..allowPermission = false;
+    final service = ReminderService(
+      controller: c,
+      driver: driver,
+      clock: () => now,
+    );
+    await service.initialize();
+    await service.enable();
+    expect(service.enabled, isFalse);
+    expect(service.status, contains('通知权限'));
+    service.dispose();
+    c.dispose();
+  });
+
+  testWidgets('提醒开关点一下，界面要跟着变（手机上曾经看着“点不动”）', (tester) async {
+    final c = PlannerController(storage: MemoryStore());
+    await c.initialize();
+    final driver = FakeDriver();
+    final service = ReminderService(
+      controller: c,
+      driver: driver,
+      clock: () => now,
+    );
+    await service.initialize();
+    await tester.pumpWidget(PlannerApp(controller: c, reminders: service));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pumpAndSettle();
+    final toggle = find.byType(SwitchListTile).first;
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(service.enabled, isTrue);
+    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+    expect(find.text(service.status), findsOneWidget);
+    service.dispose();
+    c.dispose();
+  });
+
+
 }
 
 class FakeDriver implements ReminderDriver {
+  bool allowPermission = true;
   final pending = <int, ReminderItem>{};
   final active = <int>{};
   final cancelled = <int>[];
@@ -249,7 +298,7 @@ class FakeDriver implements ReminderDriver {
   @override
   Future<bool> allowed() async => true;
   @override
-  Future<bool> requestPermission() async => true;
+  Future<bool> requestPermission() async => allowPermission;
   @override
   Future<void> requestExactPermission() async {}
   @override
