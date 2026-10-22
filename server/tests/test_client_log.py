@@ -43,3 +43,12 @@ def test_client_log_ignores_junk_without_failing(tmp_path):
     assert response.status_code == 200
     entry = json.loads((tmp_path / "client_errors.log").read_text(encoding="utf-8").splitlines()[-1])
     assert "source" not in entry
+
+def test_timing_lines_are_jsonl_and_never_break(tmp_path):
+    from app import timings
+
+    timings.record(tmp_path, "assistant.turn", user="abc", ms=1234, drafts=2, image=True)
+    timings.record(tmp_path, "wechat.handle", user="def", inbox="m1", ms=90, status="done")
+    lines = [json.loads(line) for line in (tmp_path / "channel_timings.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [line["event"] for line in lines] == ["assistant.turn", "wechat.handle"]
+    assert lines[0]["drafts"] == 2 and lines[1]["ms"] == 90

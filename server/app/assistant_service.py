@@ -1,6 +1,7 @@
 """Assistant conversation and draft confirmation shared by the app API and WeChat."""
 import base64
 import json
+import time
 import re
 from copy import deepcopy
 from datetime import timedelta
@@ -9,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
-from . import assistant
+from . import assistant, timings
 from .domain import DomainError, apply, identifier, stamp, parse
 from .maintenance import expire_due
 from .models import Operation
@@ -184,6 +185,7 @@ class AssistantService:
                     {"role": "system", "content": context},
                     *({"role": row["role"], "content": stamped(row)} for row in reversed(history)),
                     self._turn(text, image)]
+        started = time.monotonic()
         calls = 1
         try:
             raw = await assistant.complete(conf, key, messages, transport=self.transport())
@@ -216,6 +218,9 @@ class AssistantService:
                 reply = assistant.parse_reply(raw)
             except (ValueError, ValidationError):
                 reply = assistant.ModelReply(reply="刚才没接住，你再说一遍？")
+        timings.record(self.store.directory, "assistant.turn", user=(user_id or "")[:8],
+                       ms=int((time.monotonic() - started) * 1000), calls=calls,
+                       drafts=len(reply.drafts), image=bool(image))
         state = self.store.state(user_id=user_id)
         drafts, notes = assistant.resolve_drafts(reply, state, refs, self.clock(), requested_at=now)
         usable = []

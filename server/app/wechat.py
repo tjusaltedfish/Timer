@@ -21,12 +21,14 @@ import logging
 import re
 import secrets
 import string
+import time
 import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timedelta, timezone
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from . import timings
 from .channel_identity import IdentityStore
 from .chat_commands import HELP, ChatCommands, split_text
 from .domain import DomainError, identifier, parse, stamp
@@ -441,6 +443,7 @@ class WeChatChannel:
                 await self._process_row(user_id, row)
 
     async def _process_row(self, user_id, row):
+        started = time.monotonic()
         with self.store.connect() as conn:
             conn.execute("UPDATE wechat_inbox SET status='processing' WHERE id=?", (row["id"],))
         try:
@@ -449,6 +452,8 @@ class WeChatChannel:
         except Exception as error:  # noqa: BLE001 - keep the queue moving, keep the evidence
             log.exception("WeChat message handling failed")
             reply, status = "这条消息处理出错了，已记下，稍后再试一次？", f"failed:{type(error).__name__}"
+        timings.record(self.store.directory, "wechat.handle", user=(user_id or "")[:8],
+                       inbox=row["id"], ms=int((time.monotonic() - started) * 1000), status=status[:30])
         with self.store.connect() as conn:
             conn.execute("UPDATE wechat_inbox SET status=? WHERE id=?", (status[:60], row["id"]))
             self._enqueue(conn, row["openid"], reply, self.clock(), key=f"reply:{row['id']}")

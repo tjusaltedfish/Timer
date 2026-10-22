@@ -18,13 +18,14 @@ import logging
 import re
 import secrets
 import string
+import time
 from datetime import timedelta
 from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import memes
+from . import memes, timings
 from .channel_identity import IdentityStore
 from .chat_commands import HELP, ChatCommands, split_text
 from .domain import DomainError, identifier, parse, stamp
@@ -656,6 +657,7 @@ class QQChannel:
                 await self._process_row(user_id, row)
 
     async def _process_row(self, user_id, row):
+        started = time.monotonic()
         with self.store.connect() as conn:
             conn.execute("UPDATE qq_inbox SET status='processing' WHERE id=?", (row["id"],))
         image, refused = None, ""
@@ -673,6 +675,8 @@ class QQChannel:
             except Exception as error:  # noqa: BLE001 - 队列不能停，证据要留下
                 log.exception("QQ message handling failed")
                 reply, meme, status = "这条消息处理出错了，已记下，稍后再试一次？", "", f"failed:{type(error).__name__}"
+        timings.record(self.store.directory, "qq.handle", user=(user_id or "")[:8],
+                       inbox=row["id"], ms=int((time.monotonic() - started) * 1000), status=status[:30])
         with self.store.connect() as conn:
             conn.execute("UPDATE qq_inbox SET status=? WHERE id=?", (status[:60], row["id"]))
             self._enqueue(conn, row["openid"], reply, self.clock(), key=f"reply:{row['id']}",
