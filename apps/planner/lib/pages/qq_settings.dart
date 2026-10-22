@@ -14,12 +14,23 @@ class _QqSettingsState extends State<QqSettingsPanel> {
   Json? config;
   List<Json> outbox = [];
   Json? bindCode;
+  List<Json> bindings = [];
   String? note;
   bool busy = false, loaded = false;
   PlannerController get c => widget.controller;
   bool get desktop => c.state['device']?['role'] == 'desktop';
   // QQ 机器人的凭据同样是站长在电脑上配的。
   bool get owner => (c.state['user']?['role'] ?? 'admin') == 'admin';
+
+  /// 当前账号自己绑定的那条 QQ（人人都有，不只是站长）。
+  Json? get mine {
+    for (final item in bindings) {
+      if (item['channel'] == 'qq') return item;
+    }
+    return null;
+  }
+
+  bool get boundMine => mine != null;
 
   static const statusLabels = {
     'queued': '排队中',
@@ -57,16 +68,33 @@ class _QqSettingsState extends State<QqSettingsPanel> {
       return;
     }
     if (!owner) {
-      setState(() => loaded = true);
+      try {
+        final linked = await c.channelBindings();
+        if (mounted) {
+          setState(() {
+            bindings = linked;
+            loaded = true;
+          });
+        }
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            note = error.toString();
+            loaded = true;
+          });
+        }
+      }
       return;
     }
     try {
       final value = await c.qqConfig();
       final messages = desktop ? await c.qqOutbox() : <Json>[];
+      final linked = await c.channelBindings();
       if (mounted) {
         setState(() {
           _fill(value);
           outbox = messages;
+          bindings = linked;
         });
       }
     } catch (error) {
@@ -96,6 +124,31 @@ class _QqSettingsState extends State<QqSettingsPanel> {
     return value == null ? '' : '${value.month}月${value.day}日 ${hm(value)}';
   }
 
+  Future<void> _refreshMine() async {
+    final linked = await c.channelBindings();
+    if (mounted) setState(() => bindings = linked);
+  }
+
+  Future<void> _newCodeMine() => _run(() async {
+    final value = await c.channelBindCode('qq');
+    final linked = await c.channelBindings();
+    if (!mounted) return;
+    setState(() {
+      bindCode = value;
+      bindings = linked;
+    });
+  });
+
+  Future<void> _unbindMine() => _run(() async {
+    await c.channelUnbind('qq');
+    final linked = await c.channelBindings();
+    if (!mounted) return;
+    setState(() {
+      bindings = linked;
+      bindCode = null;
+    });
+  });
+
   Future<void> _save() => _run(() async {
     await c.saveQqConfig({
       'app_id': appId.text.trim(),
@@ -122,24 +175,6 @@ class _QqSettingsState extends State<QqSettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (!owner) {
-      return SizedBox(
-        width: double.infinity,
-        child: InkCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('QQ 助手（聊天入口）', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Text(
-                'QQ 机器人由站长在电脑上配置。你可以在「微信」里绑定自己的微信并使用助手。',
-                style: theme.textTheme.bodySmall,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
     final ready = config?['configured'] == true;
     final bound = config?['bound'] == true;
     final hint = '${config?['secret_hint'] ?? ''}';
@@ -159,7 +194,9 @@ class _QqSettingsState extends State<QqSettingsPanel> {
             ),
             const SizedBox(height: 8),
             Text(
-              '在 QQ 开放平台创建机器人后，把 AppID 和 AppSecret 填到这里。绑定后就能在 QQ 里跟助手说话，日程提醒也会发到 QQ。',
+              owner
+                  ? '在 QQ 开放平台创建机器人后，把 AppID 和 AppSecret 填到这里。绑定后就能在 QQ 里跟助手说话，日程提醒也会发到 QQ。'
+                  : '机器人由站长配置好了。这里只负责绑定你自己的 QQ，绑定后在 QQ 里就能安排日程。',
               style: theme.textTheme.bodySmall,
             ),
             if (!c.configured)
@@ -349,18 +386,79 @@ class _QqSettingsState extends State<QqSettingsPanel> {
                     ),
                   ),
             ],
-            if (c.configured && loaded && !desktop) ...[
-              const SizedBox(height: 12),
+            if (c.configured && loaded && !owner) ...[
+              const SizedBox(height: 16),
               Text(
-                !ready
-                    ? '还没在电脑上填 AppID 和 AppSecret。'
-                    : bound
-                    ? '已绑定 ${config?['bound_hint'] ?? ''}，在 QQ 里就能安排日程。'
-                    : '机器人在电脑上填好了，还差在 QQ 里绑定。',
-                style: theme.textTheme.bodySmall,
+                '绑定你的 QQ',
+                key: const Key('qq.tutorial'),
+                style: theme.textTheme.titleSmall,
               ),
-              const SizedBox(height: 4),
-              Text('凭据和发送队列只能在电脑端查看和修改。', style: theme.textTheme.bodySmall),
+              const SizedBox(height: 6),
+              for (final (i, step) in const [
+                '在 QQ 里搜到站长给你的机器人，或从开放平台的「扫码聊天」进入对话',
+                '点下面「生成绑定码」，记下 6 位数字',
+                '在机器人的对话里把这 6 位数字发出去',
+                '收到「绑定好了」就完成；之后在 QQ 里发消息，就是跟你的助手说话',
+              ].indexed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${i + 1}. $step',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton(
+                    key: const Key('qq.bind-mine'),
+                    onPressed: busy ? null : _newCodeMine,
+                    child: Text(boundMine ? '换一个绑定码' : '生成绑定码'),
+                  ),
+                  OutlinedButton(
+                    key: const Key('qq.refresh'),
+                    onPressed: busy ? null : () => _run(_refreshMine),
+                    child: const Text('刷新状态'),
+                  ),
+                  if (boundMine)
+                    TextButton(
+                      key: const Key('qq.unbind-mine'),
+                      onPressed: busy ? null : _unbindMine,
+                      child: const Text('解除绑定'),
+                    ),
+                ],
+              ),
+              if (bindCode != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 14),
+                  child: Material(
+                    color: context.inkPalette.wash,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SelectableText(
+                            '${bindCode!['code'] ?? ''}',
+                            style: const TextStyle(
+                              fontFamily: 'WenKai',
+                              fontSize: 30,
+                              letterSpacing: 6,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '把这个 6 位数字发到机器人对话里，10 分钟内有效。',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
             if (note != null)
               Padding(

@@ -193,4 +193,59 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
+
+  testWidgets('member binds their own QQ without touching owner settings', (
+    tester,
+  ) async {
+    tzdata.initializeTimeZones();
+    tester.view.physicalSize = const Size(1280, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var ownerCalls = 0;
+    final snapshot = {
+      ...blankState(),
+      'device': {'id': 'phone', 'role': 'mobile'},
+      'user': {'id': 'u2', 'username': 'shidi', 'role': 'member'},
+    };
+    final c = PlannerController(
+      storage: MemoryStore(),
+      transport: MockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/qq/config') ownerCalls++;
+        final body = switch (path) {
+          '/api/v1/snapshot' => snapshot,
+          '/api/v1/assistant/config' => {'configured': false, 'key_hint': ''},
+          '/api/v1/channels/bindings' => {'items': <Json>[]},
+          '/api/v1/channels/qq/bind-code' => {
+            'code': '573911',
+            'channel': 'qq',
+            'expires_at': '2026-10-19T16:10:00Z',
+          },
+          '/api/v1/app/latest' => {'version': '1.2.15+25'},
+          _ => {},
+        };
+        return http.Response(
+          jsonEncode(body),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+    await c.initialize();
+    await c.connect('http://127.0.0.1:8787', 'phone-token');
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('设置').first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('qq.tutorial')), findsOneWidget);
+    expect(find.textContaining('只对主账号开放'), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('qq.bind-mine')));
+    await tester.tap(find.byKey(const Key('qq.bind-mine')));
+    await tester.pumpAndSettle();
+    expect(find.text('573911'), findsOneWidget);
+    expect(ownerCalls, 0);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
 }
