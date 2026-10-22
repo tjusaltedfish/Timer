@@ -14,6 +14,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import db as schema
 
@@ -38,12 +39,15 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def initial_state():
+DEFAULT_TIMEZONE = "America/Los_Angeles"
+
+
+def initial_state(timezone_name: str = DEFAULT_TIMEZONE):
     return {
         "revision": 0,
         # Categories are the user's own; nothing is pre-filled.
         "projects": [], "sleeps": [],
-        "settings": {"timezone": "America/Los_Angeles", "day_start": "09:00", "day_end": "22:00", "daily_review_time": "21:30", "auto_adjust": True},
+        "settings": {"timezone": timezone_name, "day_start": "09:00", "day_end": "22:00", "daily_review_time": "21:30", "auto_adjust": True},
         "tasks": [], "blocks": [], "sessions": [], "feedbacks": [],
         "waiting_checks": [], "reviews": [], "proposals": [], "jobs": [],
     }
@@ -80,8 +84,8 @@ class Store:
             conn.execute("UPDATE devices SET user_id=? WHERE user_id IS NULL", (self.owner_id,))
 
     @staticmethod
-    def initial_state():
-        return initial_state()
+    def initial_state(timezone_name: str = DEFAULT_TIMEZONE):
+        return initial_state(timezone_name)
 
     @staticmethod
     def _bootstrap_owner(conn) -> str:
@@ -119,6 +123,23 @@ class Store:
         )
         return owner_id
 
+    @staticmethod
+    def _timezone_of(conn, user_id) -> str:
+        """The zone a brand-new account's document starts in.
+
+        The account row holds the zone chosen when the account was created (or
+        edited in the profile); a fresh document must use it, otherwise a
+        member's day boundaries (09:00–22:00) would silently be computed in the
+        server's own zone.
+        """
+        row = conn.execute("SELECT timezone FROM users WHERE id=?", (user_id,)).fetchone()
+        zone = (row["timezone"] if row is not None else "") or ""
+        try:
+            ZoneInfo(zone)
+        except Exception:
+            return DEFAULT_TIMEZONE
+        return zone
+
     @contextmanager
     def connect(self):
         conn = sqlite3.connect(self.path, timeout=15)
@@ -144,7 +165,7 @@ class Store:
             if user_id == self.owner_id:
                 # v1 rows migrated before user_state existed; fall back rather than 500.
                 return json.loads(conn.execute("SELECT body FROM document WHERE id=1").fetchone()[0])
-            state = initial_state()
+            state = initial_state(self._timezone_of(conn, user_id))
             body = encode(state)
             conn.execute(
                 "INSERT OR IGNORE INTO user_state(user_id, body, revision, size_bytes, updated_at)"

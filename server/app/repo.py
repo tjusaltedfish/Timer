@@ -22,9 +22,7 @@ class Repository:
     def read(self, conn, user_id: str) -> dict:
         row = conn.execute("SELECT body FROM user_state WHERE user_id = ?", (user_id,)).fetchone()
         if row is None:  # repaired on the fly instead of failing the request
-            state = self.store.initial_state()
-            self.write(conn, user_id, state)
-            return state
+            return self.store.state(conn, user_id)
         return json.loads(row["body"])
 
     def write(self, conn, user_id: str, state: dict, now: datetime | None = None) -> None:

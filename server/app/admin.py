@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                 timezone_name=args.timezone,
                 role=args.role,
             )
-            store.save(conn, store.initial_state(), user["id"])
+            store.save(conn, store.initial_state(user["timezone"]), user["id"])
             print(f"已创建 {user['username']}（{user['display_name']}，{user['role']}），"
                   f"时区 {user['timezone']}。")
         elif args.action == "reset-password":

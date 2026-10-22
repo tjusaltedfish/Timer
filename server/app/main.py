@@ -194,6 +194,19 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                 timezone_name=data.timezone,
                 onboarding=data.onboarding,
             )
+            # The document carries its own copy of the zone (it decides day
+            # boundaries and DST arithmetic), so changing the profile has to
+            # keep it in step too.
+            if data.timezone and data.timezone == user["timezone"]:
+                state = store.state(conn, device["user_id"])
+                if state["settings"].get("timezone") != data.timezone:
+                    state["settings"]["timezone"] = data.timezone
+                    state["revision"] += 1
+                    store.save(conn, state, device["user_id"])
+                    store.record_event(
+                        conn, device["user_id"], state["revision"], device["id"],
+                        "settings.update", {"timezone": data.timezone},
+                    )
         return {"user": user}
 
     @app.post("/api/v1/me/password")

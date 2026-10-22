@@ -21,10 +21,13 @@ def client(app):
         yield value
 
 
-def make_user(app, username="shidi", password=PASSWORD):
+def make_user(app, username="shidi", password=PASSWORD, timezone="Asia/Shanghai"):
     with app.state.store.connect() as conn:
-        user = auth.create_user(conn, username=username, password=password, display_name=username)
-        app.state.store.save(conn, app.state.store.initial_state(), user["id"])
+        user = auth.create_user(
+            conn, username=username, password=password, display_name=username,
+            timezone_name=timezone,
+        )
+        app.state.store.save(conn, app.state.store.initial_state(user["timezone"]), user["id"])
     return user
 
 
@@ -128,3 +131,22 @@ def test_member_data_survives_a_restart(tmp_path):
     with TestClient(restarted) as client:
         snapshot = client.get("/api/v1/snapshot", headers=bearer(token)).json()
         assert [task["title"] for task in snapshot["tasks"]] == ["重启也要在"]
+
+
+def test_new_member_starts_in_their_own_timezone(app, client):
+    make_user(app, timezone="Asia/Shanghai")
+    token = login(client, "shidi")
+    snapshot = client.get("/api/v1/snapshot", headers=bearer(token)).json()
+    assert snapshot["settings"]["timezone"] == "Asia/Shanghai"
+
+
+def test_profile_timezone_change_reaches_the_document(app, client):
+    make_user(app)
+    token = login(client, "shidi")
+    before = client.get("/api/v1/snapshot", headers=bearer(token)).json()
+    response = client.patch("/api/v1/me", json={"timezone": "Asia/Tokyo"}, headers=bearer(token))
+    assert response.status_code == 200
+    assert response.json()["user"]["timezone"] == "Asia/Tokyo"
+    after = client.get("/api/v1/snapshot", headers=bearer(token)).json()
+    assert after["settings"]["timezone"] == "Asia/Tokyo"
+    assert after["revision"] == before["revision"] + 1
