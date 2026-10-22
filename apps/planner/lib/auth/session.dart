@@ -43,6 +43,25 @@ class AuthSession {
   String? get displayName =>
       user?['display_name'] as String? ?? user?['username'] as String?;
 
+  /// Public hosts must speak https: Cloudflare answers `http://` with a 301 and
+  /// a redirected POST loses its body, which the app shows as 「连不上服务器」.
+  /// Local/LAN addresses are kept as typed so http debugging still works.
+  static String normalizeBaseUrl(String raw) {
+    final url = raw.trim();
+    if (!url.startsWith('http://')) return url;
+    final host = Uri.tryParse(url)?.host ?? '';
+    final private = host.startsWith('192.168.') ||
+        host.startsWith('10.') ||
+        RegExp(r'^172\.(1[6-9]|2\d|3[01])\.').hasMatch(host);
+    if (host == '127.0.0.1' ||
+        host == 'localhost' ||
+        host == '::1' ||
+        private) {
+      return url;
+    }
+    return 'https://${url.substring('http://'.length)}';
+  }
+
   /// Loads the last address/user plus the token from secure storage.
   Future<void> restore() async {
     final raw = await storage.read(_recordKey);
@@ -51,7 +70,7 @@ class AuthSession {
         final value = jsonDecode(raw) as Json;
         final storedUrl = value['base_url'] as String?;
         if (storedUrl != null && storedUrl.trim().isNotEmpty) {
-          baseUrl = storedUrl.trim();
+          baseUrl = normalizeBaseUrl(storedUrl);
         }
         user = value['user'] as Json?;
         device = value['device'] as Json?;
@@ -65,8 +84,9 @@ class AuthSession {
 
   /// Signs in and persists the token together with its server address.
   Future<void> login(String url, String username, String password) async {
+    final target = normalizeBaseUrl(url);
     final value = await _send(
-      url,
+      target,
       'POST',
       '/api/v1/auth/login',
       {
@@ -75,7 +95,7 @@ class AuthSession {
         'device': {'name': '瞬时客户端', 'platform': _platform()},
       },
     );
-    await _adoptCredentials(url, value);
+    await _adoptCredentials(target, value);
   }
 
   /// Creates a fresh account on a server whose owner opened sign-ups, then
@@ -86,13 +106,14 @@ class AuthSession {
     String password, {
     String displayName = '',
   }) async {
-    final value = await _send(url, 'POST', '/api/v1/auth/register', {
+    final target = normalizeBaseUrl(url);
+    final value = await _send(target, 'POST', '/api/v1/auth/register', {
       'username': username,
       'password': password,
       'display_name': displayName,
       'device': {'name': '瞬时客户端', 'platform': _platform()},
     });
-    await _adoptCredentials(url, value);
+    await _adoptCredentials(target, value);
   }
 
   Future<void> _adoptCredentials(String url, Json value) async {
