@@ -1,5 +1,13 @@
 # 当前状态
 
+## v2 多用户 P4：发布 1.2.0+10（2026-10-22）
+
+- 版本：`apps/planner/pubspec.yaml` 由 `1.1.1+9` 升到 `1.2.0+10`（版本号是升级判断的唯一依据）。
+- 手机包：v2 客户端（登录页 / 首次引导 / 手机周视图三段式）用 `tools/build-android.ps1 -Mode debug` 打出 arm64 包，通过 `app.releases publish` 的等价动作发布到 `<data>/releases/timer-1.2.0-10.apk`（97,163,935 字节，sha256 `354034d…2cb740`），`latest.json` 指向它；后端重启后 `/health` 与 `/api/v1/app/latest` 都报 `1.2.0+10`。
+- 验证（真实跑过）：公网 `POST /api/v1/auth/login`（`me`）返回 200 与设备 token；带 token 的 `GET /api/v1/app/latest` 返回 `1.2.0+10`，`GET /api/v1/app/download` 200、下载 97,163,935 字节与 sha256 一致。
+- 未做：Windows 桌面客户端仍是旧版（窗口开着，未重装 v2）；给第二个账号（师弟）建号与真实绑定联调；公众号测试号最多 20 个关注者，需他先关注再绑定。
+- 注意：发布目录与 `latest.json` 在数据目录，不进 Git；正式签名尚未配置，当前是 debug 包（个人自用可接受，正式分发前需配置签名）。
+
 日期：2026-10-22。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
 
 ## v2 多用户 P2：材料、复盘与周报按用户（2026-10-22）
