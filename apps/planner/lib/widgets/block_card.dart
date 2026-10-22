@@ -176,7 +176,7 @@ extension _BlockCard on _PlannerHomeState {
   void activateBlock(Json block) {
     final s = session(block['id']);
     if (s?['state'] == 'awaiting_feedback') {
-      feedbackDialog(block);
+      feedbackDialog(block, followUp: true);
     } else if (s == null &&
         block['status'] == 'scheduled' &&
         task(block['task_id'])?['state'] == 'ready') {
@@ -206,7 +206,7 @@ extension _BlockCard on _PlannerHomeState {
             key: const Key('action.end'),
             onPressed: () => attempt(() async {
               await c.controlSession(s!, 'end');
-              if (mounted) await feedbackDialog(block);
+              if (mounted) await feedbackDialog(block, followUp: true);
             }),
             child: const Text('结束并反馈'),
           ),
@@ -221,7 +221,7 @@ extension _BlockCard on _PlannerHomeState {
         children: [
           FilledButton(
             key: const Key('action.inquiry'),
-            onPressed: () => feedbackDialog(block),
+            onPressed: () => feedbackDialog(block, followUp: true),
             child: const Text('这一段，进展如何？'),
           ),
           if (c.canExtendSession(s!)) ...extensionActions(s),
@@ -246,6 +246,12 @@ extension _BlockCard on _PlannerHomeState {
             FilledButton(
               onPressed: () => feedbackDialog(block),
               child: const Text('补记这一段的结果'),
+            ),
+          if (!DateTime.parse(block['end_at']).isAfter(c.nowUtc))
+            OutlinedButton(
+              key: const Key('action.reschedule'),
+              onPressed: () => rescheduleDialog(block),
+              child: const Text('挪到之后'),
             ),
           TextButton(
             onPressed: () => attempt(
@@ -275,7 +281,260 @@ extension _BlockCard on _PlannerHomeState {
         }),
         child: Text('再给我 $minutes 分钟'),
       ),
+    TextButton(
+      key: const Key('action.extend.custom'),
+      onPressed: () => extendDialog(s),
+      child: const Text('自定义…'),
+    ),
   ];
+
+  /// 5–120 分钟，默认 25；确认后与快捷续时走同一条 `session.extend`。
+  Future<void> extendDialog(Json s) async {
+    var minutes = 25;
+    final chosen = await showOwnedDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialog) => AlertDialog(
+          title: const Text('再给自己多久？'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              InkWheel(
+                key: const Key('extend.wheel'),
+                count: 24,
+                index: minutes ~/ 5 - 1,
+                looping: false,
+                width: 140,
+                semanticLabel: '续时时长',
+                label: (i) => '${(i + 1) * 5} 分钟',
+                onChanged: (i) => setDialog(() => minutes = (i + 1) * 5),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              key: const Key('extend.confirm'),
+              onPressed: () => Navigator.pop(dialogContext, minutes),
+              child: Text('加 $minutes 分钟'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    await attempt(() async {
+      await c.extendSession(s, chosen);
+      if (!c.connected) message('已增加 $chosen 分钟。后续安排将在同步后检查。');
+    });
+  }
+
+  /// 已过点却没开始的段：把原定这一整段挪到之后，时长不变。
+  Future<void> rescheduleDialog(Json block) async {
+    final opened = now;
+    final wallNow = DateTime(
+      opened.year,
+      opened.month,
+      opened.day,
+      opened.hour,
+      opened.minute,
+      opened.second,
+    );
+    final duration = local(block['end_at']).difference(local(block['start_at']));
+    final tonight = DateTime(opened.year, opened.month, opened.day, 20);
+    final targets = <String, DateTime>{};
+    if (tonight.isAfter(wallNow)) {
+      targets['今晚 20:00'] = tonight;
+    } else {
+      targets['明晚 20:00'] = tonight.add(const Duration(days: 1));
+    }
+    targets['明早 9:00'] = DateTime(
+      opened.year,
+      opened.month,
+      opened.day + 1,
+      9,
+    );
+    var picked = targets.keys.first;
+    var custom = InkDateTimeWheel.ceilTo(
+      opened.add(const Duration(minutes: 30)),
+      5,
+    );
+    DateTime target() => picked == 'custom' ? custom : targets[picked]!;
+    final chosen = await showOwnedDialog<DateTime>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialog) {
+          final at = target();
+          return AlertDialog(
+            title: const Text('把这一段挪到？'),
+            content: SizedBox(
+              width: 380,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '原定 ${hm(local(block['start_at']))}—${hm(local(block['end_at']))}，'
+                      '共 ${duration.inMinutes} 分钟。',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final entry in targets.entries)
+                          ChoiceChip(
+                            key: ValueKey(
+                              entry.key.startsWith('今晚')
+                                  ? 'reschedule.tonight'
+                                  : entry.key.startsWith('明晚')
+                                  ? 'reschedule.tomorrow-evening'
+                                  : 'reschedule.tomorrow',
+                            ),
+                            label: Text(entry.key),
+                            selected: picked == entry.key,
+                            onSelected: (_) =>
+                                setDialog(() => picked = entry.key),
+                          ),
+                        ChoiceChip(
+                          key: const Key('reschedule.custom'),
+                          label: const Text('自己选时间'),
+                          selected: picked == 'custom',
+                          onSelected: (_) => setDialog(() => picked = 'custom'),
+                        ),
+                      ],
+                    ),
+                    if (picked == 'custom')
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: Center(
+                          child: InkDateTimeWheel(
+                            initial: custom,
+                            today: opened,
+                            minimum: opened,
+                            days: 60,
+                            onChanged: (d, h, m) => custom = DateTime(
+                              d.year,
+                              d.month,
+                              d.day,
+                              h,
+                              m,
+                            ),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 14),
+                    Text(
+                      '挪到 ${at.month}月${at.day}日 ${hm(at)}—'
+                      '${hm(at.add(duration))}，共 ${duration.inMinutes} 分钟。',
+                      key: const Key('reschedule.preview'),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                key: const Key('reschedule.confirm'),
+                onPressed: () => Navigator.pop(dialogContext, at),
+                child: const Text('确认挪动'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    await attempt(() async {
+      final at = await resolvePlannedTime(
+        chosen,
+        TimeOfDay(hour: chosen.hour, minute: chosen.minute),
+      );
+      await c.submit('block.move', {
+        'id': block['id'],
+        'version': block['version'],
+        'start_at': at.toUtc().toIso8601String(),
+        'end_at': at.add(duration).toUtc().toIso8601String(),
+        if (block['kind'] != 'flexible') 'allow_fixed': true,
+      });
+      if (mounted) {
+        message('已挪到 ${chosen.month}月${chosen.day}日 ${hm(chosen)}。');
+      }
+    });
+  }
+
+  /// 今天还没开始、排在本段之后的下一段。
+  Json? nextBlockToday(Json block) {
+    final opened = now;
+    final today = tz.TZDateTime(zone, opened.year, opened.month, opened.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final start = DateTime.parse(block['start_at'] as String);
+    final candidates = c.blocks.where((b) {
+      if (b['id'] == block['id'] || b['status'] != 'scheduled') return false;
+      final t = task(b['task_id']);
+      if (t == null || ['done', 'cancelled', 'waiting'].contains(t['state'])) {
+        return false;
+      }
+      final at = local(b['start_at']);
+      return DateTime.parse(b['start_at'] as String).isAfter(start) &&
+          !at.isBefore(today) &&
+          at.isBefore(tomorrow);
+    }).toList()..sort(
+      (a, b) => DateTime.parse(
+        a['start_at'] as String,
+      ).compareTo(DateTime.parse(b['start_at'] as String)),
+    );
+    return candidates.firstOrNull;
+  }
+
+  /// 反馈之后只问一句「接下来干什么」，最多三个按钮。
+  Future<void> nextStepDialog(Json block) async {
+    if (c.activeSession != null) return;
+    final next = nextBlockToday(block);
+    if (next == null || !mounted) return;
+    final at = local(next['start_at']);
+    final action = await showOwnedDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('接下来做点什么？'),
+        content: Text('${hm(at)} 还有「${next['title']}」。'),
+        actions: [
+          TextButton(
+            key: const Key('action.next.dismiss'),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('先这样'),
+          ),
+          TextButton(
+            key: const Key('action.next.break'),
+            onPressed: () => Navigator.pop(dialogContext, 'break'),
+            child: const Text('休息 10 分钟'),
+          ),
+          FilledButton(
+            key: const Key('action.next.start'),
+            onPressed: () => Navigator.pop(dialogContext, 'start'),
+            child: const Text('立刻开始下一段'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == 'start') {
+      await startBlock(next);
+      return;
+    }
+    update(() => selectedBlock = next['id']);
+    message('好，先歇十分钟。${hm(at)} 再开始「${next['title']}」。');
+  }
 
   Future<void> startBlock(Json block) async {
     var mode = 'keep_duration';

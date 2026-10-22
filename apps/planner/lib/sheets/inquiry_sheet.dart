@@ -1,7 +1,7 @@
 part of '../home.dart';
 
 extension _InquirySheet on _PlannerHomeState {
-  Future<void> feedbackDialog(Json block) async {
+  Future<void> feedbackDialog(Json block, {bool followUp = false}) async {
     final s = session(block['id']);
     if (s == null) return;
     final text = TextEditingController();
@@ -102,18 +102,18 @@ extension _InquirySheet on _PlannerHomeState {
                               style: Theme.of(context).textTheme.titleSmall,
                             ),
                             const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                for (final m in [15, 30, 45, 60, 90, 120])
-                                  ChoiceChip(
-                                    label: Text('$m 分钟'),
-                                    selected: remaining == m,
-                                    onSelected: (_) =>
-                                        setDialog(() => remaining = m),
-                                  ),
-                              ],
+                            Center(
+                              child: InkWheel(
+                                key: const Key('feedback.remaining-wheel'),
+                                count: 48,
+                                index: remaining ~/ 5 - 1,
+                                looping: false,
+                                width: 140,
+                                semanticLabel: '还需要多久',
+                                label: (i) => '${(i + 1) * 5} 分钟',
+                                onChanged: (i) =>
+                                    setDialog(() => remaining = (i + 1) * 5),
+                              ),
                             ),
                           ],
                           if (choice == 'waiting') ...[
@@ -216,6 +216,7 @@ extension _InquirySheet on _PlannerHomeState {
                         mounted) {
                       await replanDialog(task(block['task_id'])!);
                     }
+                    if (followUp && mounted) await nextStepDialog(block);
                   } catch (value) {
                     if (context.mounted) {
                       setDialog(() => error = value.toString());

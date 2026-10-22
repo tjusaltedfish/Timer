@@ -96,6 +96,39 @@ void _optimistic(Json state, Json operation, {required DateTime now}) {
           : find(tasks, p['task_id'])['title'],
       ...p,
     });
+  } else if (kind == 'block.move') {
+    final block = find(blocks, p['id']);
+    if (block['status'] != 'scheduled' ||
+        sessions.any((s) => s['block_id'] == block['id'])) {
+      throw ApiFailure('已有执行记录，不能改写过去的安排', 409);
+    }
+    if (p['version'] != null && p['version'] != block['version']) {
+      throw ApiFailure('安排已经变化，请同步后重试', 409);
+    }
+    if (['fixed', 'protected'].contains(block['kind']) &&
+        p['allow_fixed'] != true) {
+      throw ApiFailure('固定时段的调整需要单独确认。', 409);
+    }
+    final start = DateTime.parse(p['start_at'] as String),
+        end = DateTime.parse(p['end_at'] as String);
+    if (!end.isAfter(start)) throw ApiFailure('结束时间应晚于开始时间', 422);
+    if (end.difference(start) > const Duration(hours: 24)) {
+      throw ApiFailure('单段安排不能超过 24 小时', 422);
+    }
+    if (blocks.any(
+      (b) =>
+          b['id'] != block['id'] &&
+          b['status'] == 'scheduled' &&
+          start.isBefore(DateTime.parse(b['end_at'])) &&
+          end.isAfter(DateTime.parse(b['start_at'])),
+    )) {
+      throw ApiFailure('与已有安排冲突，请选择其他时间。', 409);
+    }
+    block.addAll({
+      'start_at': p['start_at'],
+      'end_at': p['end_at'],
+      'version': (block['version'] as int) + 1,
+    });
   } else if (kind == 'block.cancel') {
     final block = find(blocks, p['id']);
     if (block['status'] != 'scheduled' ||

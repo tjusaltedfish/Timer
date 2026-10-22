@@ -142,7 +142,7 @@ extension _TodayPage on _PlannerHomeState {
                     final b = c.blocks
                         .where((b) => b['id'] == awaiting.first['block_id'])
                         .firstOrNull;
-                    if (b != null) feedbackDialog(b);
+                    if (b != null) feedbackDialog(b, followUp: true);
                   },
                 ),
               ),
