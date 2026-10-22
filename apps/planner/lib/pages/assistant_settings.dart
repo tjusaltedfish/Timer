@@ -250,6 +250,21 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
                         if (mounted) setState(() => config = saved);
                       }),
               ),
+              SwitchListTile(
+                key: const Key('assistant.vision'),
+                contentPadding: EdgeInsets.zero,
+                value: config?['vision'] == true,
+                title: const Text('这个模型能看图'),
+                subtitle: const Text('关掉时，收到的图片会提醒你打字或换模型，而不是假装看见了。'),
+                onChanged: busy
+                    ? null
+                    : (value) => _run(() async {
+                        final saved = await c.saveAssistantConfig({
+                          'vision': value,
+                        });
+                        if (mounted) setState(() => config = saved);
+                      }),
+              ),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,

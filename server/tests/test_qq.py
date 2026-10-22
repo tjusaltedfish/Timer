@@ -137,7 +137,7 @@ def configure_model(client):
     """让这一条真的走模型：不然只会回「模型服务还没配置好」。"""
     response = client.post("/api/v1/assistant/config", json={
         "base_url": "https://relay.example/v1/", "model": "deepseek-chat",
-        "api_key": "sk-test-key", "confirm_first": True})
+        "api_key": "sk-test-key", "confirm_first": True, "vision": True})
     assert response.status_code == 200, response.text
 
 
@@ -705,3 +705,28 @@ def test_a_chat_message_in_qq_can_actually_change_the_schedule(fake):
     answers = sent_texts(api)
     assert answers and ("已排" in answers[0] or "排上" in answers[0])
     assert answers[0] != "收到。"
+
+def test_a_question_reaches_qq_and_the_answer_comes_back_into_context(fake):
+    """助手的反问必须真的发到 QQ 上；下一句回答要带回模型上下文，别把问题再问一遍。"""
+    client, app, api, gateway, model = fake
+    configure(client)
+    configure_model(client)
+    bind(client, app, msg_id="m-bind")
+    run(client, app)  # 先把「绑定好了」的帮助语发出去，再清空
+    api.sent.clear()
+    model.replies.append({"reply": "晚上想先写论文还是先复习？", "drafts": [],
+                          "question": {"text": "先做哪件？", "options": ["复习算法", "写论文"]}})
+    message(app, content="晚上帮我安排一点事", msg_id="m-q1")
+    run(client, app)
+    sent = sent_texts(api)[0]
+    assert "先做哪件？" in sent
+    assert "1. 复习算法" in sent and "2. 写论文" in sent
+
+    model.replies.append({"reply": "好，从七点开始写论文。", "drafts": []})
+    message(app, content="写论文吧", msg_id="m-q2")
+    run(client, app)
+    body = json.loads(model.requests[1].content)
+    blob = json.dumps(body, ensure_ascii=False)
+    assert "上一轮你问过的问题" in blob
+    assert "先做哪件？" in blob
+    assert "写论文吧" in json.dumps(body["messages"][-1], ensure_ascii=False)

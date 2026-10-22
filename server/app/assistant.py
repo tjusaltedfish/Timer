@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS assistant_pending_questions (id TEXT PRIMARY KEY, use
 RETRY_DELAYS = (0, 1.5, 4.0)
 WEEKDAYS = "一二三四五六日"
 DEFAULTS = {"base_url": "", "model": "", "daily_limit": 200, "timeout_seconds": 45,
-            "confirm_first": False, "persona": "大肥鱼"}
+            "confirm_first": False, "vision": False, "persona": "大肥鱼"}
 PERSONAS = ("大肥鱼", "老师", "朋友", "严格教练")
 
 
@@ -52,6 +52,7 @@ class AssistantConfigIn(Strict):
     daily_limit: int | None = Field(default=None, ge=1, le=5000)
     timeout_seconds: int | None = Field(default=None, ge=5, le=300)
     confirm_first: bool | None = None
+    vision: bool | None = None
     persona: str | None = Field(default=None, max_length=20)
 
     @field_validator("base_url")
@@ -192,17 +193,18 @@ class AssistantConfigStore:
     def _row(self, conn, user_id):
         conn.execute(
             "INSERT OR IGNORE INTO assistant_configs"
-            "(user_id, base_url, model, daily_limit, timeout_seconds, confirm_first, persona, updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?)",
-            (user_id, "", "", DEFAULTS["daily_limit"], DEFAULTS["timeout_seconds"], 0,
+            "(user_id, base_url, model, daily_limit, timeout_seconds, confirm_first, vision, persona, updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (user_id, "", "", DEFAULTS["daily_limit"], DEFAULTS["timeout_seconds"], 0, 0,
              DEFAULTS["persona"], _now()),
         )
         return conn.execute("SELECT * FROM assistant_configs WHERE user_id=?", (user_id,)).fetchone()
 
     def load(self, conn, user_id):
         row = self._row(conn, user_id)
-        conf = {key: (row[key] == 1 if key == "confirm_first" else row[key])
-                for key in ("base_url", "model", "daily_limit", "timeout_seconds", "confirm_first", "persona")}
+        conf = {key: (row[key] == 1 if key in ("confirm_first", "vision") else row[key])
+                for key in ("base_url", "model", "daily_limit", "timeout_seconds", "confirm_first",
+                            "vision", "persona")}
         if not conf["base_url"] and not conf["model"] and user_id == self.store.owner_id:
             # Import the v1 assistant.json exactly once, on first read.
             legacy = self.legacy.load()
@@ -249,21 +251,23 @@ class AssistantConfigStore:
         return {"configured": bool(conf["base_url"] and conf["model"] and key),
                 "base_url": conf["base_url"], "model": conf["model"],
                 "daily_limit": conf["daily_limit"], "used_today": used_today,
-                "confirm_first": bool(conf["confirm_first"]), "persona": conf["persona"],
+                "confirm_first": bool(conf["confirm_first"]), "vision": bool(conf["vision"]),
+                "persona": conf["persona"],
                 "key_source": source,
                 "key_hint": ("····" + key[-4:]) if len(key) >= 8 else ("已设置" if key else "")}
 
     def update(self, conn, user_id, data):
         conf = self.load(conn, user_id)
-        for field in ("base_url", "model", "daily_limit", "timeout_seconds", "confirm_first", "persona"):
+        for field in ("base_url", "model", "daily_limit", "timeout_seconds", "confirm_first",
+                      "vision", "persona"):
             value = getattr(data, field, None)
             if value is not None:
                 conf[field] = value
         conn.execute(
             "UPDATE assistant_configs SET base_url=?, model=?, daily_limit=?, timeout_seconds=?,"
-            " confirm_first=?, persona=?, updated_at=? WHERE user_id=?",
+            " confirm_first=?, vision=?, persona=?, updated_at=? WHERE user_id=?",
             (conf["base_url"], conf["model"], conf["daily_limit"], conf["timeout_seconds"],
-             1 if conf["confirm_first"] else 0, conf["persona"], _now(), user_id),
+             1 if conf["confirm_first"] else 0, 1 if conf["vision"] else 0, conf["persona"], _now(), user_id),
         )
         if data.clear_key:
             self.clear_key(conn, user_id)
@@ -286,6 +290,9 @@ def ensure_schema(conn, owner_id):
         if "user_id" not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
         conn.execute(f"UPDATE {table} SET user_id=? WHERE user_id='' OR user_id IS NULL", (owner_id,))
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(assistant_configs)")}
+    if "vision" not in columns:
+        conn.execute("ALTER TABLE assistant_configs ADD COLUMN vision INTEGER NOT NULL DEFAULT 0")
     conn.execute(
         "INSERT OR IGNORE INTO assistant_usage_by_user(user_id, day, calls)"
         " SELECT ?, day, calls FROM assistant_usage",

@@ -155,6 +155,13 @@ class AssistantService:
                                    "ORDER BY created_at DESC, rowid DESC LIMIT 10",
                                    (user_id, stamp(now - timedelta(minutes=45)))).fetchall()
             waiting_on = pending_question(conn, user_id, now)
+        if image and not conf.get("vision"):
+            return self._exchange(
+                text,
+                "这个模型看不了图（或者还没打开「能看图」）。把图里的关键内容打字发我，"
+                "或者去「设置 · 助手」打开「这个模型能看图」再发一次。",
+                user_id,
+            )
         # Removing a memory must also keep the original memory command out of model context.
         history = [row for row in history if not (row['role'] == 'user' and re.match(r'^(?:请)?(?:记住|忘记)[：:]', row['text']))]
         context, refs = assistant.build_context(state, now)
@@ -178,7 +185,16 @@ class AssistantService:
                     *({"role": row["role"], "content": stamped(row)} for row in reversed(history)),
                     self._turn(text, image)]
         calls = 1
-        raw = await assistant.complete(conf, key, messages, transport=self.transport())
+        try:
+            raw = await assistant.complete(conf, key, messages, transport=self.transport())
+        except DomainError as error:
+            if image:
+                return self._exchange(
+                    text,
+                    f"模型那边没接住这张图（{error.message}）。换个支持看图的模型，或者把图里的内容打字发我。",
+                    user_id,
+                )
+            raise
         try:
             reply = assistant.parse_reply(raw)
         except (ValueError, ValidationError) as error:
