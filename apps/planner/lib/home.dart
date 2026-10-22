@@ -41,6 +41,7 @@ part 'sheets/sleep_sheet.dart';
 part 'pages/tasks_page.dart';
 part 'pages/week_page.dart';
 part 'pages/settings_page.dart';
+part 'pages/account_settings.dart';
 part 'pages/assistant_page.dart';
 part 'pages/assistant_settings.dart';
 part 'pages/wechat_settings.dart';

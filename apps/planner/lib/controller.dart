@@ -10,13 +10,17 @@ import 'package:uuid/uuid.dart';
 part 'operations.dart';
 part 'execution.dart';
 part 'storage.dart';
+part 'auth/session.dart';
 
 typedef Json = Map<String, dynamic>;
 
 class ApiFailure implements Exception {
-  ApiFailure(this.message, this.status);
+  ApiFailure(this.message, this.status, {this.code});
   final String message;
   final int status;
+
+  /// Stable machine code from the v2 error envelope (`{"code","message"}`).
+  final String? code;
   @override
   String toString() => message;
 }
@@ -57,7 +61,7 @@ class PlannerController extends ChangeNotifier {
   Json state = blankState();
   List<Json> pending = [];
   List<Json> preservedConflicts = [];
-  String serverUrl = 'http://127.0.0.1:8787';
+  String serverUrl = AuthSession.defaultBaseUrl;
   String _token = '';
   String? conflict;
   String? connectionError;
@@ -68,6 +72,23 @@ class PlannerController extends ChangeNotifier {
   Timer? _poll;
   Future<void>? _syncFuture;
   Future<void> _saveTail = Future.value();
+
+  /// v2 account session (server address + token + cached user).
+  late final AuthSession auth = AuthSession(
+    storage: storage,
+    transport: transport,
+  );
+
+  /// Whether the startup token check finished (see [bootstrapSession]).
+  bool sessionChecked = false;
+  bool checkingSession = false;
+
+  /// True when [PlannerApp] runs behind the account gate; legacy desktop-token
+  /// mode leaves it false so settings can hide account-only actions.
+  bool requiresLogin = false;
+
+  Json? get user => auth.user;
+  bool get authenticated => auth.authenticated;
 
   List<Json> get tasks => (state['tasks'] as List).cast<Json>();
   List<Json> get blocks => (state['blocks'] as List).cast<Json>();
@@ -96,7 +117,95 @@ class PlannerController extends ChangeNotifier {
       serverUrl = value['server_url'] as String? ?? serverUrl;
       lastSync = DateTime.tryParse(value['last_sync'] as String? ?? '');
     }
-    _token = await storage.readToken() ?? '';
+    await auth.restore();
+    // A v2 login record owns the address; an old cache without one keeps the
+    // legacy desktop address for the desktop-token/pairing path.
+    if (auth.hasRecord) serverUrl = auth.baseUrl;
+    _token = auth.token;
+    // No token means the login page can be shown without a round trip.
+    sessionChecked = _token.isEmpty;
+    _notify();
+  }
+
+  /// Startup token check: `GET /api/v1/me`.
+  ///
+  /// 200 keeps the session, 401 clears the token (login page), and a network
+  /// failure lets the cached offline data in — the old offline behavior stays.
+  Future<void> bootstrapSession() async {
+    if (sessionChecked || checkingSession || _disposed) return;
+    checkingSession = true;
+    _notify();
+    try {
+      if (_token.isEmpty) return;
+      final status = await auth.verify();
+      if (status == SessionStatus.expired) {
+        await _sessionExpired();
+      } else {
+        _token = auth.token;
+      }
+    } finally {
+      checkingSession = false;
+      sessionChecked = true;
+      _notify();
+    }
+    if (configured) unawaited(sync());
+  }
+
+  String normalizeServerUrl(String url) {
+    final uri = Uri.tryParse(url.trim());
+    if (uri == null ||
+        !['http', 'https'].contains(uri.scheme) ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      throw ApiFailure('请输入有效的服务地址', 422);
+    }
+    return url.trim().replaceAll(RegExp(r'/+$'), '');
+  }
+
+  /// Signs in against the v2 server, persists the credential and loads data.
+  Future<Json?> login(String url, String username, String password) async {
+    final normalized = normalizeServerUrl(url);
+    serverUrl = normalized;
+    _token = '';
+    await auth.login(normalized, username.trim(), password);
+    serverUrl = auth.baseUrl;
+    _token = auth.token;
+    connected = false;
+    connectionError = null;
+    conflict = null;
+    await _save();
+    _notify();
+    await sync();
+    return auth.user;
+  }
+
+  /// Revokes the device token (best effort) and returns to the login page.
+  /// Local cached entities and pending operations belong to the signed-in
+  /// account, so they are dropped instead of leaking into the next login.
+  Future<void> logout() async {
+    await auth.logout();
+    await _endLocalSession();
+  }
+
+  /// Changes the server address and forces a fresh login against it.
+  Future<void> changeServer(String url) async {
+    final normalized = normalizeServerUrl(url);
+    serverUrl = normalized;
+    await auth.changeServer(normalized);
+    await _endLocalSession();
+  }
+
+  Future<void> _endLocalSession() async {
+    _token = '';
+    connected = false;
+    connectionError = null;
+    conflict = null;
+    lastSync = null;
+    state = blankState();
+    pending = [];
+    await _save();
     _notify();
   }
 
@@ -108,18 +217,9 @@ class PlannerController extends ChangeNotifier {
   }
 
   Future<void> connect(String url, String token) async {
-    final uri = Uri.tryParse(url.trim());
-    if (uri == null ||
-        !['http', 'https'].contains(uri.scheme) ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty ||
-        uri.hasQuery ||
-        uri.hasFragment) {
-      throw ApiFailure('请输入有效的服务地址', 422);
-    }
-    serverUrl = url.trim().replaceAll(RegExp(r'/+$'), '');
+    serverUrl = normalizeServerUrl(url);
     _token = token.trim();
-    await storage.writeToken(_token);
+    await auth.adopt(serverUrl, _token);
     await _save();
     await sync();
   }
@@ -156,19 +256,44 @@ class PlannerController extends ChangeNotifier {
                 ? transport.get(uri, headers: headers)
                 : transport.post(uri, headers: headers, body: jsonEncode(body)))
             .timeout(timeout);
-    Json value;
+    Json? value;
     try {
       value = jsonDecode(utf8.decode(response.bodyBytes)) as Json;
     } catch (_) {
-      throw ApiFailure('电脑服务返回了无效响应', response.statusCode);
+      value = null;
     }
     if (response.statusCode >= 400) {
+      // A rejected token means the whole account session is gone: clear it so
+      // the app routes back to the login page instead of retrying forever.
+      if (response.statusCode == 401 && authenticated) {
+        await _sessionExpired();
+      }
       throw ApiFailure(
-        value['message'] as String? ?? '操作未完成，请检查输入或连接',
+        value?['message'] as String? ?? '操作未完成，请检查输入或连接',
         response.statusCode,
+        code: value?['code'] as String?,
       );
     }
+    if (value == null) {
+      throw ApiFailure('电脑服务返回了无效响应', response.statusCode);
+    }
     return value;
+  }
+
+  Future<void> _sessionExpired() async {
+    if (_token.isEmpty && !auth.authenticated) return;
+    _token = '';
+    await auth.clear();
+    // Cached entities and queued operations belong to the account that just
+    // lost its token; keeping them would replay them into the next login.
+    connected = false;
+    conflict = null;
+    lastSync = null;
+    state = blankState();
+    pending = [];
+    connectionError = '登录已过期，请重新登录。';
+    await _save();
+    _notify();
   }
 
   /// Streams a large authenticated download (the phone update package).
@@ -180,6 +305,7 @@ class PlannerController extends ChangeNotifier {
         .send(request)
         .timeout(const Duration(seconds: 30));
     if (response.statusCode >= 400) {
+      if (response.statusCode == 401) await _sessionExpired();
       String? message;
       try {
         message =
@@ -287,7 +413,9 @@ class PlannerController extends ChangeNotifier {
       await _save();
     } on ApiFailure catch (error) {
       connected = false;
-      connectionError = error.message;
+      connectionError = error.status == 401
+          ? '登录已过期，请重新登录。'
+          : error.message;
       if ([409, 422, 404].contains(error.status) && pending.isNotEmpty) {
         conflict = error.message;
       }
@@ -371,6 +499,7 @@ class PlannerController extends ChangeNotifier {
         .timeout(const Duration(seconds: 120));
     final result = jsonDecode(utf8.decode(response.bodyBytes)) as Json;
     if (response.statusCode >= 400) {
+      if (response.statusCode == 401) await _sessionExpired();
       throw ApiFailure(result['message'] ?? '材料上传失败', response.statusCode);
     }
     await sync();

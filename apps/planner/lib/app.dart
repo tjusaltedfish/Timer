@@ -4,6 +4,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'controller.dart';
 import 'home.dart';
+import 'pages/auth_gate.dart';
 import 'reminders.dart';
 import 'updates.dart';
 import 'theme/ink_theme.dart';
@@ -14,10 +15,16 @@ class PlannerApp extends StatelessWidget {
     required this.controller,
     this.reminders,
     this.updates,
+    this.requireLogin = false,
   });
   final PlannerController controller;
   final ReminderService? reminders;
   final UpdateService? updates;
+
+  /// When true, an account session is required and the login page is shown
+  /// until [PlannerController.authenticated] holds. Desktop-token/pairing mode
+  /// keeps using the planner directly (default false) for compatibility.
+  final bool requireLogin;
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: '瞬时',
@@ -45,10 +52,16 @@ class PlannerApp extends StatelessWidget {
         child: child!,
       );
     },
-    home: PlannerHome(
-      controller: controller,
-      reminders: reminders,
-      updates: updates,
-    ),
+    home: requireLogin
+        ? AuthGate(
+            controller: controller,
+            reminders: reminders,
+            updates: updates,
+          )
+        : PlannerHome(
+            controller: controller,
+            reminders: reminders,
+            updates: updates,
+          ),
   );
 }

@@ -8,6 +8,8 @@ extension _SettingsPage on _PlannerHomeState {
         children: [
           sleepBar(),
           const SizedBox(height: 12),
+          accountPanel(),
+          const SizedBox(height: 18),
           heading('让手机和电脑接上。', '先保留本地记录，连接恢复后再同步。'),
           panel(
             Column(

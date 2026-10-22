@@ -27,14 +27,19 @@ Future<void> main(List<String> args) async {
     controller: controller,
     platform: createUpdatePlatform(),
   );
+  final token = await readDesktopToken(args);
+  // An explicit desktop token keeps the legacy single-user desktop path; every
+  // other launch goes through the account gate (login page or /me check).
   runApp(
-    PlannerApp(controller: controller, reminders: reminders, updates: updates),
+    PlannerApp(
+      controller: controller,
+      reminders: reminders,
+      updates: updates,
+      requireLogin: token == null,
+    ),
   );
   unawaited(reminders.initialize());
-  final token = await readDesktopToken(args);
   if (token != null) {
     unawaited(controller.connect('http://127.0.0.1:8787', token));
-  } else if (controller.configured) {
-    unawaited(controller.sync());
   }
 }
