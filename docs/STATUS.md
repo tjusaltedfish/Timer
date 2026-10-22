@@ -8,7 +8,15 @@
 - 绑定入口：App「账号」页 POST `/api/v1/channels/wechat/bind-code` 生成 6 位码（`GET /channels/bindings` 查绑定、`DELETE /channels/{channel}/binding` 解绑）。未绑定的微信号发消息只收到「打开瞬时 App → 账号 → 绑定微信」的引导；绑定码发错、过期、被用过都有具体说明；已绑定用户发 6 位码不会被误当成指令。
 - 路由：`wechat.receive` 先按 openid 查用户，再以该用户身份跑 `ChatCommands`（`state(user_id=…)`、助手会话与草稿都按用户隔离）；`run_once` 逐条解析身份，未绑定的消息标记完成、不建助手消息。跨账号隔离测试覆盖：两个微信号各改各的日程、A 的绑定码不能绑到 B、解绑后回落到引导。
 - 验证（真实跑过）：`PLANNER_DATA_DIR=.test-data ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **194 passed**（189 + 5：`test_channel_identity.py`）。原 `test_wechat.py` 三条断言按多人语义更新（陌生人收到引导而非静默、错误码文案、已用码不泄露主账号数据）。
-- 未做：QQ 侧同一套绑定（结构已就位，待 `qq.py` 接 `IdentityStore`）、材料/复盘/周报按用户、真实公众号测试号联调（需 appid/appsecret 与公网回调）。
+- QQ 机器人同样按 openid 路由：`qq.py` 接 `IdentityStore`（6 位码绑定、未绑定收「打开 App → 账号 → 绑定 QQ」引导、旧 `qq.json` 绑定第一次收消息自动归主账号），`run_once` 逐条解析身份后以本人身份跑 `ChatCommands`，解绑时清掉身份记录；`test_qq.py` 38 个用例覆盖绑定/陌生人引导/按用户路由。
+- 未做：材料/复盘/周报按用户、真实公众号联调（2026-10-22 已配好测试号 appid/appsecret，回调签名本地验证通过，待真实发消息确认）、QQ 旧文件码路径的文档化。
+
+## v2 多用户 P3 客户端：手机周视图三段式与首次使用引导（2026-10-22）
+
+- 手机周视图（`<600dp` 走 `MobileWeekView`）：整周 7 列色块总览（一色一事、长按看全名、今天高亮）→ 点某天进单天概览（计划/已投入/完成/中断四个数字 + 紧凑列表）→ 再进详细课表（`WeekCalendar`，缩放 75%–200%，换周回总览）；桌面 `≥600dp` 仍是原整周 hour 网格（`zoom=1.0` 默认路径零改动），`resolvePlannedTime` 的 DST 处理未动。新增 `lib/week/`，`WeekCalendar` 加可选 `zoom` 并导出新 widget。
+- 首次使用引导：`GET /me` 返回 `onboarding` 字段的账号才会出现；先基础设置（显示名、时区、每天开始/结束、助手先问再做/直接执行）→ 10 步高亮教程（遮罩挖洞、下一步/上一步/跳过/进度点，支持重启续播与设置页「重新看教程」）；进度本地优先、`PATCH /api/v1/me` best-effort，断网待恢复后补推。无该字段的老账号视为已完成，不打扰。
+- 验证（真实跑过）：`apps/planner` 下 `flutter analyze` → **No issues found!**；`flutter test` → **103 passed**（88 + 15：`week_mobile_test.dart` 6、`onboarding_test.dart` 9）；`pubspec.lock` 未变。
+- 未做：真机与 Windows 桌面肉眼检查（遮罩圆角/避让、长按手感、360dp 触控）、捏合缩放手势、手机详细课表的单日网格形态、平板中间宽度/横屏/大字体、后端 `PATCH /me` 真实联调（客户端仅 MockClient 验证请求形状）。
 
 ## v2 多用户 P2：每人自己的助手（2026-10-22）
 
