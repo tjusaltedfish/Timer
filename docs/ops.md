@@ -208,20 +208,41 @@ robocopy "$env:USERPROFILE\TimePlanner\backups" "D:\TimerBackups" /E /MIR /R:1 /
 | 公众号保存配置 403 | `secrets\wechat-token` 与页面 Token 是否一致；系统时间 | `w32tm /resync`；改 Token 后重新提交 |
 | 公众号发消息没反应 | 微信 5 秒超时/重试 | 回调必须立即回 `success`；查后端日志 |
 | `restore.ps1` exit 2 | 8765 被占 | 先停后端，确认误报再用 `-Force` |
-| `backup.ps1` exit 1 + `PermissionError` | 解释器写权限（见 §9） | 换 `-Python` 或普通 PowerShell 窗口重跑 |
+| `backup.ps1` exit 1 + `PermissionError` | 解释器写权限（见 §9） | 已自动回退基础解释器；仍失败再显式 `-Python` |
 | 备份打不开 / integrity 失败 | `PRAGMA integrity_check` | 用 `weekly` 或更早备份；保留损坏文件排查 |
 
 ## 9. 本机沙箱注意（AI/托管终端）
 
-这台机器上的托管沙箱按可执行文件路径限制写盘：`server\.venv\Scripts\python.exe` 在 AI 终端里
-只能写仓库目录，写 `%TEMP%`/`%USERPROFILE%` 会报 `PermissionError` 或
+这台机器上的托管沙箱按可执行文件路径限制写盘：`server\.venv\Scripts\python.exe` 只能写仓库目录，
+写 `%TEMP%`/`%USERPROFILE%` 会报 `PermissionError` 或
 `sqlite3.OperationalError: unable to open database file`（`docs/STATUS.md` 有同类记录）。
-计划任务由 Task Scheduler 在用户会话里启动，通常不在 agent 的沙箱内，生产备份按设计不受影响；
-但如果 `backup.log` 出现上述错误，按下一段加 `-Python` 或在普通 PowerShell 窗口重跑即可。
+**实测由 Task Scheduler 启动的计划任务同样受限**（2026-10-22 首次真跑 `TimePlannerBackup` 失败），
+所以 `backup.ps1` 已内置回退：venv 解释器写失败时自动改用 `pyvenv.cfg` 的 `home` 解释器并复用
+venv 的 site-packages，计划任务无需手工 `-Python`。仍失败时再显式 `-Python`（见下）。
 
-手动在沙箱里跑演练时，加 `-Python` 指向 pyvenv 的 base 解释器（`server\.venv\pyvenv.cfg` 的
+手动在沙箱里跑演练时，可直接加 `-Python` 指向 pyvenv 的 base 解释器（`server\.venv\pyvenv.cfg` 的
 `home`，本机实测为 `C:\Users\ASUS\anaconda3\envs\pytorch\python.exe`），即：
 
 ```powershell
 .\tools\host\backup.ps1 -DataDir "$env:TEMP\fake data" -Target "$env:TEMP\fake backups\daily" -Python C:\Users\ASUS\anaconda3\envs\pytorch\python.exe
 ```
+
+## 10. 给新成员开账号（师弟加入）
+
+账号不在 App 里自助注册，主账号用本机命令开号（需要能 `cd` 到 `server`、拿到后端数据目录）：
+
+```powershell
+cd C:\Users\ASUS\Documents\Timer\server
+.\.venv\Scripts\python.exe -m app.admin user add --username shidi --display-name 师弟 --timezone Asia/Shanghai
+# 不给 --password 时会打印一次性随机密码；忘记密码用 reset-password
+.\.venv\Scripts\python.exe -m app.admin user list
+```
+
+对方四步加入：
+
+1. 手机装 App：浏览器打开 `https://timer.studydazi.top/api/v1/app/download`（`/api/v1/app/latest` 给版本号），装好后用开号时给的 `用户名 + 密码` 登录，首次进入会走基础设置（显示名、时区、每天时段）和 10 步引导。
+2. 填自己的模型 key：设置页「助手」→ 填自己的 DeepSeek API key（每人各存各的，服务端只存密文；填之前助手只会回「模型服务还没在电脑上配置好」）。
+3. 关注你的公众号测试号（公众平台测试号页面扫码，最多 20 个关注者），再在 App「账号 · 绑定微信」生成 6 位绑定码，把码发给公众号——收到「绑定好了」即成功；发错/过期会收到说明。
+4. 验收隔离：对方发「今天」只看到自己的空日程；你这边的数据不会变。解绑在「账号 · 绑定微信 → 解绑」。
+
+注意：测试号是订阅号语义，只能 5 秒内被动回复，主动提醒/到点追问受 48 小时客服窗口限制；要完整体验需认证服务号。
