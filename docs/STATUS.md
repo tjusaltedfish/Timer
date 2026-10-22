@@ -1,5 +1,14 @@
 # 当前状态
 
+## v2 P4 修：手机 release 包停在启动页（2026-10-22）
+
+- 症状：`app.releases` 发布的 1.2.1+11 / 1.2.2+12 release 包装到 OPPO（Android 17）后，点开只停在系统启动页或闪退；`dumpsys gfxinfo` 显示 `Total frames rendered: 0`，logcat 里没有任何 Dart 日志；同一份代码的 debug 包能正常进登录页。
+- 根因：`apps/planner/lib/main.dart` 启动链上 `await controller.initialize()`、`readDesktopToken()` 等几步没有兜底——release/AOT 下任一步抛错或挂起，`runApp` 就永不执行，表现出来的就是「启动页卡死」，而且 release 看不到日志，很难定位。
+- 修：启动每一步都 `try/catch` 并打 `[boot]` 检查点（`debugPrint`，debug 包可 `adb logcat | grep boot`），任何一步失败都继续 `runApp`，登录门自己会处理未登录状态；同时挂上 `FlutterError.onError` 与平台 `onError`，避免以后再无声卡死。
+- 版本：`apps/planner/pubspec.yaml` `1.2.2+12` → `1.2.3+13`；release 包重新用 `tools/build-android.ps1 -Mode release` 出（arm64 约 22MB）。
+- 验证（真实跑过）：`adb install -r` 新 release 包到 OPPO 后启动，正常渲染登录页（截图确认）；debug 包启动日志 `[boot] start → desktop window ready → controller ready → token absent → runApp returned` 全通过。
+- 未做：release 下具体是哪一步插件初始化失败没有单独确认（已被兜底，登录页可正常用）；`debugPrint` 在 release 不落 logcat，线上诊断要改成写文件；release 包仍用 debug 签名。
+
 ## v2 P2 补修：审查报告里的两个真 bug + 材料按账号分目录（2026-10-22）
 
 - 客户端同步队列永久卡死（审查报告 P0）：`_synchronize()` 把电脑拒绝的操作留在队头，`onlineRequest` 又要求 `pending` 为空，于是一条 400/403/404/422 的永失败操作会让之后所有操作都同步不了。现在这四类状态视为永久拒绝：摘出队列、记入本地 `preservedConflicts`（`saved_at/operations/reason/status`，最多 20 条）、状态栏提示「『新建待办』电脑没有接受：……副本已保留，不影响后面的操作。」，队列继续；409 仍按冲突阻塞（需要人处理）。
