@@ -128,7 +128,7 @@ class _QqSettingsState extends State<QqSettingsPanel> {
             Row(
               children: [
                 Expanded(
-                  child: Text('QQ 机器人', style: theme.textTheme.titleMedium),
+                  child: Text('QQ 助手（聊天入口）', style: theme.textTheme.titleMedium),
                 ),
                 if (bound) const Seal('Q', label: '已绑定 QQ'),
               ],

@@ -122,7 +122,7 @@ void main() {
       tester,
       _backend(qq: qq, messages: [], posted: posted),
     );
-    expect(find.text('QQ 机器人'), findsOneWidget);
+    expect(find.text('QQ 助手（聊天入口）'), findsOneWidget);
     expect(find.text('还没有发过消息'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('qq.app-id')), '1020304050');
     await tester.enterText(

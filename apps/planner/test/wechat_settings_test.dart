@@ -74,7 +74,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('设置').first);
       await tester.pumpAndSettle();
-      expect(find.text('微信助手'), findsOneWidget);
+      expect(find.text('微信助手（旧通道）'), findsOneWidget);
       expect(find.text('TokenForWeChatPage0123456789abcd'), findsOneWidget);
       await tester.enterText(
         find.byKey(const Key('wechat.app-id')),

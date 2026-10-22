@@ -121,7 +121,7 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
             Row(
               children: [
                 Expanded(
-                  child: Text('微信助手', style: theme.textTheme.titleMedium),
+                  child: Text('微信助手（旧通道）', style: theme.textTheme.titleMedium),
                 ),
                 if (bound) const Seal('联', label: '已绑定微信'),
               ],

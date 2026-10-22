@@ -448,7 +448,7 @@ class PlannerController extends ChangeNotifier {
 
   Future<Json> _wechat(String method, String path, [Json? body]) async {
     if (!configured) {
-      throw ApiFailure('微信助手在电脑上运行，请先在设置里连接电脑。', 409);
+      throw ApiFailure('助手在电脑上运行，请先在设置里连接电脑。', 409);
     }
     return request(method, '/api/v1/wechat$path', body);
   }
