@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
-from . import assistant, releases
+from . import assistant, auth, releases, tenancy
 from .assistant_service import AssistantService
 from .proactive import Proactive
 from .weekly import WeeklyBrief
@@ -21,10 +21,11 @@ from .materials import MaterialService, GenerateReview, MAX_FILE
 from .wechat import WeChatChannel, WeChatConfigIn, parse_message, signature_ok
 from .qq import QQChannel, QQConfigIn
 from .channels import RoutedChannel
-from .domain import DomainError, apply, stamp, identifier, parse
+from .domain import DomainError, stamp, identifier, parse
 from .models import Operation, PairConfirm, PlanRequest
 from .planning import propose
 from .maintenance import expire_due
+from .repo import Repository
 from .reports import flush_archives, report_for
 from .store import Store, digest, encode, utcnow
 
@@ -32,6 +33,7 @@ from .store import Store, digest, encode, utcnow
 def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transport=None, qq_transport=None, qq_connect=None, background=True):
     directory = Path(directory or releases.default_data_dir())
     store = Store(directory)
+    repo = Repository(store)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -82,8 +84,10 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     version = releases.source_version()
     app = FastAPI(title="个人弹性日程助手", version=version, lifespan=lifespan)
     app.state.store = store
+    app.state.repo = repo
     app.state.desktop_token = store.desktop_token
     pairing_attempts = {}
+    login_attempts = {}
     app.state.llm_transport = llm_transport
     app.state.wechat_transport = wechat_transport
     app.state.qq_transport = qq_transport
@@ -116,15 +120,108 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
             raise DomainError("这项设置需要在电脑端操作", "DESKTOP_REQUIRED", 403)
         return device
 
+    def owner(device=Depends(authenticated)):
+        # Channels / assistant stay with the owner until P2 gives each account
+        # its own channel binding; member accounts must not read owner data.
+        tenancy.require_owner(store, device)
+        return device
+
+    def owner_desktop(device=Depends(owner)):
+        if device["role"] != "desktop":
+            raise DomainError("这项设置需要在电脑端操作", "DESKTOP_REQUIRED", 403)
+        return device
+
+    def user_of(device):
+        return tenancy.user_id(store, device)
+
+    def client_address(request: Request) -> str:
+        address = request.client.host if request.client else "unknown"
+        if address in ("127.0.0.1", "::1") and request.headers.get("cf-connecting-ip"):
+            # Through the local Cloudflare tunnel every caller looks like localhost.
+            address = request.headers["cf-connecting-ip"]
+        return address
+
+    def rate_limit(attempts: dict, key: str, limit: int = 10):
+        window = [at for at in attempts.get(key, []) if clock() - at < timedelta(minutes=1)]
+        if len(window) >= limit:
+            raise DomainError("尝试过多，请一分钟后再试", "RATE_LIMITED", 429)
+        attempts[key] = [*window, clock()]
+
     @app.get("/health")
     def health():
         latest = releases.read_latest(store.directory)
         return {"status": "ok", "version": version, "app_latest": latest["version"] if latest else None}
 
+    # ---- Accounts (v2) ---------------------------------------------------
+    @app.post("/api/v1/auth/login")
+    def auth_login(data: auth.LoginIn, request: Request):
+        rate_limit(login_attempts, client_address(request))
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            return auth.login(
+                conn,
+                data.username,
+                data.password,
+                device_name=data.device.name,
+                platform=data.device.platform,
+                now=clock(),
+            )
+
+    @app.post("/api/v1/auth/logout")
+    def auth_logout(device=Depends(authenticated)):
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("UPDATE devices SET revoked=1 WHERE id=?", (device["id"],))
+        return {"ok": True}
+
+    @app.get("/api/v1/me")
+    def me(device=Depends(authenticated)):
+        with store.connect() as conn:
+            row = auth.get_user(conn, device["user_id"])
+            if row is None:
+                raise DomainError("账号不存在", "USER_NOT_FOUND", 404)
+            return {"user": auth.public_user(row), "server_time": stamp(clock()), "server_version": version}
+
+    @app.patch("/api/v1/me")
+    def patch_me(data: auth.ProfilePatch, device=Depends(authenticated)):
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            user = auth.update_profile(
+                conn,
+                device["user_id"],
+                display_name=data.display_name,
+                timezone_name=data.timezone,
+                onboarding=data.onboarding,
+            )
+        return {"user": user}
+
+    @app.post("/api/v1/me/password")
+    def change_password(data: auth.PasswordChange, device=Depends(authenticated)):
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            auth.change_password(
+                conn, device["user_id"], data.current_password, data.new_password,
+                keep_device_id=device["id"],
+            )
+        return {"ok": True}
+
+    @app.get("/api/v1/me/devices")
+    def my_devices(device=Depends(authenticated)):
+        with store.connect() as conn:
+            return {"devices": auth.list_devices(conn, device["user_id"])}
+
+    @app.delete("/api/v1/me/devices/{device_id}")
+    def remove_device(device_id: str, device=Depends(authenticated)):
+        with store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            auth.revoke_device(conn, device["user_id"], device_id, keep_device_id=device["id"])
+        return {"ok": True}
+
     @app.get("/api/v1/snapshot")
     def snapshot(device=Depends(authenticated)):
-        expire_due(store, clock())
-        state = store.state()
+        user_id = user_of(device)
+        expire_due(store, clock(), user_id)
+        state = store.state(user_id=user_id)
         state["server_time"] = stamp(clock())
         state["device"] = device
         latest = releases.read_latest(store.directory)
@@ -143,14 +240,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
 
     @app.post("/api/v1/pairing/confirm")
     def pairing_confirm(data: PairConfirm, request: Request):
-        address = request.client.host if request.client else "unknown"
-        if address in ("127.0.0.1", "::1") and request.headers.get("cf-connecting-ip"):
-            # Through the local Cloudflare tunnel every caller looks like localhost.
-            address = request.headers["cf-connecting-ip"]
-        attempts =[at for at in pairing_attempts.get(address, []) if clock() - at < timedelta(minutes=1)]
-        if len(attempts) >= 10:
-            raise DomainError("尝试过多，请一分钟后重试", "RATE_LIMITED", 429)
-        pairing_attempts[address] = [*attempts, clock()]
+        rate_limit(pairing_attempts, client_address(request))
         with store.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             entry = conn.execute("SELECT * FROM pairing WHERE code_hash=?", (digest(data.code),)).fetchone()
@@ -158,56 +248,58 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                 raise DomainError("配对码无效或已过期", "INVALID_PAIRING_CODE", 401)
             conn.execute("DELETE FROM pairing WHERE code_hash=?", (digest(data.code),))
             token, device_id = secrets.token_urlsafe(32), identifier()
-            conn.execute("INSERT INTO devices(id,name,role,token_hash) VALUES(?,?,?,?)", (device_id, data.name, "phone", digest(token)))
+            conn.execute(
+                "INSERT INTO devices(id,name,role,token_hash,ack_revision,revoked,user_id,platform,"
+                "created_at,last_seen_at) VALUES(?,?,?,?,0,0,?,?,?,?)",
+                (device_id, data.name, "phone", digest(token), store.owner_id, "android",
+                 stamp(clock()), stamp(clock())),
+            )
         return {"device_id": device_id, "token": token}
 
     @app.get("/api/v1/devices")
     def devices(device=Depends(desktop)):
         with store.connect() as conn:
-            return [dict(row) for row in conn.execute("SELECT id,name,role,revoked,ack_revision FROM devices")]
+            rows = conn.execute(
+                "SELECT id,name,role,revoked,ack_revision,platform,created_at,last_seen_at"
+                " FROM devices WHERE user_id=?",
+                (user_of(device),),
+            )
+            return [dict(row) for row in rows]
 
     @app.post("/api/v1/devices/{device_id}/revoke")
     def revoke(device_id: str, device=Depends(desktop)):
         if device_id == "desktop":
             raise DomainError("不能撤销当前电脑的启动凭证")
         with store.connect() as conn:
-            result = conn.execute("UPDATE devices SET revoked=1 WHERE id=?", (device_id,))
+            result = conn.execute(
+                "UPDATE devices SET revoked=1 WHERE id=? AND user_id=?",
+                (device_id, user_of(device)),
+            )
             if result.rowcount == 0:
                 raise DomainError("设备不存在", status=404)
         return {"revoked": True}
 
     @app.post("/api/v1/plan/proposals")
     def plan_preview(data: PlanRequest, device=Depends(authenticated)):
+        user_id = user_of(device)
         with store.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            state = store.state(conn)
+            state = store.state(conn, user_id)
             proposal = propose(state, data, clock())
             state["proposals"].append(proposal)
-            store.save(conn, state)
+            store.save(conn, state, user_id)
         return proposal
 
     @app.post("/api/v1/operations")
     def mutate(operation: Operation, device=Depends(authenticated)):
-        expire_due(store, clock())
-        request_hash = digest(encode(operation.model_dump()))
+        user_id = user_of(device)
+        expire_due(store, clock(), user_id)
         with store.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            prior = conn.execute("SELECT * FROM operations WHERE id=?", (operation.operation_id,)).fetchone()
-            if prior:
-                if prior["device_id"] != device["id"] or prior["request_hash"] != request_hash:
-                    raise DomainError("操作编号已被其他内容使用", "OPERATION_ID_REUSED")
-                return json.loads(prior["response"])
-            state = store.state(conn)
             try:
-                entity = apply(state, operation, device["id"], clock())
+                result = repo.apply(conn, user_id, device["id"], operation, clock())
             except ValidationError as error:
                 raise DomainError("输入不符合要求：" + "; ".join(str(e["msg"]) for e in error.errors()), "VALIDATION_ERROR", 422) from None
-            state["revision"] += 1
-            result = {"revision": state["revision"], "operation_id": operation.operation_id, "entity": entity}
-            serialized = encode(result)
-            store.save(conn, state)
-            conn.execute("INSERT INTO operations VALUES(?,?,?,?)", (operation.operation_id, device["id"], request_hash, serialized))
-            conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device["id"], operation.kind, encode(operation.payload), stamp(clock())))
         flush_archives(store, clock())
         return result
 
@@ -218,7 +310,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
             date.fromisoformat(day)
         except ValueError:
             raise DomainError("日期格式无效", status=422) from None
-        return report_for(store.state(), day, clock())
+        return report_for(store.state(user_id=user_of(device)), day, clock())
 
     # ---- Assistant ------------------------------------------------------
     service = AssistantService(store, clock, lambda: app.state.llm_transport)
@@ -228,18 +320,18 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     assistant_settings = service.settings
 
     @app.get("/api/v1/assistant/config")
-    def assistant_config(device=Depends(authenticated)):
+    def assistant_config(device=Depends(owner)):
         with store.connect() as conn:
             return assistant_settings.public(assistant.usage_today(conn, clock()))
 
     @app.post("/api/v1/assistant/config")
-    def assistant_configure(data: assistant.AssistantConfigIn, device=Depends(desktop)):
+    def assistant_configure(data: assistant.AssistantConfigIn, device=Depends(owner_desktop)):
         assistant_settings.update(data)
         with store.connect() as conn:
             return assistant_settings.public(assistant.usage_today(conn, clock()))
 
     @app.post("/api/v1/assistant/test")
-    async def assistant_test(device=Depends(desktop)):
+    async def assistant_test(device=Depends(owner_desktop)):
         with store.connect() as conn:
             conf, key = service.require(conn)
             assistant.count_call(conn, clock())
@@ -271,31 +363,31 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                 "model": conf["model"], "fixed_base_url": fixed}
 
     @app.get("/api/v1/assistant/models")
-    async def assistant_models(device=Depends(desktop)):
+    async def assistant_models(device=Depends(owner_desktop)):
         conf, key = assistant_settings.load(), assistant_settings.key()[0]
         if not (conf["base_url"] and key):
             raise DomainError("先填写服务地址和 API Key", "ASSISTANT_NOT_CONFIGURED", 409)
         return {"models": await assistant.list_models(conf, key, app.state.llm_transport)}
 
     @app.get("/api/v1/assistant/messages")
-    def assistant_history(device=Depends(authenticated)):
+    def assistant_history(device=Depends(owner)):
         with store.connect() as conn:
             return {"messages": assistant.message_rows(conn)}
 
     @app.post("/api/v1/assistant/messages")
-    async def assistant_message(data: assistant.AssistantMessageIn, device=Depends(authenticated)):
+    async def assistant_message(data: assistant.AssistantMessageIn, device=Depends(owner)):
         return {"messages": await service.converse(data.text)}
 
     @app.post("/api/v1/assistant/drafts/{draft_id}/apply")
-    def assistant_apply(draft_id: str, device=Depends(authenticated)):
+    def assistant_apply(draft_id: str, device=Depends(owner)):
         return service.apply_draft(draft_id, device["id"])
 
     @app.post("/api/v1/assistant/drafts/{draft_id}/dismiss")
-    def assistant_dismiss(draft_id: str, device=Depends(authenticated)):
+    def assistant_dismiss(draft_id: str, device=Depends(owner)):
         return service.dismiss_draft(draft_id)
 
     @app.post("/api/v1/assistant/drafts/{draft_id}/undo")
-    def assistant_undo(draft_id: str, device=Depends(authenticated)):
+    def assistant_undo(draft_id: str, device=Depends(owner)):
         return service.undo_draft(draft_id, device["id"])
 
     # ---- Chat channels: WeChat official account + QQ official bot ------
@@ -330,64 +422,64 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         return PlainTextResponse("success")
 
     @app.get("/api/v1/wechat/config")
-    def wechat_config(device=Depends(authenticated)):
+    def wechat_config(device=Depends(owner)):
         return channel.settings.public(device["role"] == "desktop")
 
     @app.post("/api/v1/wechat/config")
-    def wechat_configure(data: WeChatConfigIn, device=Depends(desktop)):
+    def wechat_configure(data: WeChatConfigIn, device=Depends(owner_desktop)):
         channel.settings.update(data)
         return channel.settings.public(True)
 
     @app.post("/api/v1/wechat/bind-code")
-    def wechat_bind_code(device=Depends(desktop)):
+    def wechat_bind_code(device=Depends(owner_desktop)):
         return channel.new_bind_code()
 
     @app.post("/api/v1/wechat/unbind")
-    def wechat_unbind(device=Depends(desktop)):
+    def wechat_unbind(device=Depends(owner_desktop)):
         return channel.unbind()
 
     @app.post("/api/v1/wechat/test")
-    async def wechat_test(device=Depends(desktop)):
+    async def wechat_test(device=Depends(owner_desktop)):
         channel.enqueue("这是一条来自瞬时的测试消息。收到就说明电脑后台能给你发微信了。")
         if background:
             asyncio.create_task(channel.run_once())
         return {"queued": True}
 
     @app.get("/api/v1/wechat/outbox")
-    def wechat_outbox(device=Depends(desktop)):
+    def wechat_outbox(device=Depends(owner_desktop)):
         return {"messages": channel.outbox()}
 
     # ---- QQ official-bot channel -----------------------------------------
     @app.get("/api/v1/qq/config")
-    def qq_config(device=Depends(authenticated)):
+    def qq_config(device=Depends(owner)):
         return {**qq.settings.public(device["role"] == "desktop"), **qq.status()}
 
     @app.post("/api/v1/qq/config")
-    def qq_configure(data: QQConfigIn, device=Depends(desktop)):
+    def qq_configure(data: QQConfigIn, device=Depends(owner_desktop)):
         qq.settings.update(data)
         return {**qq.settings.public(True), **qq.status()}
 
     @app.post("/api/v1/qq/bind-code")
-    def qq_bind_code(device=Depends(desktop)):
+    def qq_bind_code(device=Depends(owner_desktop)):
         return qq.new_bind_code()
 
     @app.post("/api/v1/qq/unbind")
-    def qq_unbind(device=Depends(desktop)):
+    def qq_unbind(device=Depends(owner_desktop)):
         return qq.unbind()
 
     @app.post("/api/v1/qq/test")
-    async def qq_test(device=Depends(desktop)):
+    async def qq_test(device=Depends(owner_desktop)):
         qq.enqueue("这是一条来自瞬时的测试消息。收到就说明电脑后台能通过 QQ 找到你了。")
         if background:
             asyncio.create_task(qq.run_once())
         return {"queued": True}
 
     @app.get("/api/v1/qq/outbox")
-    def qq_outbox(device=Depends(desktop)):
+    def qq_outbox(device=Depends(owner_desktop)):
         return {"messages": qq.outbox()}
 
     @app.post('/api/v1/materials/upload')
-    async def upload_material(request: Request, name: str, day: str, description: str = '', external_allowed: bool = True, device=Depends(authenticated)):
+    async def upload_material(request: Request, name: str, day: str, description: str = '', external_allowed: bool = True, device=Depends(owner)):
         content = bytearray()
         async for chunk in request.stream():
             content.extend(chunk)
@@ -401,7 +493,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
             raise DomainError('日期格式无效', status=422) from None
 
     @app.post('/api/v1/reviews/generate')
-    async def generate_review(data: GenerateReview, device=Depends(authenticated)):
+    async def generate_review(data: GenerateReview, device=Depends(owner)):
         try:
             return await materials.generate(data)
         except ValueError:

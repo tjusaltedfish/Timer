@@ -1,12 +1,12 @@
 from .domain import close_interval, parse, stamp
-from .store import encode
 
 
-def expire_due(store, now):
+def expire_due(store, now, user_id=None):
     """Persist overdue segments as awaiting feedback, never as completed tasks."""
+    user_id = user_id or store.owner_id
     with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        state = store.state(conn)
+        state = store.state(conn, user_id)
         affected = []
         for session in state["sessions"]:
             if session["state"] != "running" or parse(session["expected_end_at"]) > now:
@@ -20,5 +20,8 @@ def expire_due(store, now):
             affected.append(session["id"])
         if affected:
             state["revision"] += 1
-            store.save(conn, state)
-            conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], "system", "session.elapsed", encode({"session_ids": affected}), stamp(now)))
+            store.save(conn, state, user_id)
+            store.record_event(
+                conn, user_id, state["revision"], "system", "session.elapsed",
+                {"session_ids": affected}, now,
+            )

@@ -81,7 +81,7 @@ class AssistantService:
             state["revision"] += 1
             result = {"revision": state["revision"], "entity": entity, "operation_id": operation.operation_id}
             self.store.save(conn, state)
-            conn.execute("INSERT INTO operations VALUES(?,?,?,?)", (operation.operation_id, device_id, request_hash, encode(result)))
+            conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, self.store.owner_id, request_hash, encode(result)))
             conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device_id, kind, encode(payload), stamp(self.clock())))
         flush_archives(self.store, self.clock())
         return result
@@ -283,7 +283,7 @@ class AssistantService:
                                       "VALIDATION_ERROR", 422) from None
                 state["revision"] += 1
                 result = {"revision": state["revision"], "operation_id": operation.operation_id, "entity": entity}
-                conn.execute("INSERT INTO operations VALUES(?,?,?,?)", (operation.operation_id, device_id,
+                conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, self.store.owner_id,
                              digest(encode(operation.model_dump())), encode(result)))
                 conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device_id, kind,
                              encode(payload), stamp(now)))
@@ -314,7 +314,7 @@ class AssistantService:
                     raise DomainError(f"之后日程又有变化，没法整体撤销：{error.message}", "UNDO_STALE", 409) from None
                 state["revision"] += 1
                 result = {"revision": state["revision"], "operation_id": operation.operation_id, "entity": entity}
-                conn.execute("INSERT INTO operations VALUES(?,?,?,?)", (operation.operation_id, device_id,
+                conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, self.store.owner_id,
                              digest(encode(operation.model_dump())), encode(result)))
                 conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device_id, kind,
                              encode(payload), stamp(now)))

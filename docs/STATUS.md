@@ -2,6 +2,19 @@
 
 日期：2026-10-22。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
 
+## v2 多用户 P1：账号、租户隔离与过渡兼容（2026-10-22）
+
+- 依据 [v2 多用户方案](plans/v2-multiuser-plan.md)（`m00732`：按方案开发，用已注册的公众号测试号）。分支 `v2`，不改动 `main` 的已发布行为；旧客户端、桌面 token、配对码三种入口都能继续用。
+- 后端账号：新增 `server/app/auth.py`——注册/登录/登出、改密、设备列表与吊销；密码哈希自描述（`scrypt$n$r$p$salt$hash`，装了 `argon2-cffi` 时优先 argon2id，两种前缀都能验证），只存 token 的 sha256 不存明文；登录 10 次/分钟/IP（走 `cf-connecting-ip` 时按真实 IP）、密码 ≥10 位、用户名 2–24 位 `[A-Za-z0-9_-]`、停用账号登录回 `ACCOUNT_DISABLED`；密码或账号状态变了会吊销其它设备，保留当前设备。
+- 租户隔离：新增 `server/app/tenancy.py`（`user_of` / `require_owner`）与 `server/app/repo.py`（按 `user_id` 读写 `user_state`、`user_events`）；`Store.state/save` 默认仍作用于主账号，旧 `document`/`events` 表继续同步，所以 `assistant_service`、通道层、维护任务原样工作。跨账号 id → `404 NOT_FOUND`（不泄露存在性），`operation_id` 跨账号重用 → `409 OPERATION_ID_REUSED`；助手/QQ/微信端点在 P2 前只允许主账号（`403 OWNER_ONLY`），成员账号看不到这些数据。
+- 数据层：新增 `server/app/db.py` + `server/app/migrations/0001_multiuser.sql`（`users` / `user_state` / `user_events` / `schema_version`；`devices.user_id`、`operations.user_id` 由 `ensure-column` 在旧库上补列，不重建表）；`admin` 命令（`python -m app.admin user add|list|reset-password|disable|enable|promote`）用于本机开号，不暴露注册接口。
+- API：`POST /api/v1/auth/login|logout`、`GET/PATCH /api/v1/me`、`POST /api/v1/me/password`、`GET/DELETE /api/v1/me/devices`；`/snapshot`、`/operations`、`/plan/*` 改为按设备所属用户读写；旧配对流程保留（手机用配对码拿 desktop-token 的路径等价于登录主账号）。
+- 客户端 P1（teammate 交付，已复跑验证）：`lib/auth/session.dart`（token 走原 `FlutterSecureStorage` 槽，地址/用户/设备写 SharedPreferences）、登录页、启动门（`/me` 200 进首页 / 401 清会话回登录 / 网络失败离线放行）、设置页账号区块；`request()` 统一 401 → 清 token 和本地 state/pending（避免旧队列重放给下一个登录账号）；无 desktop-token 时走登录门，有 token 时旧桌面路径不变。
+- 运维（teammate 交付）：`tools/host/backup.ps1`（SQLite 在线备份 + `users\` 素材 + 14 天/8 周保留 + 2MB 轮转日志）、`restore.ps1`（integrity 校验、端口守卫、先改名不删除）、`restore-drill.md`、`install-backup-task.ps1`；[运维手册](ops.md) 写 cloudflared 隧道/公众号测试号回调/计划任务/异地备份。
+- 验证（真实跑过）：`PLANNER_DATA_DIR=.review-data ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **185 passed**（171 + 14：`test_auth.py` 8、`test_tenancy.py` 6）；`apps/planner` 里 `flutter analyze` → **No issues found!**、`flutter test` → **88 passed**（77 + 11）；ops 脚本 13 阶段真跑 0 失败（夹具在 `%TEMP%`，未碰真实数据）。
+- 未做：P2 助手 2.0（每账号独立的助手配置/记忆/消息/草稿、画像与周报、待补问路由）、公众号多账号绑定与聊天路由（当前只有主账号）、onboarding 接口与客户端教程高亮、首页改版；真机 Android/桌面联调；`timer.yml` 与 `tools/tunnel-watchdog.ps1` 的 8787→8765 迁移、cloudflared/公众号真实回调联调。
+
+
 ## QQ 机器人「光收到不干活」：整条草稿连坐、空回复兜底、没有执行记录（2026-10-22）
 
 - 成因（`m00262`：用户说「目前我和qq聊天，他光会收到不干活」）。真实数据复查：当天上午用户在 QQ 里说「结束网络训练，结果：网络已经成功启动训练；然后新建待办现在开始学习代码到吃晚饭前」，得到的回复只有「「网络训练」还没有可以反馈的执行记录」，隔一条又只回「收到。」；`assistant_drafts` 当天只有凌晨两条，之后 0 条。用真实模型把当天那几条消息各重放一遍（复制数据目录到临时目录、只打日志不落库），复现出三个叠在一起的原因：

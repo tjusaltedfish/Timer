@@ -24,3 +24,5 @@ llm-key
 .claude/settings.local.json
 .pytest-data/
 pytest-of-*/
+tmp*/
+.tmp/
