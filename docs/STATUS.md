@@ -1,5 +1,12 @@
 # 当前状态
 
+## v2 P4 运维：每日备份/恢复演练 + Windows 桌面 1.2.0+10（2026-10-22）
+
+- 备份计划任务：`tools/host/install-backup-task.ps1` 注册 `TimePlannerBackup`（每天 03:00，保留 14 天 + 8 周，错过会补跑）。真跑第一轮失败：本机宿主限制 venv 解释器写仓库外目录（`sqlite: unable to open database file`）；`tools/host/backup.ps1` 加「失败自动回退 `pyvenv.cfg` 基础解释器 + `PYTHONPATH=venv site-packages`」后，**计划任务真跑成功**：`integrity=ok tables=29`、700,416 字节，`latest.txt` 与 weekly 归档都更新。
+- 恢复演练：`tools/host/restore.ps1 -BackupDir ...\backups\daily\latest.txt -DataDir %TEMP%\timer-restore-drill`（不碰真实数据）→ `integrity=ok tables=29`，并留下 `planner.db.pre-restore-*` 回滚点。
+- Windows 桌面：`tools/build-windows.ps1`（release）产出 `artifacts/windows-preview-6a71cad1/`（35 MB，`time_planner.exe` + 插件 DLL + `data/`，版本 1.2.0+10）；尚未替换已安装的旧版（替换会中断正在使用的窗口），需要时用 `tools/install-timer.ps1` 更新。
+- 未做：师弟真机安装/关注测试号/绑定微信（等他操作）、正式签名、多用户长跑观察。
+
 ## v2 多用户联调：真实公众号消息 + 第二个账号（2026-10-22）
 
 - 真实微信消息跑通：主账号 openid `…3bTQ` 在 09:27:22 发「取消今晚的待办」，`wechat_inbox` 记为 done，助手按 auto 模式撤掉 18:30 的 vla 段，`wechat_outbox` 已 sent 回复「今晚 18:30 那段 vla 代码撤了……不对的话回复「撤销 6EAA」」。说明 v2 后端的 openid 路由、每人独立的助手上下文与默认直接执行在真实公众号上工作。

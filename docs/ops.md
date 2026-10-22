@@ -53,6 +53,10 @@
 - 保留策略：daily 超过 `-KeepDays`（默认 14）删除，weekly 只留最新 `-KeepWeeks`（默认 8）个；
   伴随目录与孤儿目录一并清理。日志 `backups\backup.log`，超过 2 MB 轮转为 `.log.old`。
 - 退出码：`0` 成功；`1` 任一步失败（日志中有 `backup: FAILED: ...`）。
+- 有的宿主会按可执行文件路径限制写入：venv 解释器在仓库里，写仓库外的备份目录会失败
+  （日志 `sqlite: ... cannot write the backup`）。此时脚本自动改用 `pyvenv.cfg` 指向的基础
+  解释器重试（`PYTHONPATH` 指向 venv 的 site-packages），无需手工传 `-Python`；也可显式
+  `-Python <基础解释器>`。
 
 ### 3.2 恢复
 

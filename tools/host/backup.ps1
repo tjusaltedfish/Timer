@@ -155,6 +155,34 @@ try {
     # 1. Database through SQLite's online backup API.
     $output = $backupCode | & $Python - $sourceDb $dbDest
     if ($LASTEXITCODE -ne 0) {
+        # Some managed hosts confine writes by executable path; the venv
+        # interpreter lives inside the checkout, so the backup target outside it
+        # is not writable. Retry once with the base interpreter pyvenv.cfg points
+        # at, reusing the venv site-packages (same fallback as Start-Timer.ps1).
+        $fallbackPython = $null
+        $pyvenv = Join-Path $repo 'server\.venv\pyvenv.cfg'
+        if (Test-Path -LiteralPath $pyvenv) {
+            $homeLine = Get-Content -LiteralPath $pyvenv | Where-Object { $_ -match '^home\s*=' } | Select-Object -First 1
+            if ($homeLine) {
+                $homeDir = ($homeLine -replace '^home\s*=\s*', '').Trim()
+                $candidate = Join-Path $homeDir 'python.exe'
+                if ((Test-Path -LiteralPath $candidate) -and ($candidate -ne $Python)) {
+                    $fallbackPython = $candidate
+                }
+            }
+        }
+        if ($fallbackPython) {
+            Write-Log "sqlite: $Python cannot write the backup (exit $LASTEXITCODE); retrying with $fallbackPython"
+            Remove-Item -LiteralPath $dbDest -Force -ErrorAction SilentlyContinue
+            $env:PYTHONPATH = Join-Path $repo 'server\.venv\Lib\site-packages'
+            try {
+                $output = $backupCode | & $fallbackPython - $sourceDb $dbDest
+            } finally {
+                Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    if ($LASTEXITCODE -ne 0) {
         Remove-Item -LiteralPath $dbDest -Force -ErrorAction SilentlyContinue
         throw "SQLite backup failed (python exit $LASTEXITCODE)."
     }
