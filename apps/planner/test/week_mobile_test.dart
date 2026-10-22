@@ -293,4 +293,36 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
+
+  testWidgets('详细课表里有「今天」；离开本周后一点就回到今天', (tester) async {
+    phone(tester);
+    final c = await seed();
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+    await openWeek(tester);
+
+    // 本周进详细课表：今天本来就在眼前，不出现多余的「今天」。
+    await tester.tap(find.byKey(const Key('week.detail.open')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('week.today')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('week.detail.close')));
+    await tester.pumpAndSettle();
+
+    // 翻到下一周再进详细课表，应该能一键回来。
+    await tester.tap(find.byTooltip('下一周'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('week.detail.open')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('week.today')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('week.today')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('week.today')), findsNothing);
+    expect(find.byKey(const Key('week.detail')), findsOneWidget);
+
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
 }
+

@@ -205,6 +205,19 @@ class OnboardingController extends ChangeNotifier {
     unawaited(_push({'onboarding': _progress()}));
   }
 
+  /// Leaves the first-run setup without filling it in.
+  ///
+  /// Nobody should be trapped on a form: the defaults (device timezone,
+  /// settings) apply and the tour starts. Everything can be changed later in
+  /// the settings page.
+  Future<void> skipSetup() async {
+    if (!_enabled || _setupDone) return;
+    _setupDone = true;
+    _notify();
+    await _persist();
+    unawaited(_push({'onboarding': _progress()}));
+  }
+
   /// Skips the rest of the tour. Remembered as [skipped] so "重新看教程" is the
   /// only way it comes back.
   Future<void> skip() async {

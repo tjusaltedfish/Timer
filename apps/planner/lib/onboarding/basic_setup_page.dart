@@ -91,6 +91,10 @@ class _BasicSetupPageState extends State<BasicSetupPage> {
     if (picked != null && mounted) setState(() => _end = picked);
   }
 
+  Future<void> _skip() async {
+    await widget.controller.skipSetup();
+  }
+
   Future<void> _submit() async {
     final name = _name.text.trim();
     if (name.isEmpty) {
@@ -245,7 +249,15 @@ class _BasicSetupPageState extends State<BasicSetupPage> {
                             : const Text('开始使用'),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 4),
+                    Center(
+                      child: TextButton(
+                        key: const Key('setup.skip'),
+                        onPressed: _busy ? null : _skip,
+                        child: const Text('先跳过，稍后在设置里改'),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     Text(
                       '接下来会用十步带你认一认常用的地方，随时可以跳过。',
                       style: Theme.of(context).textTheme.bodySmall

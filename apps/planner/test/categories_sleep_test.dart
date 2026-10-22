@@ -123,4 +123,40 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
+
+  testWidgets('睡眠弹层的备注在手机上一打开就能点开输入', (tester) async {
+    tzdata.initializeTimeZones();
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final c = PlannerController(
+      storage: MemoryStore(),
+      clock: () => DateTime.utc(2026, 10, 19, 16),
+    );
+    await c.initialize();
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('记一下昨晚的睡眠'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sleep.note')), findsOneWidget);
+    final rect = tester.getRect(find.byKey(const Key('sleep.note')));
+    expect(rect.top, greaterThanOrEqualTo(0));
+    expect(rect.bottom, lessThanOrEqualTo(844),
+        reason: '备注框必须一打开就在屏幕上，不能藏在滚轮下面');
+    await tester.enterText(find.byKey(const Key('sleep.note')), '睡前喝了咖啡');
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('sleep.note'))).controller!.text,
+      '睡前喝了咖啡',
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
 }
+

@@ -1,5 +1,15 @@
 # 当前状态
 
+## v2 修：设置能跳过、睡眠备注点得到、周视图能回今天（2026-10-22，1.2.11+21）
+
+- 收（USER 手机体验反馈）：「跳过」之后设置页像被向导卡住没有跳过；睡眠表单的文字完全点不开；一周页没有回到今天的入口。
+- 做法：
+  - 首次设置页新增 **「先跳过，稍后在设置里改」**（`Key('setup.skip')` → `OnboardingController.skipSetup()`，`apps/planner/lib/onboarding/basic_setup_page.dart`），跳过保留设备时区与现有设置，直接进十步教程，之后可在设置里补；不再把新用户困在表单里。
+  - 睡眠弹层把 **备注输入框移到最上面**（`apps/planner/lib/sheets/sleep_sheet.dart`，`Key('sleep.note')`）：原来备注在两个滚轮下面，手机上要越过滚轮才能碰到，手指一拖就被滚轮吃掉，看起来就是「文字点不开」。
+  - 手机「详细课表」头部新增 **「今天」**（`Key('week.today')`，`apps/planner/lib/week/mobile_week_view.dart`）：翻到别的周之后一点回到本周今天，仍在详细课表里。
+- 测试：`test/onboarding_test.dart` 新增「不想填设置也能先跳过」、`test/week_mobile_test.dart` 新增「详细课表里有今天、离开本周一点就回来」、`test/categories_sleep_test.dart` 新增「备注框一打开就在屏幕内且能输入」；`dart analyze` 干净，`flutter test` **120 passed**。
+- 未做/未复现：手机端「助手回应慢」与「电脑端同步偶尔显示连接中断」仍需现场信息（慢是模型往返，还是排队；桌面 last_seen 一直有新记录，未见持续断开）；未做捏合缩放。
+
 ## v2 P2：助手会看图，而不是假装看见（2026-10-22，1.2.10+20）
 
 - 收（USER：「他能看见图片但是不知道是什么」）：不论模型支不支持视觉，服务端都把图塞进请求；文本模型只能顺着「有图」往下瞎猜，用户看起来就是「收到了、但没看懂」。

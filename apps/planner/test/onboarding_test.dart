@@ -163,6 +163,26 @@ void main() {
     await _stop(tester, controller);
   });
 
+  testWidgets('不想填设置也能先跳过，之后在设置里改', (tester) async {
+    _primeView(tester);
+    final backend = _Backend();
+    final storage = _seededStore();
+    final controller = await _pumpApp(tester, backend, storage);
+
+    expect(find.byKey(const Key('setup.skip')), findsOneWidget);
+    await _tap(tester, find.byKey(const Key('setup.skip')));
+
+    expect(find.text('先说说你想怎么用它。'), findsNothing);
+    expect(find.byKey(const Key('onboarding.overlay')), findsOneWidget);
+    expect(find.text('第 1 / 10 步'), findsOneWidget);
+
+    final saved = jsonDecode(storage.values['onboarding_v2']!) as Json;
+    expect(saved['setup_done'], isTrue);
+    expect(backend.patches, isNotEmpty);
+
+    await _stop(tester, controller);
+  });
+
   testWidgets('确认设置会 PATCH /api/v1/me 并进入第一步教程', (tester) async {
     _primeView(tester);
     final backend = _Backend();

@@ -152,6 +152,15 @@ extension _SleepSheet on _PlannerHomeState {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    TextField(
+                      key: const Key('sleep.note'),
+                      controller: note,
+                      maxLength: 500,
+                      decoration: const InputDecoration(
+                        labelText: '备注（可不填）',
+                        hintText: '半夜醒了一次、睡前喝了咖啡…',
+                      ),
+                    ),
                     label('什么时候睡下'),
                     Center(
                       child: InkDateTimeWheel(
@@ -191,15 +200,6 @@ extension _SleepSheet on _PlannerHomeState {
                                 setDialog(() => quality = on ? i + 1 : null),
                           ),
                       ],
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: note,
-                      maxLength: 500,
-                      decoration: const InputDecoration(
-                        labelText: '备注（可不填）',
-                        hintText: '半夜醒了一次、睡前喝了咖啡…',
-                      ),
                     ),
                     if (error != null)
                       Text(error!, style: TextStyle(color: palette.accent)),

@@ -211,6 +211,12 @@ class _MobileWeekViewState extends State<MobileWeekView> {
                   style: theme.textTheme.titleSmall,
                 ),
               ),
+              if (!_today)
+                TextButton(
+                  key: const Key('week.today'),
+                  onPressed: () => widget.onSelectDay(widget.now),
+                  child: const Text('今天'),
+                ),
               IconButton(
                 key: const Key('week.zoom.out'),
                 tooltip: '缩小',
