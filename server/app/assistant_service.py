@@ -20,6 +20,14 @@ from .store import digest, encode
 
 UNDOABLE = {"schedule_new", "schedule_task", "protect", "move_block", "cancel_block", "cancel_task"}
 
+MAX_REMEMBERED_PER_TURN = 2
+MEMORY_LIMIT = 50
+
+
+def memory_key(text):
+    """Normalized identity of a memory: whitespace and punctuation don't spawn twins."""
+    return re.sub(r"[\s。，、；：！？!?,.;:：（）()「」\"'“”‘’]", "", text or "").lower()
+
 
 def undo_operations(before, after):
     """Operations that turn the schedule in `after` back into `before`.
@@ -407,13 +415,18 @@ class AssistantService:
         return "\n".join(lines)
 
     def _remember(self, items, state, request_id, user_id):
-        """Durable preferences the user just stated about themselves."""
-        known = {m["text"] for m in state.get("memories", [])}
+        """Durable preferences the user just stated about themselves.
+
+        Same preference said twice (even with punctuation/space differences) keeps
+        the first row; a turn may add at most two new ones (plan §9.4)."""
+        known = {memory_key(m.get("text", "")) for m in state.get("memories", [])}
         saved = []
-        for index, text in enumerate(items):
-            text = text.strip()[:1000]
-            if not text or text in known or len(known) + len(saved) >= 50:
+        for index, text in enumerate(list(items)[:MAX_REMEMBERED_PER_TURN]):
+            text = " ".join(str(text).split())[:1000]
+            key = memory_key(text)
+            if not text or not key or key in known or len(known) + len(saved) >= MEMORY_LIMIT:
                 continue
+            known.add(key)
             memory_id = uuid5(NAMESPACE_URL, f"{request_id}:{index}").hex if request_id else identifier()
             try:
                 self.apply_operation("memory.save", {"id": memory_id, "text": text, "source": "assistant"},
