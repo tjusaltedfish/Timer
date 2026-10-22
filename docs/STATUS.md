@@ -1,6 +1,17 @@
 # 当前状态
 
-日期：2026-10-21。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
+日期：2026-10-22。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
+
+## 助手看图：在 QQ 里发图片，它能看懂（2026-10-22）
+
+- 成因（`m01790`）：用户「我希望她能识别我发给她的图」。此前 `qq.py` 收到带附件的消息只会回一句「语音、视频和文件我暂时还看不了」，图片等于白丢。
+- 收：`qq_inbox` 增 `media_url`/`media_type` 两列（老库按 `PRAGMA table_info` 补列，不重建表）。C2C 事件里取第一个 `content_type` 属于 jpg/png/gif/webp、`url` 是 https 的附件，记成 `kind='image'`；纯文字与图片进 `pending`，其余附件仍回那句提示。
+- 传：`async def _fetch_image(url, mime)` 用 `httpx.AsyncClient(timeout=20)` 下载，非 https / 非 200 / 空 / 超 6MB / 格式不对分别抛 `QQ_IMAGE_URL`、`QQ_IMAGE_DOWNLOAD`、`QQ_IMAGE_TOO_BIG`（413）、`QQ_IMAGE_TYPE`（415），错误语直接当回复发回去，**图不往模型里塞**。腾讯的 CDN 有时把图片报成 `application/octet-stream`，这时回退到 QQ 声明的 `content_type`（`test_qq.py` 有专门用例）。
+- 看：`assistant_service.converse(text, image=...)` 把 `{"type":"image_url","image_url":{"url":"data:<mime>;base64,..."}}` 拼在文字后面一起发；`assistant_messages` 里存 `[图片]` 占位，聊天记录不落 base64。图片消息**跳过指令正则**（发图不会被当成「完成了」），配文照常带上。
+- 能力边界（实测过的）：当前模型 `deepseek-v4-flash`（`api.deepseek.com`，OpenAI 兼容）能读图——拿一张动漫截图试，能把气泡里的「已思考（用时 13 秒）> 好女孩」读出来；纯 8×8 的极小 PNG 它判「无效图片」，太小的图（头像/图标）不保证。
+- 顺带修的：这个模型偶发「正文全花在思考上、`content` 只回空白」（实测 1/4 概率），`complete()` 现在把空白当一次可重试的失败，重试用尽回「模型这次没回到正题，再问一次试试？」而不是把空字符串当答复。
+- 验证（真实跑过）：`PLANNER_DATA_DIR=<仓库内临时目录> ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **167 passed**（164 + 看图 2 条 + 空白回复 1 条）。`test_qq.py` 新增 6 条：模型确实收到图片、配文随图、太大、下载失败、格式打不开、`qq_inbox` 记下 `media_url` 且 `assistant_messages` 存 `[图片]`。
+- 未做：语音、视频、文件（仍是那句明确提示）。
 
 ## 助手表情包：只留「大肥鱼」一套，且要跟回话对得上（2026-10-21）
 
@@ -24,7 +35,7 @@
 - **启动兜底（2026-10-21 晚）**：`tools/install-timer.ps1` 生成的 `Start-Timer.ps1` 先用 `server\.venv\Scripts\python.exe` 起后台；若 15 秒内 `/health` 不通，再用 `pyvenv.cfg` 里 `home` 指向的基础解释器（必须在仓库外）加 `PYTHONPATH=server\.venv\Lib\site-packages` 重试一次，仍失败写 `launcher.log`。起因是这台机器上出现了「按可执行文件路径限制写盘」的托管沙箱——venv 里的 python 能启动却写不了 `%USERPROFILE%\TimePlanner\data`（`store.py:63` 的 `PRAGMA journal_mode=WAL` 报 `unable to open database file`），基础解释器不受这条限制。实测：停掉后台后 `Start-ScheduledTask TimePlannerBackend` → 25 秒 `/health` 通、进程是基础解释器、`bound` 仍在、`connected` 自动恢复、测试消息 `sent`。
 - **还没验证的**：「头像可改」「能置顶」是 QQ 客户端行为，要在手机上看；单聊界面是否显示机器人头像官方说法不一致；主动消息每天 1000 条配额未压测；`C2C` intent 是否需后台申请、同 AppID 多开是否互踢，也没有实测条件。
 
-- **未做**：用户自己发的图片/语音解析（收得到 `attachments`，但还没接 OCR/语音）；随机主动搭话（用户明确说不需要，只要有规律的提醒）；群聊。
+- **未做**：语音/视频/文件（图片已经能看懂，见上一节）；随机主动搭话（用户明确说不需要，只要有规律的提醒）；群聊。
 - **文档**：接入步骤与限制 `docs/guides/qq-bot.md`，协议契约 `docs/qqbot-c2c-api-spec.md`，HANDOFF/README/助手机制已同步。
 
 ## 弹性执行：结束也顺延/提前，界面按实际时刻展示（2026-10-20）

@@ -39,6 +39,19 @@ class FakeQQ:
         if path == "/gateway":
             assert request.headers["Authorization"] == f"QQBot T{self.tokens}"
             return httpx.Response(200, json={"url": self.gateway})
+        if path.startswith("/img/"):
+            if path.endswith("missing.jpg"):
+                return httpx.Response(404, json={"error": "gone"})
+            if path.endswith("huge.jpg"):
+                return httpx.Response(200, content=b"\xff\xd8" + b"0" * (7 * 1024 * 1024),
+                                      headers={"content-type": "image/jpeg"})
+            if path.endswith("weird.bin"):
+                return httpx.Response(200, content=b"PK\x03\x04", headers={"content-type": "application/zip"})
+            if path.endswith("octet.jpg"):
+                return httpx.Response(200, content=b"\xff\xd8\xff\xe0fake-jpeg-bytes",
+                                      headers={"content-type": "application/octet-stream"})
+            return httpx.Response(200, content=b"\xff\xd8\xff\xe0fake-jpeg-bytes",
+                                  headers={"content-type": "image/jpeg"})
         if path.endswith("/files"):
             self.uploads.append(body)
             return httpx.Response(200, json={"file_info": "fi-1", "ttl": 0})
@@ -207,15 +220,120 @@ def test_duplicate_push_is_answered_once(fake):
     assert len(sent_texts(api)) == 1
 
 
-def test_media_message_gets_a_text_hint(fake):
+def test_attachments_we_cannot_read_get_a_plain_hint(fake):
+    """语音/视频/文件还没有解析能力；能读的只有文字和图片。"""
     client, app, api, gateway, model = fake
     configure(client)
     bind(client, app)
     run(client, app)
     api.sent.clear()
-    assert message(app, content="", msg_id="m-img", attachments=[{"content_type": "image/png"}]) is True
+    assert message(app, content="", msg_id="m-voice",
+                   attachments=[{"content_type": "voice", "url": "https://cdn.example/v.silk"}]) is True
     run(client, app)
-    assert "只看得懂文字" in sent_texts(api)[0]
+    assert "还看不了" in sent_texts(api)[0]
+
+
+def picture_message(app, url="https://cdn.example/img/1.jpg", mime="image/jpeg", msg_id="m-img", content=""):
+    return message(app, content=content, msg_id=msg_id,
+                   attachments=[{"content_type": mime, "url": url, "filename": "1.jpg", "size": 1024}])
+
+
+def test_a_picture_is_shown_to_the_model(fake):
+    client, app, api, gateway, model = fake
+    configure(client)
+    bind(client, app)
+    run(client, app)
+    configure_model(client)
+    api.sent.clear()
+    model.replies = [{"reply": "图里是明早九点的课，我给你排上？", "drafts": []}]
+    assert picture_message(app) is True
+    run(client, app)
+    body = json.loads(model.requests[0].content)
+    parts = body["messages"][-1]["content"]
+    assert body["messages"][-1]["role"] == "user"
+    assert parts[0] == {"type": "text", "text": "看看这张图。"}
+    assert parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert "图里是明早九点的课" in sent_texts(api)[0]
+    with app.state.store.connect() as conn:
+        row = conn.execute("SELECT kind,status,media_url FROM qq_inbox ORDER BY rowid DESC LIMIT 1").fetchone()
+    assert row["kind"] == "image" and row["status"] == "done"
+    assert row["media_url"] == "https://cdn.example/img/1.jpg"
+    with app.state.store.connect() as conn:
+        stored = conn.execute("SELECT role,text FROM assistant_messages ORDER BY rowid DESC LIMIT 2").fetchall()
+    assert stored[-1]["text"] == "[图片]"
+
+
+def test_an_octet_stream_download_still_counts_as_a_picture(fake):
+    """腾讯的 CDN 有时把图片报成 application/octet-stream，这时信 QQ 给的 content_type。"""
+    client, app, api, gateway, model = fake
+    configure(client)
+    bind(client, app)
+    run(client, app)
+    configure_model(client)
+    api.sent.clear()
+    model.replies = [{"reply": "看到了，蓝头发那位。", "drafts": []}]
+    assert picture_message(app, url="https://cdn.example/img/octet.jpg", msg_id="m-octet") is True
+    run(client, app)
+    assert model.requests
+    parts = json.loads(model.requests[0].content)["messages"][-1]["content"]
+    assert parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert "蓝头发那位" in sent_texts(api)[-1]
+    with app.state.store.connect() as conn:
+        row = conn.execute("SELECT kind,status FROM qq_inbox ORDER BY rowid DESC LIMIT 1").fetchone()
+    assert row["kind"] == "image" and row["status"] == "done"
+
+
+def test_the_caption_goes_with_the_picture(fake):
+    client, app, api, gateway, model = fake
+    configure(client)
+    bind(client, app)
+    run(client, app)
+    configure_model(client)
+    api.sent.clear()
+    model.replies = [{"reply": "课表收到了，先记着。", "drafts": []}]
+    picture_message(app, content="这是我明天的课表", msg_id="m-img2")
+    run(client, app)
+    parts = json.loads(model.requests[0].content)["messages"][-1]["content"]
+    assert parts[0]["text"] == "这是我明天的课表"
+
+
+def test_an_oversized_picture_is_refused_without_calling_the_model(fake):
+    client, app, api, gateway, model = fake
+    configure(client)
+    bind(client, app)
+    run(client, app)
+    configure_model(client)
+    api.sent.clear()
+    picture_message(app, url="https://cdn.example/img/huge.jpg", msg_id="m-big")
+    run(client, app)
+    assert model.requests == []
+    assert "太大" in sent_texts(api)[0]
+
+
+def test_a_picture_that_cannot_be_fetched_gets_a_plain_answer(fake):
+    client, app, api, gateway, model = fake
+    configure(client)
+    bind(client, app)
+    run(client, app)
+    configure_model(client)
+    api.sent.clear()
+    picture_message(app, url="https://cdn.example/img/missing.jpg", msg_id="m-gone")
+    run(client, app)
+    assert model.requests == []
+    assert "没下载下来" in sent_texts(api)[0]
+
+
+def test_a_file_that_is_not_really_a_picture_is_refused(fake):
+    client, app, api, gateway, model = fake
+    configure(client)
+    bind(client, app)
+    run(client, app)
+    configure_model(client)
+    api.sent.clear()
+    picture_message(app, url="https://cdn.example/img/weird.bin", mime="image/jpeg", msg_id="m-zip")
+    run(client, app)
+    assert model.requests == []
+    assert "打不开" in sent_texts(api)[0]
 
 
 def test_reply_is_passive_and_uses_the_incoming_message_id(fake):

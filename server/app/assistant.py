@@ -140,7 +140,7 @@ async def complete(conf, key, messages, *, json_mode=True, transport=None):
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     headers = {"Authorization": f"Bearer {key}"}
-    problem = "模型服务暂时不可用"
+    problem, code = "模型服务暂时不可用", "LLM_UNAVAILABLE"
     async with httpx.AsyncClient(timeout=conf["timeout_seconds"], transport=transport) as http:
         attempt = 0
         while attempt < len(RETRY_DELAYS):
@@ -175,11 +175,16 @@ async def complete(conf, key, messages, *, json_mode=True, transport=None):
                 raise DomainError(f"模型服务返回错误（{response.status_code}）：{_relay_message(response, key)}",
                                   "LLM_ERROR", 502)
             try:
-                return response.json()["choices"][0]["message"]["content"] or ""
+                text = response.json()["choices"][0]["message"]["content"] or ""
             except (ValueError, KeyError, IndexError, TypeError):
                 sample = response.text[:80].replace(key, "****") if key else response.text[:80]
                 raise DomainError(f"模型服务的回复不是 OpenAI 兼容格式，收到：{sample}", "LLM_FORMAT", 502) from None
-    raise DomainError(problem, "LLM_UNAVAILABLE", 502)
+            if text.strip():
+                return text
+            # 这个模型偶尔把正文全花在思考上、content 只回空白：当成一次可重试的失败
+            problem, code = "模型这次没回到正题，再问一次试试？", "LLM_EMPTY"
+            continue
+    raise DomainError(problem, code, 502)
 
 
 async def list_models(conf, key, transport=None):
@@ -297,6 +302,7 @@ SYSTEM_PROMPT = """你是「瞬时」：用户本人的日程执行助理。你�
 【怎么说话】像在微信里聊天：句子短，一次最多两三句。大约一半的消息里自然喊一声「主人」（放句首或句尾都行），别每句都挂、也别一条里喊两遍；正经干活的那条可以不喊。不复述他的话，不展示计算过程，不列清单，不加小标题。emoji 要吝啬——只有情绪真的到位才用一个，**不要每句都带鱼，不要固定口头禅，也不要用 emoji 代替说话内容**。小事上可以松，日程上的事必须准。
 【闲和忙】他闲聊、发牢骚、说句废话时，就当朋友聊：接住他的情绪，可以开个玩笑，可以吐槽，drafts 给空数组，reply 收在 80 字内，别追问、别把聊天变成盘问。他要动日程时**别换一副严肃的脸**——还是这个声音、这个贫法，只是必须把准的信息说全（哪段、几点到几点、多久、能不能撤销）；reply 收在 50 字内、最多两句，干活那条可以不喊主人，但不许冒出「已为您」「请注意」「任务已完成」这类客服腔。闲聊里的情绪、吐槽不写进 remember。
 【表情包】你还能发一张表情包：填 meme 字段。**图要跟这条回复的情绪对得上**——你在夸他就配夸人/得意的图，他欠揍才配生气的图，你耍赖才配搞怪的图，排完程配「开工」那张也合适。平均三四轮给一张，一次一张，别连着给。报错、追问、没听懂的回复一律不配图。
+【看图片】他也会发图：课表、日程截图、待办清单、聊天记录、随手拍的东西。你**真的看得到图**，先看清上面写了什么再回话：课表就照图里的星期和时间排，截图里的事就按上面说的办；图里有关键信息就用图里的，别用自己脑补的替。看不清或字太小就直说「这块太糊了，看不清」，**不许猜着编内容**。看图回复也算干活那条，reply 收在 50 字内。
 
 【怎么做事】
 - 指令能看懂就直接给出动作（drafts），并用一句话说明结果，例如「已排 11:10–12:00 做时间表开发，还差约 10 分钟的量。」reply 一般不超过 40 字。

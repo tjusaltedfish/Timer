@@ -55,10 +55,22 @@ class ChatCommands:
         self.store, self.clock, self.assistant, self.device = store, clock, assistant, device
         self.meme = ""  # 上一条回复想要的表情包类别（通道自己决定发不发）
 
-    async def reply(self, text, request_id=None):
-        """Reply text for one bound-user message."""
+    async def reply(self, text, request_id=None, image=None):
+        """Reply text for one bound-user message.
+
+        ``image`` 是 (mime, bytes)：用户发来图片时直接把图交给模型看，不当作文字指令解析。
+        """
         self.meme = ""  # 每条消息重算：上一条想要的表情包不留给下一条
         compact = text.strip()
+        if image:
+            try:
+                rows = await self.assistant.converse(compact, request_id=request_id, device_id=self.device, image=image)
+            except DomainError as error:
+                if error.code == "ASSISTANT_NOT_CONFIGURED":
+                    return "模型服务还没在电脑上配置好，我暂时看不了图。"
+                return error.message
+            self.meme = rows[-1].get("meme") or ""
+            return self.render(rows[-1])
         command = COMMAND.fullmatch(compact)
         review = REVIEW.fullmatch(compact)
         operation_id = f"{self.device}-command:{request_id}" if request_id else None

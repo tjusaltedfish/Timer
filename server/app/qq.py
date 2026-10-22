@@ -59,9 +59,12 @@ ERR_HINTS = {
     40054018: "消息太长",
     304018: "机器人没和 QQ 网关连上：等后台重连后再试",
 }
+IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
+IMAGE_LIMIT = 6 * 1024 * 1024  # 单张图上限：再大就让用户压缩，别把整条消息卡死
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS qq_inbox (id TEXT PRIMARY KEY, dedup_key TEXT UNIQUE NOT NULL, openid TEXT NOT NULL,
-    kind TEXT NOT NULL, content TEXT NOT NULL, received_at TEXT NOT NULL, msg_id TEXT, status TEXT NOT NULL, note TEXT);
+    kind TEXT NOT NULL, content TEXT NOT NULL, received_at TEXT NOT NULL, msg_id TEXT, status TEXT NOT NULL, note TEXT,
+    media_url TEXT, media_type TEXT);
 CREATE TABLE IF NOT EXISTS qq_outbox (id TEXT PRIMARY KEY, dedup_key TEXT UNIQUE, openid TEXT NOT NULL,
     text TEXT NOT NULL, not_before TEXT NOT NULL, expires_at TEXT, status TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0, channel TEXT, last_error TEXT, created_at TEXT NOT NULL, sent_at TEXT,
@@ -179,6 +182,10 @@ class QQChannel:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(qq_outbox)")}
             if "kind" not in columns:  # 表情包是后加的：老库补一列，不动已有行
                 conn.execute("ALTER TABLE qq_outbox ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'")
+            inbox = {row["name"] for row in conn.execute("PRAGMA table_info(qq_inbox)")}
+            for column in ("media_url", "media_type"):  # 看图是后加的，老库补列
+                if column not in inbox:
+                    conn.execute(f"ALTER TABLE qq_inbox ADD COLUMN {column} TEXT")
             # 发送中途断电：QQ 那边可能已经收到了，不能自动重发
             conn.execute("UPDATE qq_outbox SET status='unknown', last_error='后台在发送时中断，是否送达未知' "
                          "WHERE status='sending'")
@@ -214,13 +221,24 @@ class QQChannel:
         if not (msg_id and openid):
             return False
         content = str(event.get("content") or "").strip()[:2000]
-        kind = "text" if content else ("media" if event.get("attachments") else "empty")
+        attachments = event.get("attachments") or []
+        image = None
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            mime = str(item.get("content_type") or "").split(";")[0].strip().lower()
+            url = str(item.get("url") or "").strip()
+            if mime in IMAGE_TYPES and url.startswith("https://"):
+                image = (url, mime)
+                break
+        kind = "image" if image else ("text" if content else ("media" if attachments else "empty"))
         conf = self.settings.load()
         with self.store.connect() as conn:
             inserted = conn.execute(
-                "INSERT OR IGNORE INTO qq_inbox(id,dedup_key,openid,kind,content,received_at,msg_id,status) "
-                "VALUES(?,?,?,?,?,?,?,'new')",
-                (identifier(), msg_id, openid, kind, content, stamp(now), msg_id)).rowcount
+                "INSERT OR IGNORE INTO qq_inbox(id,dedup_key,openid,kind,content,received_at,msg_id,status,"
+                "media_url,media_type) VALUES(?,?,?,?,?,?,?,'new',?,?)",
+                (identifier(), msg_id, openid, kind, content, stamp(now), msg_id,
+                 image[0] if image else None, image[1] if image else None)).rowcount
             if not inserted:
                 return False  # QQ 重推同一条消息
 
@@ -251,10 +269,10 @@ class QQChannel:
 
             conf.update(last_msg_id=msg_id, last_msg_at=stamp(now))
             self.settings.save(conf)
-            if kind == "text":
+            if kind in ("text", "image"):
                 mark("pending")
                 return True
-            self._enqueue(conn, openid, "我暂时只看得懂文字消息。", now,
+            self._enqueue(conn, openid, "语音、视频和文件我暂时还看不了，发图片或者文字都行。", now,
                           key=f"media:{msg_id}", msg_id=msg_id, msg_at=now)
             mark("done")
             return True
@@ -466,6 +484,27 @@ class QQChannel:
                          (status, channel, error, stamp(self.clock()) if status == "sent" else None, row["id"]))
 
     # ---- Worker ----------------------------------------------------------
+    async def _fetch_image(self, url, mime=None):
+        """Download one picture attachment. QQ 给的是临时链接，收到就取、不落盘。"""
+        if not url.startswith("https://"):
+            raise DomainError("图片链接不是 https，没法下载", "QQ_IMAGE_URL", 502)
+        async with httpx.AsyncClient(timeout=20, transport=self.transport(), follow_redirects=True) as http:
+            try:
+                response = await http.get(url)
+            except httpx.HTTPError:
+                raise DomainError("这张图我没下载下来，再发一次试试？", "QQ_IMAGE_DOWNLOAD", 502) from None
+        if response.status_code != 200 or not response.content:
+            raise DomainError("这张图我没下载下来，再发一次试试？", "QQ_IMAGE_DOWNLOAD", 502)
+        if len(response.content) > IMAGE_LIMIT:
+            raise DomainError("这张图太大了，压缩一下再发给我？", "QQ_IMAGE_TOO_BIG", 413)
+        header = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+        # 腾讯的 CDN 有时把图片报成 application/octet-stream：这时信 QQ 给的 content_type
+        kind = header if header in IMAGE_TYPES else (
+            (mime or "").split(";")[0].strip().lower() if header in ("", "application/octet-stream") else "")
+        if kind not in IMAGE_TYPES:
+            raise DomainError("这个格式我打不开，发 jpg 或者 png 吧。", "QQ_IMAGE_TYPE", 415)
+        return kind, response.content
+
     async def run_once(self):
         """Process waiting inbound messages, then send what is due. Serialised."""
         async with self.lock:
@@ -475,9 +514,15 @@ class QQChannel:
             for row in pending:
                 with self.store.connect() as conn:
                     conn.execute("UPDATE qq_inbox SET status='processing' WHERE id=?", (row["id"],))
+                image, refused = None, ""
+                if row["kind"] == "image" and row["media_url"]:
+                    try:
+                        image = await self._fetch_image(row["media_url"], row["media_type"])
+                    except DomainError as error:
+                        refused = error.message
                 try:
-                    reply = await self.commands.reply(row["content"], request_id=row["id"])
-                    status = "done"
+                    reply = refused or await self.commands.reply(row["content"], request_id=row["id"], image=image)
+                    status = "failed:image" if refused else "done"
                 except Exception as error:  # noqa: BLE001 - 队列不能停，证据要留下
                     log.exception("QQ message handling failed")
                     reply, status = "这条消息处理出错了，已记下，稍后再试一次？", f"failed:{type(error).__name__}"

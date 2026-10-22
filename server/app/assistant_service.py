@@ -1,4 +1,5 @@
 """Assistant conversation and draft confirmation shared by the app API and WeChat."""
+import base64
 import json
 import re
 from copy import deepcopy
@@ -92,10 +93,14 @@ class AssistantService:
             conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (identifier(), "assistant", answer, stamp(now + timedelta(microseconds=1))))
             return assistant.message_rows(conn, 2)
 
-    async def converse(self, text, request_id=None, device_id="assistant"):
-        """One user turn. Returns the stored user + assistant rows (with drafts)."""
+    async def converse(self, text, request_id=None, device_id="assistant", image=None):
+        """One user turn. Returns the stored user + assistant rows (with drafts).
+
+        ``image`` 是 (mime, bytes)：带上它就把图作为这一轮的用户消息一起发给模型看。
+        """
         now = self.clock()
         expire_due(self.store, now)
+        shown = f"[图片] {text}".strip() if image else text
         memory = re.fullmatch(r"(?:请)?记住[：:]\s*(.{1,1000})", text.strip(), re.S)
         forget = re.fullmatch(r"(?:请)?忘记[：:]\s*(.{1,1000})", text.strip(), re.S)
         if memory:
@@ -128,7 +133,7 @@ class AssistantService:
         messages = [{"role": "system", "content": assistant.SYSTEM_PROMPT + "\n" + assistant.MODES[mode]},
                     {"role": "system", "content": context},
                     *({"role": row["role"], "content": stamped(row)} for row in reversed(history)),
-                    {"role": "user", "content": text}]
+                    self._turn(text, image)]
         calls = 1
         raw = await assistant.complete(conf, key, messages, transport=self.transport())
         try:
@@ -159,7 +164,7 @@ class AssistantService:
         draft_ids = [identifier() for _ in drafts]
         with self.store.connect() as conn:
             assistant.count_call(conn, now, calls)
-            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (user_id, "user", text, stamp(now)))
+            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (user_id, "user", shown, stamp(now)))
             conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)",
                          (reply_id, "assistant", "", stamp(now + timedelta(microseconds=1))))
             for draft_id, draft in zip(draft_ids, drafts):
@@ -184,6 +189,17 @@ class AssistantService:
             elif reply.meme:
                 conn.execute("DELETE FROM assistant_memes WHERE message_id=?", (reply_id,))
             return assistant.message_rows(conn, 2)
+
+    @staticmethod
+    def _turn(text, image):
+        """This turn as one OpenAI message: the words, plus the picture when there is one."""
+        if not image:
+            return {"role": "user", "content": text}
+        mime, data = image
+        uri = f"data:{mime};base64," + base64.b64encode(data).decode()
+        return {"role": "user", "content": [
+            {"type": "text", "text": text.strip() or "看看这张图。"},
+            {"type": "image_url", "image_url": {"url": uri}}]}
 
     @staticmethod
     def _answer(said, mode, proposed, applied, notes, remembered):

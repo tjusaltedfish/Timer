@@ -165,3 +165,20 @@ def test_daily_limit_and_service_outage(client, model):
     assert client.post("/api/v1/assistant/messages", json={"text": "hi"}).status_code == 502
     assert client.post("/api/v1/assistant/messages", json={"text": "hi"}).status_code == 200
     assert client.post("/api/v1/assistant/messages", json={"text": "hi"}).status_code == 429
+
+
+def test_a_blank_reply_is_asked_again(client, model):
+    """这个模型偶尔把正文全花在思考上、content 只回空白：要当成一次可重试的失败。"""
+    configure(client)
+    model.replies += [(200, "   "), (200, {"reply": "这轮想清楚了。", "drafts": []})]
+    reply = client.post("/api/v1/assistant/messages", json={"text": "在吗"}).json()["messages"][1]
+    assert reply["text"] == "这轮想清楚了。"
+    assert len(model.requests) == 2
+
+
+def test_a_blank_reply_that_keeps_blank_becomes_a_plain_answer(client, model):
+    configure(client)
+    model.replies += [(200, ""), (200, ""), (200, "")][:3]
+    reply = client.post("/api/v1/assistant/messages", json={"text": "在吗"})
+    assert reply.status_code == 502
+    assert "再问一次" in reply.json()["message"]
