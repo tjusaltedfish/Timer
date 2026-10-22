@@ -10,7 +10,12 @@ $taskVersion = ((Get-Content -LiteralPath (Join-Path $taskEnv.App 'pubspec.yaml'
     Where-Object { $_ -match '^version:\s*(\d+\.\d+\.\d+\+\d+)\s*$' } | Select-Object -First 1) -replace '^version:\s*', ''
 if (-not $taskVersion) { throw 'pubspec.yaml version must look like 1.2.3+45.' }
 if ($Mode -eq 'release') {
-    throw 'Personal release signing is not configured yet. Use debug for local verification; see docs/HANDOFF.md section 9.'
+    # Release builds sign with the machine's debug key for now (see
+    # apps/planner/android/app/build.gradle.kts). That keeps in-place upgrades
+    # working for personal installs, and a release APK is ~4x smaller than a
+    # debug one. Configure the personal keystore before handing the APK to
+    # other people (docs/HANDOFF.md section 9).
+    Write-Warning 'Release APK signs with the debug key until the personal keystore is configured.'
 }
 # Flutter asset copying fails through the ASCII junction on this Windows setup.
 # Use the physical project path and scope the Android path-check override to this build.

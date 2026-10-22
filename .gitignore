@@ -26,3 +26,4 @@ llm-key
 pytest-of-*/
 tmp*/
 .tmp/
+apps/planner/android/.kotlin/

@@ -85,3 +85,19 @@ def test_missing_apk_is_not_offered(client, tmp_path):
     info = releases.publish(tmp_path, apk, "1.0.0+8")
     (tmp_path / "releases" / info["file"]).unlink()
     assert client.get("/api/v1/app/latest").status_code == 404
+
+
+def test_download_supports_resuming_with_a_range(client, tmp_path):
+    payload = bytes(range(256)) * 4096  # 1 MiB
+    apk = tmp_path / "built.apk"
+    apk.write_bytes(payload)
+    releases.publish(tmp_path, apk, "1.0.0+7")
+    headers = phone(client)
+    full = client.get("/api/v1/app/download", headers=headers)
+    assert full.headers["accept-ranges"] == "bytes"
+    part = client.get("/api/v1/app/download", headers={**headers, "Range": "bytes=1000000-"})
+    assert part.status_code == 206
+    assert part.headers["content-range"] == f"bytes 1000000-{len(payload) - 1}/{len(payload)}"
+    assert full.content[:1000000] + part.content == payload
+    bad = client.get("/api/v1/app/download", headers={**headers, "Range": f"bytes={len(payload)}-"})
+    assert bad.status_code == 416

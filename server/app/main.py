@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import os
 import secrets
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import ValidationError
 
 from . import assistant, auth, releases, tenancy
@@ -562,14 +563,42 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         return releases.public(latest)
 
     @app.get("/api/v1/app/download")
-    def app_download(device=Depends(authenticated)):
+    def app_download(request: Request, device=Depends(authenticated)):
         latest = releases.read_latest(store.directory)
         if not latest:
             raise DomainError("电脑上还没有发布手机版安装包", "NO_RELEASE", 404)
-        return FileResponse(releases.apk_path(store.directory, latest),
-                            media_type="application/vnd.android.package-archive",
-                            filename=latest["file"],
-                            headers={"X-Timer-Sha256": latest["sha256"], "X-Timer-Version": latest["version"]})
+        path = releases.apk_path(store.directory, latest)
+        size = path.stat().st_size
+        start, end, partial = 0, size - 1, False
+        match = re.fullmatch(r"bytes=(\d+)-(\d*)", request.headers.get("range", "").strip())
+        if match:
+            start = int(match.group(1))
+            end = min(int(match.group(2)), size - 1) if match.group(2) else size - 1
+            if start >= size or end < start:
+                return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+            partial = True
+        length = end - start + 1
+
+        def chunks():
+            # Files are megabytes, so stream in blocks; seek() lets a phone that
+            # lost Wi-Fi resume from the byte it already has (client sends Range).
+            with path.open("rb") as stream:
+                stream.seek(start)
+                remaining = length
+                while remaining > 0:
+                    block = stream.read(min(1 << 20, remaining))
+                    if not block:
+                        break
+                    remaining -= len(block)
+                    yield block
+
+        headers = {"Accept-Ranges": "bytes", "Content-Length": str(length),
+                   "X-Timer-Sha256": latest["sha256"], "X-Timer-Version": latest["version"]}
+        if partial:
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        return StreamingResponse(chunks(), status_code=206 if partial else 200,
+                                 media_type="application/vnd.android.package-archive",
+                                 headers=headers)
 
     return app
 
