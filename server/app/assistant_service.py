@@ -100,6 +100,29 @@ def remember_entities(conn, user_id, items, now, limit=6):
                  (user_id, json.dumps(merged[:limit], ensure_ascii=False), stamp(now)))
 
 
+MAX_AUTO_ACTIONS = 3  # auto mode only takes small steps on its own (plan §9.3)
+
+
+def needs_confirm(draft, state, zone):
+    """Big or cross-day edits wait for an explicit「确认」even in auto mode."""
+    actions = draft.get("actions", [])
+    if len(actions) > MAX_AUTO_ACTIONS:
+        return True
+    days = set()
+    blocks = {block["id"]: block for block in state.get("blocks", [])}
+    for action in actions:
+        if action.get("type") not in ("schedule_new", "schedule_task", "protect", "move_block"):
+            continue
+        for key in ("start_at", "end_at"):
+            if action.get(key):
+                days.add(parse(action[key]).astimezone(zone).date())
+        for key in ("block_id", "id"):
+            block = blocks.get(action.get(key) or "")
+            if block:
+                days.add(parse(block["start_at"]).astimezone(zone).date())
+    return len(days) > 1
+
+
 def touched_entities(state, drafts):
     """Task/block titles a turn proposed or changed — what later「它」should point at."""
     tasks = {task["id"]: task for task in state.get("tasks", [])}
@@ -289,6 +312,9 @@ class AssistantService:
         remembered = self._remember(reply.remember, state, request_id, user_id)
         reply_id = identifier()
         draft_ids = [identifier() for _ in drafts]
+        quiet, confirm_needed = [], []
+        for draft_id, draft in zip(draft_ids, drafts):
+            (confirm_needed if needs_confirm(draft, state, zone) else quiet).append(draft_id)
         with self.store.connect() as conn:
             assistant.count_call(conn, now, calls, user_id=user_id)
             conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?,?)", (identifier(), "user", shown, stamp(now), user_id))
@@ -299,13 +325,21 @@ class AssistantService:
                              (draft_id, reply_id, draft["summary"][:200], encode(draft["actions"]), "pending", stamp(now), user_id))
         applied = 0
         if mode == "auto":
-            for draft_id in draft_ids:
+            for draft_id in quiet:
                 try:
                     self.apply_draft(draft_id, device_id, user_id)
                     applied += 1
                 except DomainError as error:
                     self.dismiss_draft(draft_id, user_id)
                     notes.append(error.message)
+        answer_override = None
+        if confirm_needed:
+            listed = "；".join(draft["summary"] for draft in drafts if needs_confirm(draft, state, zone))
+            if applied:
+                notes.append(f"另有 {len(confirm_needed)} 处改动偏大，等你确认（回「确认」或「不必」）。")
+            else:
+                answer_override = (f"这次改动偏大（{len(confirm_needed)} 处），先等你确认：\n{listed}\n"
+                                   "要办就回「确认」，不办回「不必」。")
         # Remember what this turn was about, so「它 / 那个」has a referent next turn.
         record = touched_entities(state, drafts)
         before_ids = {item["id"] for item in state.get("tasks", [])} | {item["id"] for item in state.get("blocks", [])}
@@ -316,7 +350,7 @@ class AssistantService:
         for item in after_state.get("blocks", []):
             if item["id"] not in before_ids:
                 record.append({"kind": "安排", "id": item["id"], "title": item["title"]})
-        answer = self._answer(reply.reply, mode, len(drafts), applied, notes, remembered)
+        answer = answer_override or self._answer(reply.reply, mode, len(drafts), applied, notes, remembered)
         if reply.question:
             listed = " ".join(f"{index}. {option}" for index, option in enumerate(reply.question.options, 1))
             answer = reply.question.text + (f"\n{listed}" if listed else "")
