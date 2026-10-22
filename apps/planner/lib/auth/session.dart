@@ -21,7 +21,7 @@ enum SessionStatus {
 class AuthSession {
   AuthSession({required this.storage, required this.transport});
 
-  static const defaultBaseUrl = 'http://127.0.0.1:8765';
+  static const defaultBaseUrl = 'https://timer.studydazi.top';
   static const _recordKey = 'auth_session';
   static const _timeout = Duration(seconds: 10);
 
@@ -105,7 +105,9 @@ class AuthSession {
     user = value['user'] as Json?;
     device = value['device'] as Json?;
     hasRecord = true;
+    debugPrint('[auth] credentials adopted, writing token');
     await storage.writeToken(token);
+    debugPrint('[auth] token stored, persisting session');
     await _persist();
   }
 
@@ -198,15 +200,26 @@ class AuthSession {
       if (token.isNotEmpty) 'Authorization': 'Bearer $token',
     };
     http.Response response;
-    try {
-      response = await (method == 'GET'
-              ? transport.get(uri, headers: headers)
-              : transport.post(uri, headers: headers, body: jsonEncode(body)))
-          .timeout(_timeout);
-    } on ApiFailure {
-      rethrow;
-    } catch (_) {
-      throw ApiFailure('连不上服务器，请检查地址和网络。', 0);
+    for (var attempt = 1; ; attempt += 1) {
+      try {
+        response = await (method == 'GET'
+                ? transport.get(uri, headers: headers)
+                : transport.post(uri, headers: headers, body: jsonEncode(body)))
+            .timeout(_timeout);
+        break;
+      } on ApiFailure {
+        rethrow;
+      } catch (error) {
+        // 手机网络切换/隧道抖动会让单次请求断掉，哪怕服务端其实已经处理成功。
+        // 打印真实异常（debug 包在 logcat 可见），并重试一次再判失败。
+        debugPrint(
+          '[auth] $method $uri failed (attempt $attempt): '
+          '${error.runtimeType}: $error',
+        );
+        if (attempt >= 2) {
+          throw ApiFailure('连不上服务器，请检查地址和网络。', 0);
+        }
+      }
     }
     Json value;
     try {

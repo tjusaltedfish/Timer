@@ -155,9 +155,9 @@ void main() {
 
       expect(find.byKey(const Key('login.submit')), findsOneWidget);
       expect(
-        find.text('http://127.0.0.1:8765'),
+        find.text('https://timer.studydazi.top'),
         findsWidgets,
-        reason: '服务器地址默认取契约里的 8765',
+        reason: '服务器地址默认指向用户的公网地址',
       );
 
       await tester.tap(find.byKey(const Key('login.submit')));

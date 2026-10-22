@@ -120,7 +120,14 @@ class PlannerController extends ChangeNotifier {
     await auth.restore();
     // A v2 login record owns the address; an old cache without one keeps the
     // legacy desktop address for the desktop-token/pairing path.
-    if (auth.hasRecord) serverUrl = auth.baseUrl;
+    if (auth.hasRecord) {
+      serverUrl = auth.baseUrl;
+    } else if (serverUrl.contains('127.0.0.1') ||
+        serverUrl.contains('localhost')) {
+      // 换到公网服务后，旧缓存里的本机地址只适合电脑本机；没登录过 v2 的
+      // 手机（以及刚配对过的机器）打开登录页时直接给公网地址，省得再手改。
+      serverUrl = AuthSession.defaultBaseUrl;
+    }
     _token = auth.token;
     // No token means the login page can be shown without a round trip.
     sessionChecked = _token.isEmpty;

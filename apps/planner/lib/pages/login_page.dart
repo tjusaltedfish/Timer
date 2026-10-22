@@ -98,12 +98,14 @@ class _LoginPageState extends State<LoginPage> {
       TextInput.finishAutofillContext();
       // The gate swaps this page for the planner on the next notification.
     } on ApiFailure catch (error) {
+      debugPrint('[auth] api failure: ${error.status} ${error.code}: ${error.message}');
       if (!mounted) return;
       setState(() {
         _busy = false;
         _error = _describe(error);
       });
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[auth] submit failed: ${error.runtimeType}: $error');
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -122,7 +124,7 @@ class _LoginPageState extends State<LoginPage> {
       'REGISTRATION_CLOSED' => '这个服务器还没开注册，请让站长在电脑上开一下。',
       'USERNAME_TAKEN' => '这个用户名已经有人用了，换一个。',
       'WEAK_PASSWORD' => '密码至少 10 位，再长一点。',
-      'INVALID_USERNAME' => '用户名用 2–24 位字母、数字、下划线或短横线。',
+      'INVALID_USERNAME' => '用户名用 3–32 位字母、数字、下划线、点或短横线。',
       _ => code == null ? error.message : '${error.message}（$code）',
     };
   }
@@ -193,7 +195,7 @@ class _LoginPageState extends State<LoginPage> {
                               enableSuggestions: false,
                               decoration: const InputDecoration(
                                 labelText: '用户名',
-                                helperText: '2–24 位字母、数字、下划线或短横线',
+                                helperText: '3–32 位字母、数字、下划线、点或短横线',
                               ),
                               onSubmitted: (_) => _passwordFocus.requestFocus(),
                             ),

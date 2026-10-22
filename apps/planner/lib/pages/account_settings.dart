@@ -125,7 +125,7 @@ extension _AccountSettings on _PlannerHomeState {
                   enableSuggestions: false,
                   decoration: const InputDecoration(
                     labelText: '服务地址',
-                    hintText: 'http://127.0.0.1:8765',
+                    hintText: 'https://timer.studydazi.top',
                   ),
                 ),
                 if (error != null)

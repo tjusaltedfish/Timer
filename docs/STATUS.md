@@ -1,5 +1,15 @@
 # 当前状态
 
+## v2 P4 修：手机登录默认走公网地址、失败自动重试（2026-10-22）
+
+- 收（USER m03620「把服务器的默认地址改掉」+ 之前「依旧登录不上」）：登录页原来默认写死 `http://127.0.0.1:8765`（本机电脑），手机上点登录直接连不上；而且这个默认值会被旧缓存的 `server_url` 覆盖，手机端一直显示本机地址。
+- 默认值：`AuthSession.defaultBaseUrl` 改成 `https://timer.studydazi.top`；`initialize()` 里如果旧缓存还是 `127.0.0.1`/`localhost` 且没有 v2 登录记录，登录页直接换成公网地址，用户不用再手改。
+- 传输健壮性：`AuthSession._send` 现在把「连不上」类异常重试一次（移动网络/隧道抖动时单次请求断掉很常见），仍失败才报错；异常类型与原样错误打进 debug 日志（`[auth] ... failed (attempt N)`）。这解释了一部分「服务端其实建号成功、客户端却提示连不上」——单次请求丢了响应。
+- 明文兜底：`AndroidManifest.xml` 加 `android:usesCleartextTraffic="true"`，局域网 `http://192.168.x.x:8787` 也能连（公网仍建议 https）。用户名提示改成与服务端一致的「3–32 位字母、数字、下划线、点或横线」。
+- 版本：`apps/planner/pubspec.yaml` → `1.2.5+15`；`tools/build-android.ps1 -Mode release` 出包（arm64 约 23MB），`app.releases publish` 到数据目录。
+- 验证（真实跑过）：`flutter test` → **106 passed**、`dart analyze` 无问题；在 OPPO（Android 17，5G）上用 debug 1.2.5 真实点登录：`[auth] credentials adopted → token stored → persisting session` 后进入「先说说你想怎么用它」引导页（登录链路通）。事件日志里之前两次「注册成功但客户端报连不上」的账号（`zzx`/`zzxx`）和诊断号 `diag` 已清理，`users` 只剩 `me`、`shidi`。
+- 未做：release 包仍用 debug 签名（换 keystore 才需要刻意升级）；`http://` 公网地址仍会被 Cloudflare 301 到 https（这是对的）。
+
 ## v2 账号：支持自助注册（2026-10-22）
 
 - 收（USER m03096「我的账号密码呢，我想自己注册」）：v2 原来只能站长用 `python -m app.admin user add` 建号，客户端只有登录页。现在加自助注册，并把「开关 + 账号合并」一起做掉。
