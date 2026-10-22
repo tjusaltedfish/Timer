@@ -2,6 +2,15 @@
 
 日期：2026-10-21。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
 
+## 助手表情包：只留「大肥鱼」一套，且要跟回话对得上（2026-10-21）
+
+- 成因（`m01502`）：上一版素材是混的——大肥鱼里掺了白毛、粉猫娘、猫图、人偶图，同一张图还被塞进了不同类别；而且只要模型填了类别就发图，连「这个安排还没开始，提前不动」这种带失败信息的回复也配了张表情包。用户要求：只发大肥鱼的表情包，且表情包要符合回复逻辑。
+- 素材只留 [astrbot-deepseek-meme-pack](https://github.com/shirachino/astrbot-deepseek-meme-pack)（`deepseek-girl-pack`「大肥鱼表情包」，CC0）。仓库超 50MB，GitHub API 限流、codeload 传输截断、jsDelivr 拒绝大于 50MB 的包，最后改成按目录页解析 + `raw.githubusercontent.com` 单文件下载，49 张候选拼版人工筛。**最终 13 张 / 11 类，共 764K**：`server/assets/memes/<英文类别>/<n>.jpg`——`angry`（炸毛「哈！」、伸爪）、`baka`（碗里「不赖」）、`confused`（咕咕嘎嘎）、`fool`（呆滞大眼）、`happy`（大笑、献花）、`like`（已思考·好女孩）、`sad`、`sigh`（哦鲸鲸）、`sleep`（晚安）、`surprised`、`work`（老实写代码吧）。混进来的白毛/粉猫娘/猫/人偶全部剔除，旧的中文目录整体删除。
+- 挑选逻辑：`server/app/memes.py` 的类别从 7 个元组改成 **11 类 dict，每类带「什么时候该用」**，由 `memes.hint()` 拼进系统提示词（`__MEMES__` 占位替换），模型只在回复里填 `meme` 字段、不再自己造类别名。挑图从「每类第一张」改成按钉住种子的 rng 随机，并用 `qq.json` 的 `recent_memes` 记住**最近发过的 2 张**优先避开，避免一套小素材反复刷同一张。
+- 门禁：`assistant_service.py` 把插表情包挪到最后一个块——**只有回复成功且没有 `notes`**（未识别编号、安排还没开始、模型没配置等失败信息）**时才插**，否则连模型已经存下的那条也删掉；微信通道同样生效。
+- 验证（真实跑过）：后台 `PLANNER_DATA_DIR=<仓库内临时目录> ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **159 passed**（154 + 5）；`test_memes.py` 8 项覆盖未知类别、确定性、`avoid` 行为、路径穿越、每种都已成包；`test_qq.py` 新增「回复带失败信息时不发图」。另用真实模型跑了五句（`artifacts/meme-preview.py`）：累→晚安、夸人→好女孩、拖延→哦鲸鲸、大笑→献花、排程→老实写代码，「提前半小时」遇安排未开始→**不出图**。
+- 文档：`docs/design/assistant-voice.md` 第四节重写（单一套素材、CC0 出处、13 张 11 类、对不上就不发、换素材与 `tools/meme_sheet.py` 拼版审图的方法）。
+
 ## QQ 机器人接管聊天入口、助手人格改「大肥鱼」（2026-10-21）
 
 - 起因：用户嫌公众号测试号「头像不能改、消息界面很难进、不能置顶、没有人格」，要求改成 **QQ 机器人**接管，并且「不仅是助手、更是朋友」。按用户批准（`m00179`：直接走 B、允许改后端）做的是 **Timer 原生 QQ 通道**，不是外挂 AstrBot；公众号那条路保留可用。

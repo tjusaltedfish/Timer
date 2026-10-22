@@ -297,9 +297,19 @@ class QQChannel:
             (identifier(), f"{key}#meme" if key else None, openid, name, stamp(now), stamp(now),
              msg_id, stamp(msg_at) if msg_at else None, seq))
 
+    def _pick_meme(self, category):
+        """Pick one sticker, remembering the last two so a small set does not repeat back to back."""
+        conf = self.settings.load()
+        avoid = list(conf.get("recent_memes") or [])[:2]
+        name = memes.pick(category, avoid=avoid)
+        if name:
+            conf["recent_memes"] = [name, *[old for old in avoid if old != name]][:2]
+            self.settings.save(conf)
+        return name
+
     def enqueue_meme(self, category, key=None):
         """发一张表情包给绑定的账号；没有素材就安静地跳过。"""
-        name = memes.pick(category)
+        name = self._pick_meme(category)
         if name is None:
             return None
         bound = self.settings.load()["bound_openid"]
@@ -476,7 +486,7 @@ class QQChannel:
                     self._enqueue(conn, row["openid"], reply, self.clock(), key=f"reply:{row['id']}",
                                   msg_id=row["msg_id"], msg_at=parse(row["received_at"]))
                     category = getattr(self.commands, "meme", "")
-                    name = memes.pick(category) if category else None
+                    name = self._pick_meme(category) if category else None
                     if name:  # 文字在前，图在后：同一 not_before 下按 rowid 定序
                         self._enqueue_meme(conn, row["openid"], name, self.clock(),
                                            key=f"reply:{row['id']}", msg_id=row["msg_id"],

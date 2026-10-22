@@ -162,10 +162,6 @@ class AssistantService:
             conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (user_id, "user", text, stamp(now)))
             conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)",
                          (reply_id, "assistant", "", stamp(now + timedelta(microseconds=1))))
-            if reply.meme:
-                # 只存模型给的类别；哪张图由 memes.pick 决定，换素材不影响历史。
-                conn.execute("INSERT OR REPLACE INTO assistant_memes VALUES(?,?,?)",
-                             (reply_id, reply.meme[:16], stamp(now)))
             for draft_id, draft in zip(draft_ids, drafts):
                 conn.execute("INSERT INTO assistant_drafts VALUES(?,?,?,?,?,?)",
                              (draft_id, reply_id, draft["summary"][:200], encode(draft["actions"]), "pending", stamp(now)))
@@ -182,6 +178,11 @@ class AssistantService:
         answer = assistant.visible_text(answer, state, refs)
         with self.store.connect() as conn:
             conn.execute("UPDATE assistant_messages SET text=? WHERE id=?", (answer, reply_id))
+            if reply.meme and not notes:
+                conn.execute("INSERT OR REPLACE INTO assistant_memes VALUES(?,?,?)",
+                             (reply_id, reply.meme[:16], stamp(now)))
+            elif reply.meme:
+                conn.execute("DELETE FROM assistant_memes WHERE message_id=?", (reply_id,))
             return assistant.message_rows(conn, 2)
 
     @staticmethod

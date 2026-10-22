@@ -504,14 +504,14 @@ def test_unbind_stops_the_channel(fake):
 def test_meme_request_sends_text_then_image(fake, monkeypatch):
     """模型说想发表情包：先一句话，再传图，图片走 msg_type=7。"""
     import base64
-    monkeypatch.setattr(qq_module.memes, "pick", lambda category, rng=None: "开心/1.png")
+    monkeypatch.setattr(qq_module.memes, "pick", lambda category, rng=None, avoid=(): "happy/1.jpg")
     client, app, api, gateway, model = fake
     configure(client)
     configure_model(client)
     bind(client, app)
     run(client, app)
     api.sent.clear()
-    model.replies.append({"reply": "笑死，这段你居然做完了", "drafts": [], "meme": "开心"})
+    model.replies.append({"reply": "笑死，这段你居然做完了", "drafts": [], "meme": "happy"})
     message(app, content="在吗", msg_id="m-meme")
     run(client, app)
     assert [item["body"]["msg_type"] for item in api.sent] == [0, 7]
@@ -519,7 +519,24 @@ def test_meme_request_sends_text_then_image(fake, monkeypatch):
     assert api.sent[1]["body"]["msg_id"] == "m-meme"
     upload = api.uploads[0]
     assert upload["file_type"] == 1 and upload["srv_send_msg"] is False
-    assert base64.b64decode(upload["file_data"])[:4] == b"\x89PNG"
+    assert base64.b64decode(upload["file_data"])[:2] == b"\xff\xd8"
+
+
+def test_meme_is_dropped_when_the_reply_reports_a_failure(fake):
+    """回复里带报错/没办成时不许配图：图和文字对不上比不发还难看。"""
+    client, app, api, gateway, model = fake
+    configure(client)
+    configure_model(client)
+    bind(client, app)
+    run(client, app)
+    api.sent.clear()
+    model.replies.append({"reply": "这段我三下五除二搞定了", "meme": "like",
+                          "drafts": [{"summary": "改期", "actions": [
+                              {"type": "move_block", "block": "b9", "start_local": "2026-10-20 10:00"}]}]})
+    message(app, content="算法题挪一下", msg_id="m-meme-fail")
+    run(client, app)
+    assert [item["body"]["msg_type"] for item in api.sent] == [0]
+    assert api.uploads == []
 
 
 def test_no_meme_art_sends_text_only(fake, monkeypatch, tmp_path):
@@ -530,7 +547,7 @@ def test_no_meme_art_sends_text_only(fake, monkeypatch, tmp_path):
     bind(client, app)
     run(client, app)
     api.sent.clear()
-    model.replies.append({"reply": "嗯", "drafts": [], "meme": "开心"})
+    model.replies.append({"reply": "嗯", "drafts": [], "meme": "happy"})
     message(app, content="在吗", msg_id="m-noart")
     run(client, app)
     assert [item["body"]["msg_type"] for item in api.sent] == [0]
