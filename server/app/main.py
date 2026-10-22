@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import ValidationError
@@ -106,6 +107,10 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     @app.exception_handler(RequestValidationError)
     async def request_error(request, error):
         return JSONResponse({"code": "VALIDATION_ERROR", "message": "输入格式不正确，请检查必填项和时间", "field_errors": [str(e["loc"]) for e in error.errors()]}, status_code=422)
+
+    # Snapshot payloads are large JSON; gzip cuts phone download size several
+    # times over on slow links without changing any API shape.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     @app.middleware("http")
     async def headers(request, call_next):
