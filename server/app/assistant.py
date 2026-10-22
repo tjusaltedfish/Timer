@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS assistant_messages (id TEXT PRIMARY KEY, role TEXT NO
 CREATE TABLE IF NOT EXISTS assistant_drafts (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, summary TEXT NOT NULL, actions TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assistant_usage (day TEXT PRIMARY KEY, calls INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS assistant_undo (draft_id TEXT PRIMARY KEY, operations TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assistant_memes (message_id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
 """
 
 RETRY_DELAYS = (0, 1.5, 4.0)
@@ -285,13 +286,16 @@ class ModelReply(Loose):
     reply: str = Field(default="", max_length=3000)
     drafts: list[DraftOut] = Field(default_factory=list, max_length=5)
     remember: list[str] = Field(default_factory=list, max_length=3)
+    meme: str = Field(default="", max_length=16)
 
 
 SYSTEM_PROMPT = """你是「瞬时」：用户本人的日程执行助理。你的价值是把一句话立刻变成日程上的改动，而不是讨论它。
 
 【你是谁】你叫「大肥鱼」，是这个人的搭子兼助理，跟了他很久。不是客服，不是工具人，是那种「他一句话你就知道该动哪儿」的熟人。
-【性格】干脆、松弛、可靠，带点损友的分寸。只说中文，不说教、不鸡汤、不复述用户的话、不展示计算过程。可以偶尔用一两个 emoji 或颜文字（一次最多一个，别堆），小事上可以松，日程上的事必须准。
-【闲和忙】他只闲聊、发牢骚、说句废话时，正常聊两句就行，别硬塞日程动作，drafts 给空数组，reply 收在 80 字内，别追问、别把聊天变成盘问。他要动日程时立刻收敛成干活模式，reply 收在 40 字内。闲聊里的情绪、吐槽不写进 remember。
+【性格】活泼、有梗、反应快，带点损友的亲昵；不油腻、不说教、不鸡汤。夸人必须具体——夸到他实际做到的那一点（做了多久、啃下了哪块），空夸「你真棒」不算夸。损人留分寸，别在他难受的时候抖机灵。只说中文。
+【怎么说话】像在微信里聊天：句子短，一次最多两三句；不复述他的话，不展示计算过程，不列清单，不加小标题。emoji 要吝啬——只有情绪真的到位才用一个，**不要每句都带鱼，不要固定口头禅，也不要用 emoji 代替说话内容**。小事上可以松，日程上的事必须准。
+【闲和忙】他闲聊、发牢骚、说句废话时，就当朋友聊：接住他的情绪，可以开个玩笑，可以吐槽，drafts 给空数组，reply 收在 80 字内，别追问、别把聊天变成盘问。他要动日程时立刻收敛成干活模式，reply 收在 40 字内，只说要紧的那句。闲聊里的情绪、吐槽不写进 remember。
+【表情包】你还能发一张表情包：填 meme 字段（见下方取值）。只在想笑、想安慰、想耍赖、想夸他时才给，一次一张，别连着给，正经干活时不给。
 
 【怎么做事】
 - 指令能看懂就直接给出动作（drafts），并用一句话说明结果，例如「已排 11:10–12:00 做时间表开发，还差约 10 分钟的量。」reply 一般不超过 40 字。
@@ -304,13 +308,16 @@ SYSTEM_PROMPT = """你是「瞬时」：用户本人的日程执行助理。你�
 - 只安排在作息范围内，不与已有安排、固定预约(fixed)和保护时段(protected)重叠；任务已有未来安排时优先改期而不是重复创建。
 - 只用名称称呼任务和安排，绝不向用户展示 t1、b2、c1 这类编号。
 
-【记忆】
-- 上下文里「用户明确保存的偏好」是长期记忆，安排时要遵守（比如「上午做实验」就优先排上午）。
+【记忆】分三层，别混：
+- 长期偏好：上下文里「用户明确保存的偏好」是长期记忆，安排时要遵守（比如「上午做实验」就优先排上午）。
+- 今天的事实：以当前日程、执行记录、结果检查点为准；他做了但没记录的，**不等于没做**，不许断言「你还没做」，也不许把上午的事当成刚发生。
+- 刚才的对话：历史消息前面带 [时:分]。超过 45 分钟的旧话题不接着聊，他说新事就从新事开始。
 - 用户在对话中说出关于自己的长期习惯或偏好（作息、擅长的时段、固定安排、称呼、做事方式），把它写成一句话放进 remember，最多 3 条；一次性的安排、情绪、闲聊不要记。
 - 事实以当前日程、执行记录和带出处的回顾/材料为准，不从闲聊猜测用户特征。
 
 只输出一个 JSON 对象：
-{"reply": "给用户看的一句话", "drafts": [{"summary": "这组变化的一句话说明", "actions": [动作...]}], "remember": []}
+{"reply": "给用户看的一句话", "drafts": [{"summary": "这组变化的一句话说明", "actions": [动作...]}], "remember": [], "meme": ""}
+meme 只想发表情包时才填，取值只能是：开心 / 得意 / 委屈 / 累了 / 无语 / 鼓励 / 夸你 / 偷懒 / 道谢 / 道歉，其余一律空字符串。
 动作只能是以下几种（时间一律用用户时区的 "YYYY-MM-DD HH:MM"，或 "now"）：
 {"type":"schedule_new","title":"...","outcome_criteria":"...","project":"c1（分类编号，可省略）","start_local":"...","until_local":"截止时刻，可省略","minutes":60,"kind":"flexible|fixed"}  新建一件事并排上
 {"type":"schedule_task","task":"t1","start_local":"...","until_local":"可省略","minutes":60}   为已有任务排一段
@@ -379,6 +386,17 @@ def build_context(state, now):
     midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     start, end = midnight - timedelta(days=1), midnight + timedelta(days=8)
     sessions = {s["block_id"]: s for s in state["sessions"]}
+    today = [b for b in state["blocks"] if midnight <= parse(b["start_at"]) < midnight + timedelta(days=1)
+             and b["status"] in ("scheduled", "completed", "skipped")]
+    finished = [b for b in today if b["status"] == "completed"]
+    active = [b for b in today if sessions.get(b["id"], {}).get("state") in ("running", "paused", "awaiting_feedback")]
+    unrecorded = [b for b in today if b["status"] == "scheduled" and parse(b["end_at"]) <= now
+                  and b["id"] not in sessions]
+    progress = (f"今天的进度：{len(today)} 段安排，已完成 {len(finished)} 段，"
+                f"正在做或等反馈 {len(active)} 段，过了点也没有任何记录的 {len(unrecorded)} 段")
+    if unrecorded:
+        progress += "（" + "、".join(b["title"] for b in unrecorded[:4]) + "）"
+    lines.append(progress)
     shown = sorted((b for b in state["blocks"] if b["status"] in ("scheduled", "completed", "skipped")
                     and start <= parse(b["start_at"]) < end), key=lambda b: b["start_at"])
     lines += ["", "近期时间块（昨天到未来一周）："]
@@ -386,6 +404,8 @@ def build_context(state, now):
         refs[f"b{j}"] = block["id"]
         session = sessions.get(block["id"])
         run = f"，执行：{session['state']}，预计结束 {_local(session['expected_end_at'], zone)}" if session else ""
+        if not session and block["status"] == "scheduled" and parse(block["end_at"]) <= now:
+            run = "，过了点没记录（可能做了也可能没做，别当没发生）"
         lines.append(f"b{j}｜{_local(block['start_at'], zone)}–{parse(block['end_at']).astimezone(zone):%H:%M}｜"
                      f"{block['title']}｜{block['kind']}｜{block['status']}{run}")
     if not shown:
@@ -652,8 +672,10 @@ def message_rows(conn, limit=60):
     for row in reversed(rows):
         drafts = conn.execute("SELECT d.*, u.draft_id AS undo FROM assistant_drafts d LEFT JOIN assistant_undo u "
                               "ON u.draft_id=d.id WHERE d.message_id=? ORDER BY d.rowid", (row["id"],)).fetchall()
-        result.append({**dict(row), "drafts": [public_draft(d, d["status"] == "applied" and d["undo"] is not None)
-                                               for d in drafts]})
+        meme = conn.execute("SELECT name FROM assistant_memes WHERE message_id=?", (row["id"],)).fetchone()
+        result.append({**dict(row), "meme": meme["name"] if meme else "",
+                       "drafts": [public_draft(d, d["status"] == "applied" and d["undo"] is not None)
+                                  for d in drafts]})
     return result
 
 

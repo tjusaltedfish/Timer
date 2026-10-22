@@ -4,6 +4,7 @@ import re
 from copy import deepcopy
 from datetime import timedelta
 from uuid import uuid5, NAMESPACE_URL
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
@@ -110,14 +111,23 @@ class AssistantService:
         with self.store.connect() as conn:
             conf, key = self.require(conn)
             state = self.store.state(conn)
-            history = conn.execute("SELECT role,text FROM assistant_messages ORDER BY created_at DESC, rowid DESC LIMIT 10").fetchall()
+            history = conn.execute("SELECT role,text,created_at FROM assistant_messages WHERE created_at>=? "
+                                   "ORDER BY created_at DESC, rowid DESC LIMIT 10",
+                                   (stamp(now - timedelta(minutes=45)),)).fetchall()
         # Removing a memory must also keep the original memory command out of model context.
         history = [row for row in history if not (row['role'] == 'user' and re.match(r'^(?:请)?(?:记住|忘记)[：:]', row['text']))]
         context, refs = assistant.build_context(state, now)
         mode = "confirm" if conf.get("confirm_first") else "auto"
+        zone = ZoneInfo(state["settings"]["timezone"])
+
+        def stamped(row):
+            # Old turns without a clock make the model treat this morning as "now".
+            at = parse(row["created_at"]).astimezone(zone)
+            return f"[{at:%H:%M}] {row['text']}"
+
         messages = [{"role": "system", "content": assistant.SYSTEM_PROMPT + "\n" + assistant.MODES[mode]},
                     {"role": "system", "content": context},
-                    *({"role": row["role"], "content": row["text"]} for row in reversed(history)),
+                    *({"role": row["role"], "content": stamped(row)} for row in reversed(history)),
                     {"role": "user", "content": text}]
         calls = 1
         raw = await assistant.complete(conf, key, messages, transport=self.transport())
@@ -152,6 +162,10 @@ class AssistantService:
             conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (user_id, "user", text, stamp(now)))
             conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)",
                          (reply_id, "assistant", "", stamp(now + timedelta(microseconds=1))))
+            if reply.meme:
+                # 只存模型给的类别；哪张图由 memes.pick 决定，换素材不影响历史。
+                conn.execute("INSERT OR REPLACE INTO assistant_memes VALUES(?,?,?)",
+                             (reply_id, reply.meme[:16], stamp(now)))
             for draft_id, draft in zip(draft_ids, drafts):
                 conn.execute("INSERT INTO assistant_drafts VALUES(?,?,?,?,?,?)",
                              (draft_id, reply_id, draft["summary"][:200], encode(draft["actions"]), "pending", stamp(now)))

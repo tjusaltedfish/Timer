@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -23,6 +24,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from . import memes
 from .chat_commands import HELP, ChatCommands, split_text
 from .domain import DomainError, identifier, parse, stamp
 
@@ -63,7 +65,7 @@ CREATE TABLE IF NOT EXISTS qq_inbox (id TEXT PRIMARY KEY, dedup_key TEXT UNIQUE 
 CREATE TABLE IF NOT EXISTS qq_outbox (id TEXT PRIMARY KEY, dedup_key TEXT UNIQUE, openid TEXT NOT NULL,
     text TEXT NOT NULL, not_before TEXT NOT NULL, expires_at TEXT, status TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0, channel TEXT, last_error TEXT, created_at TEXT NOT NULL, sent_at TEXT,
-    msg_id TEXT, msg_at TEXT, msg_seq INTEGER NOT NULL DEFAULT 1);
+    msg_id TEXT, msg_at TEXT, msg_seq INTEGER NOT NULL DEFAULT 1, kind TEXT NOT NULL DEFAULT 'text');
 """
 
 
@@ -174,6 +176,9 @@ class QQChannel:
         self._tasks = set()
         with store.connect() as conn:
             conn.executescript(SCHEMA)
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(qq_outbox)")}
+            if "kind" not in columns:  # 表情包是后加的：老库补一列，不动已有行
+                conn.execute("ALTER TABLE qq_outbox ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'")
             # 发送中途断电：QQ 那边可能已经收到了，不能自动重发
             conn.execute("UPDATE qq_outbox SET status='unknown', last_error='后台在发送时中断，是否送达未知' "
                          "WHERE status='sending'")
@@ -278,6 +283,32 @@ class QQChannel:
                  stamp(expires_at) if expires_at else None, stamp(now), msg_id,
                  stamp(msg_at) if msg_at else None, base + index))
 
+    def _enqueue_meme(self, conn, openid, name, now, key=None, msg_id=None, msg_at=None):
+        """Queue one image row. 表情包不分片，也不受长文本限制。"""
+        if not msg_id:
+            conf = self.settings.load()
+            fresh = conf.get("last_msg_at")
+            if conf.get("last_msg_id") and fresh and now - parse(fresh) <= PASSIVE_WINDOW:
+                msg_id, msg_at = conf["last_msg_id"], parse(fresh)
+        seq = 1 if not key or key.split(":")[0] not in ("notify", "weekly", "test") else 100
+        conn.execute(
+            "INSERT OR IGNORE INTO qq_outbox(id,dedup_key,openid,text,not_before,expires_at,status,"
+            "created_at,msg_id,msg_at,msg_seq,kind) VALUES(?,?,?,?,?,NULL,'queued',?,?,?,?,'image')",
+            (identifier(), f"{key}#meme" if key else None, openid, name, stamp(now), stamp(now),
+             msg_id, stamp(msg_at) if msg_at else None, seq))
+
+    def enqueue_meme(self, category, key=None):
+        """发一张表情包给绑定的账号；没有素材就安静地跳过。"""
+        name = memes.pick(category)
+        if name is None:
+            return None
+        bound = self.settings.load()["bound_openid"]
+        if not bound:
+            return None
+        with self.store.connect() as conn:
+            self._enqueue_meme(conn, bound, name, self.clock(), key)
+        return name
+
     def enqueue(self, text, key=None, not_before=None, expires_at=None):
         """Queue a message to the bound account (reminders, reports, tests)."""
         bound = self.settings.load()["bound_openid"]
@@ -342,6 +373,16 @@ class QQChannel:
         except (ValueError, AttributeError):
             return response.status_code if response is not None else 0, {}
 
+    async def _upload(self, http, openid, name):
+        """把一张本地表情包传成 file_info；QQ 不接受图片 URL。"""
+        raw = memes.read(name)
+        if raw is None:
+            return None
+        code, data = await self._call(http, "POST", f"/v2/users/{quote(openid)}/files", {
+            "file_type": 1, "file_data": base64.b64encode(raw).decode(),
+            "srv_send_msg": False, "ttl": 0})
+        return data.get("file_info")
+
     async def deliver(self, http, row):
         now = self.clock()
         with self.store.connect() as conn:
@@ -355,14 +396,24 @@ class QQChannel:
             conn.execute("UPDATE qq_outbox SET status='sending', attempts=attempts+1 WHERE id=?", (row["id"],))
         msg_id, seq = row["msg_id"], row["msg_seq"] or 1
         attempts = row["attempts"] + 1
+        image = row["kind"] == "image"
         status, channel, error = "failed", None, None
         for _ in range(3):
             passive = bool(msg_id) and bool(row["msg_at"]) and now <= parse(row["msg_at"]) + PASSIVE_WINDOW
-            payload = {"content": row["text"][:SEND_LIMIT], "msg_type": 0}
+            payload = {"content": "" if image else row["text"][:SEND_LIMIT], "msg_type": 7 if image else 0}
             if passive:
                 payload.update(msg_id=msg_id, msg_seq=seq)
             channel = "passive" if passive else "active"
             try:
+                if image:
+                    info = await self._upload(http, row["openid"], row["text"])
+                    if not info:
+                        error = "表情包素材已删除，这张图发不出去了"
+                        break
+                    payload["media"] = {"file_info": info}
+                    # 一张图 + 一句话的两条消息会撞同一个 msg_seq，图片让一位。
+                    if passive:
+                        payload["msg_seq"] = seq + 50
                 code, data = await self._call(http, "POST", f"/v2/users/{quote(row['openid'])}/messages", payload)
             except httpx.TimeoutException:
                 status, error = "unknown", "请求已发出但没有收到 QQ 的答复，是否送达未知，不会自动重发"
@@ -424,6 +475,12 @@ class QQChannel:
                     conn.execute("UPDATE qq_inbox SET status=? WHERE id=?", (status[:60], row["id"]))
                     self._enqueue(conn, row["openid"], reply, self.clock(), key=f"reply:{row['id']}",
                                   msg_id=row["msg_id"], msg_at=parse(row["received_at"]))
+                    category = getattr(self.commands, "meme", "")
+                    name = memes.pick(category) if category else None
+                    if name:  # 文字在前，图在后：同一 not_before 下按 rowid 定序
+                        self._enqueue_meme(conn, row["openid"], name, self.clock(),
+                                           key=f"reply:{row['id']}", msg_id=row["msg_id"],
+                                           msg_at=parse(row["received_at"]))
             if not self.settings.configured():
                 return
             with self.store.connect() as conn:

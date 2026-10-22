@@ -22,6 +22,7 @@ class FakeQQ:
 
     def __init__(self):
         self.sent, self.tokens, self.replies = [], 0, []
+        self.uploads = []
         self.fail_with = None
         self.unauthorized_once = False
         self.gateway = "wss://fake.gateway/websocket/"
@@ -38,6 +39,9 @@ class FakeQQ:
         if path == "/gateway":
             assert request.headers["Authorization"] == f"QQBot T{self.tokens}"
             return httpx.Response(200, json={"url": self.gateway})
+        if path.endswith("/files"):
+            self.uploads.append(body)
+            return httpx.Response(200, json={"file_info": "fi-1", "ttl": 0})
         if path.startswith("/v2/users/"):
             if self.unauthorized_once:
                 self.unauthorized_once = False
@@ -114,6 +118,14 @@ def configure(client, **extra):
     response = client.post("/api/v1/qq/config", json={"app_id": APP_ID, "app_secret": APP_SECRET, **extra})
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def configure_model(client):
+    """让这一条真的走模型：不然只会回「模型服务还没配置好」。"""
+    response = client.post("/api/v1/assistant/config", json={
+        "base_url": "https://relay.example/v1/", "model": "deepseek-chat",
+        "api_key": "sk-test-key", "confirm_first": True})
+    assert response.status_code == 200, response.text
 
 
 def bind(client, app, openid=OWNER, msg_id="m-bind"):
@@ -487,3 +499,52 @@ def test_unbind_stops_the_channel(fake):
     assert client.post("/api/v1/qq/unbind").json() == {"bound": False}
     assert client.get("/api/v1/qq/config").json()["bound"] is False
     assert app.state.proactive.channel.active is app.state.wechat
+
+
+def test_meme_request_sends_text_then_image(fake, monkeypatch):
+    """模型说想发表情包：先一句话，再传图，图片走 msg_type=7。"""
+    import base64
+    monkeypatch.setattr(qq_module.memes, "pick", lambda category, rng=None: "开心/1.png")
+    client, app, api, gateway, model = fake
+    configure(client)
+    configure_model(client)
+    bind(client, app)
+    run(client, app)
+    api.sent.clear()
+    model.replies.append({"reply": "笑死，这段你居然做完了", "drafts": [], "meme": "开心"})
+    message(app, content="在吗", msg_id="m-meme")
+    run(client, app)
+    assert [item["body"]["msg_type"] for item in api.sent] == [0, 7]
+    assert api.sent[1]["body"]["media"]["file_info"] == "fi-1"
+    assert api.sent[1]["body"]["msg_id"] == "m-meme"
+    upload = api.uploads[0]
+    assert upload["file_type"] == 1 and upload["srv_send_msg"] is False
+    assert base64.b64decode(upload["file_data"])[:4] == b"\x89PNG"
+
+
+def test_no_meme_art_sends_text_only(fake, monkeypatch, tmp_path):
+    """素材没下载全时整段静默，聊天不能因为缺图而失败。"""
+    client, app, api, gateway, model = fake
+    monkeypatch.setattr(qq_module.memes, "ROOT", tmp_path / "no-art")
+    configure(client)
+    bind(client, app)
+    run(client, app)
+    api.sent.clear()
+    model.replies.append({"reply": "嗯", "drafts": [], "meme": "开心"})
+    message(app, content="在吗", msg_id="m-noart")
+    run(client, app)
+    assert [item["body"]["msg_type"] for item in api.sent] == [0]
+    assert api.uploads == []
+
+
+def test_unknown_meme_category_is_ignored(fake):
+    client, app, api, gateway, model = fake
+    configure(client)
+    configure_model(client)
+    bind(client, app)
+    run(client, app)
+    api.sent.clear()
+    model.replies.append({"reply": "嗯", "drafts": [], "meme": "狂喜"})
+    message(app, content="在吗", msg_id="m-bad")
+    run(client, app)
+    assert [item["body"]["msg_type"] for item in api.sent] == [0]

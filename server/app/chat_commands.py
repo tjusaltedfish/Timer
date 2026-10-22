@@ -53,9 +53,11 @@ class ChatCommands:
 
     def __init__(self, store, clock, assistant, device):
         self.store, self.clock, self.assistant, self.device = store, clock, assistant, device
+        self.meme = ""  # 上一条回复想要的表情包类别（通道自己决定发不发）
 
     async def reply(self, text, request_id=None):
         """Reply text for one bound-user message."""
+        self.meme = ""  # 每条消息重算：上一条想要的表情包不留给下一条
         compact = text.strip()
         command = COMMAND.fullmatch(compact)
         review = REVIEW.fullmatch(compact)
@@ -97,6 +99,7 @@ class ChatCommands:
             if error.code == "ASSISTANT_NOT_CONFIGURED":
                 return "模型服务还没在电脑上配置好，我暂时只能回答「今天」「帮助」。"
             return error.message
+        self.meme = rows[-1].get("meme") or ""
         return self.render(rows[-1])
 
     def finish(self, command, request_id, operation_id):
