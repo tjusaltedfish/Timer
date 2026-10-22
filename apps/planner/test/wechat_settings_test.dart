@@ -109,4 +109,61 @@ void main() {
       c.dispose();
     },
   );
+
+  testWidgets('member only sees their own binding, not the owner-only error', (
+    tester,
+  ) async {
+    tzdata.initializeTimeZones();
+    tester.view.physicalSize = const Size(1280, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var ownerCalls = 0;
+    final snapshot = {
+      ...blankState(),
+      'device': {'id': 'phone', 'role': 'mobile'},
+      'user': {'id': 'u2', 'username': 'shidi', 'role': 'member'},
+    };
+    final c = PlannerController(
+      storage: MemoryStore(),
+      transport: MockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/wechat/config') ownerCalls++;
+        final body = switch (path) {
+          '/api/v1/snapshot' => snapshot,
+          '/api/v1/assistant/config' => {'configured': false, 'key_hint': ''},
+          '/api/v1/wechat/outbox' => {'messages': <Json>[]},
+          '/api/v1/channels/bindings' => {'items': <Json>[]},
+          '/api/v1/channels/wechat/bind-code' => {
+            'code': '482913',
+            'channel': 'wechat',
+            'expires_at': '2026-10-19T16:10:00Z',
+          },
+          '/api/v1/app/latest' => {'version': '1.2.14+24'},
+          _ => {},
+        };
+        return http.Response(
+          jsonEncode(body),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+    await c.initialize();
+    await c.connect('http://127.0.0.1:8787', 'phone-token');
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('设置').first);
+    await tester.pumpAndSettle();
+    expect(find.text('这个接口暂时只对主账号开放'), findsNothing);
+    expect(find.textContaining('只对主账号开放'), findsNothing);
+    expect(find.byKey(const Key('wechat.tutorial')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('wechat.bind-mine')));
+    await tester.tap(find.byKey(const Key('wechat.bind-mine')));
+    await tester.pumpAndSettle();
+    expect(find.text('482913'), findsOneWidget);
+    expect(ownerCalls, 0);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
 }

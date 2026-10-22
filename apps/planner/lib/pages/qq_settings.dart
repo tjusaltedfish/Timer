@@ -18,6 +18,8 @@ class _QqSettingsState extends State<QqSettingsPanel> {
   bool busy = false, loaded = false;
   PlannerController get c => widget.controller;
   bool get desktop => c.state['device']?['role'] == 'desktop';
+  // QQ 机器人的凭据同样是站长在电脑上配的。
+  bool get owner => (c.state['user']?['role'] ?? 'admin') == 'admin';
 
   static const statusLabels = {
     'queued': '排队中',
@@ -51,6 +53,10 @@ class _QqSettingsState extends State<QqSettingsPanel> {
 
   Future<void> _load() async {
     if (!c.configured) {
+      setState(() => loaded = true);
+      return;
+    }
+    if (!owner) {
       setState(() => loaded = true);
       return;
     }
@@ -116,6 +122,24 @@ class _QqSettingsState extends State<QqSettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (!owner) {
+      return SizedBox(
+        width: double.infinity,
+        child: InkCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('QQ 助手（聊天入口）', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text(
+                'QQ 机器人由站长在电脑上配置。你可以在「微信」里绑定自己的微信并使用助手。',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final ready = config?['configured'] == true;
     final bound = config?['bound'] == true;
     final hint = '${config?['secret_hint'] ?? ''}';

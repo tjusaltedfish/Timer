@@ -23,6 +23,8 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
   bool busy = false, loaded = false;
   PlannerController get c => widget.controller;
   bool get desktop => c.state['device']?['role'] == 'desktop';
+  // 公众号本身（AppID/Token）是站长在电脑上配的；普通成员只看自己的绑定。
+  bool get owner => (c.state['user']?['role'] ?? 'admin') == 'admin';
   bool get mine =>
       bindings.any((item) => item['channel'] == 'wechat') ||
       config?['bound'] == true;
@@ -61,6 +63,25 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
   Future<void> _load() async {
     if (!c.configured) {
       setState(() => loaded = true);
+      return;
+    }
+    if (!owner) {
+      try {
+        final linked = await c.channelBindings();
+        if (mounted) {
+          setState(() {
+            bindings = linked;
+            loaded = true;
+          });
+        }
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            note = error.toString();
+            loaded = true;
+          });
+        }
+      }
       return;
     }
     try {
@@ -155,6 +176,8 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
                   ? '连接账号后，在电脑端设置公众号测试号；手机也能绑定自己的微信。'
                   : bound
                   ? '已绑定你的微信，在测试号对话里就能安排和反馈。'
+                  : !owner
+                  ? '公众号由站长配置好了。这里只负责绑定你自己的微信。'
                   : ready
                   ? '测试号已填好，还差绑定你的微信。'
                   : '用公众号测试号和助手对话：电脑锁屏也能收发，改日程前都会先给你拟办。',
@@ -201,11 +224,13 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
                     onPressed: busy
                         ? null
                         : () => _run(() async {
-                            final value = await c.wechatConfig();
                             final linked = await c.channelBindings();
+                            final value = owner
+                                ? await c.wechatConfig()
+                                : null;
                             if (mounted) {
                               setState(() {
-                                _fill(value);
+                                if (value != null) _fill(value);
                                 bindings = linked;
                               });
                             }
