@@ -56,7 +56,7 @@ def phone(client):
     return {"Authorization": "Bearer " + token}
 
 
-def test_download_needs_a_paired_device_and_matches_its_checksum(client, tmp_path):
+def test_download_is_public_and_matches_its_checksum(client, tmp_path):
     assert client.get("/api/v1/app/latest").status_code == 404
     snapshot = client.get("/api/v1/snapshot").json()
     assert snapshot["app_latest"] is None and releases.parse_version(snapshot["server_version"])
@@ -64,17 +64,15 @@ def test_download_needs_a_paired_device_and_matches_its_checksum(client, tmp_pat
     apk = tmp_path / "built.apk"
     apk.write_bytes(payload)
     releases.publish(tmp_path, apk, "1.0.0+7")
-    for path in ("/api/v1/app/latest", "/api/v1/app/download"):
-        assert client.get(path, headers={"Authorization": "Bearer nope"}).status_code == 401
-        assert client.get(path, headers={"Authorization": ""}).status_code == 401
-    headers = phone(client)
-    latest = client.get("/api/v1/app/latest", headers=headers).json()
+    # 新手机还没账号时要能装包，所以这两个接口是公开的（只暴露安装包本身）。
+    latest = client.get("/api/v1/app/latest").json()
     assert (latest["version"], latest["build"], latest["size"]) == ("1.0.0+7", 7, len(payload))
     assert "file" not in latest
-    download = client.get("/api/v1/app/download", headers=headers)
+    download = client.get("/api/v1/app/download")
     assert download.status_code == 200
     assert download.headers["content-type"] == "application/vnd.android.package-archive"
     assert hashlib.sha256(download.content).hexdigest() == latest["sha256"] == download.headers["x-timer-sha256"]
+    headers = phone(client)
     assert client.get("/api/v1/snapshot", headers=headers).json()["app_latest"]["build"] == 7
     assert client.get("/health").json()["app_latest"] == "1.0.0+7"
 
