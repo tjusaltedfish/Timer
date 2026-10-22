@@ -1,5 +1,15 @@
 # 当前状态
 
+## v2 数据：历史自动收口，长期使用不越跑越胖（2026-10-22）
+
+- 收（审查报告 P1）：「整份 state 一个 JSON」+ `proposals`/`feedbacks`/`reviews` 只增不减，`user_events` 与共享 `operations` 表无上限——用得越久，每次操作重写的文档越大、备份与快照越慢。
+- 做法：`server/app/maintenance.py` 新增 `compact()` / `compact_all()`：
+  - state 里 `proposals` 留最近 20、`feedbacks` 最近 200、`reviews` 最近 100；
+  - `user_events` 每账号留最近 5000 条；共享 `operations`（只用于短时幂等重放）留最近 2 万条；
+  - 由后台维护循环大约每小时跑一次（`main.py` 维护循环每 720 个 5 秒 tick 调 `compact_all`），不进请求路径。
+- 测试：`server/tests/test_workflow.py` 新增「压缩只留最近历史」；后端全量 **220 passed**。
+- 未做：`review_generations`、`wechat_inbox/outbox`、`assistant_messages` 已有各自上限但没统一策略；没有暴露手动压缩入口。
+
 ## v2 观测：把「慢」变成可查的数字（2026-10-22）
 
 - 收（USER 手机反馈）：「助手回应很慢」「未绑定微信的同学消息响应极慢」——之前只能凭感觉说「模型往返慢」，拿不到每次到底慢在哪。

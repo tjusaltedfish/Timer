@@ -115,3 +115,28 @@ def test_review_archive_preserves_original_and_unknowns(client, tmp_path):
     assert (tmp_path / "archives" / "2026-10-19.md").exists()
     assert (tmp_path / "archives" / "2026-10-19.json").exists()
 
+def test_compaction_keeps_recent_history_only(tmp_path):
+    from app.maintenance import compact
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    app = create_app(tmp_path, clock=lambda: now, background=False)
+    store = app.state.store
+    user_id = store.owner_id
+    with store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        state = store.state(conn, user_id)
+        state["proposals"] = [{"id": f"p{i}", "created_at": "2026-10-01T00:00:00Z"} for i in range(30)]
+        state["feedbacks"] = [{"id": f"f{i}"} for i in range(250)]
+        state["reviews"] = [{"date": "2026-10-01", "version": i} for i in range(120)]
+        store.save(conn, state, user_id)
+        for revision in range(1, 30):
+            store.record_event(conn, user_id, revision, "test", "ping", {}, now)
+    removed = compact(store, now, user_id)
+    with store.connect() as conn:
+        state = store.state(conn, user_id)
+        assert len(state["proposals"]) == 20
+        assert len(state["feedbacks"]) == 200
+        assert len(state["reviews"]) == 100
+        assert removed["proposals"] == 10 and removed["feedbacks"] == 50 and removed["reviews"] == 20
+        assert conn.execute("SELECT COUNT(*) FROM user_events WHERE user_id=?",
+                            (user_id,)).fetchone()[0] == 29

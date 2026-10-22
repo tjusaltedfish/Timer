@@ -26,7 +26,7 @@ from .channels import RoutedChannel
 from .domain import DomainError, stamp, identifier, parse
 from .models import Operation, PairConfirm, PlanRequest
 from .planning import propose
-from .maintenance import expire_due
+from .maintenance import compact_all, expire_due
 from .repo import Repository
 from .reports import flush_archives, report_for
 from .store import Store, digest, encode, utcnow
@@ -42,11 +42,15 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         expire_due(store, clock())
         flush_archives(store, clock())
         async def maintain():
+            ticks = 0
             while True:
                 await asyncio.sleep(5)
+                ticks += 1
                 try:
                     expire_due(store, clock())
                     flush_archives(store, clock())
+                    if ticks % 720 == 0:  # roughly hourly: trim history nobody rereads
+                        compact_all(store, clock())
                 except (OSError, RuntimeError):
                     logging.getLogger(__name__).exception("Background maintenance will retry")
         async def channel_worker():
