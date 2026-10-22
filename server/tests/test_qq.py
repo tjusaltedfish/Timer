@@ -683,3 +683,24 @@ def test_unknown_meme_category_is_ignored(fake):
     message(app, content="在吗", msg_id="m-bad")
     run(client, app)
     assert [item["body"]["msg_type"] for item in api.sent] == [0]
+
+
+def test_a_chat_message_in_qq_can_actually_change_the_schedule(fake):
+    """用户在 QQ 里让排一件事：从收消息到写进日程要真能走完（防止「光收到不干活」）。"""
+    client, app, api, gateway, model = fake
+    configure(client)
+    configure_model(client)
+    client.post("/api/v1/assistant/config", json={"confirm_first": False})
+    bind(client, app)
+    run(client, app)
+    api.sent.clear()
+    model.replies.append({"reply": "排上了。", "drafts": [{"summary": "学算法", "actions": [
+        {"type": "schedule_new", "title": "学习算法", "outcome_criteria": "跑通两个例子",
+         "start_local": "2026-10-22 10:00", "minutes": 120}]}]})
+    message(app, content="明早十点学两小时算法", msg_id="m-sched")
+    run(client, app)
+    blocks = client.get("/api/v1/snapshot").json()["blocks"]
+    assert [block["title"] for block in blocks] == ["学习算法"]
+    answers = sent_texts(api)
+    assert answers and ("已排" in answers[0] or "排上" in answers[0])
+    assert answers[0] != "收到。"

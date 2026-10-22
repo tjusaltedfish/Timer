@@ -135,8 +135,8 @@ class FeedbackCreate(Input):
             raise ValueError("部分完成或被打断需要填写剩余投入")
         if self.choice == "waiting" and (self.check_at is None or self.check_at.tzinfo is None):
             raise ValueError("等待结果需要包含时区的检查时间")
-        if self.session_id is None and (self.choice != "not_started" or self.block_id is None):
-            raise ValueError("请先开始并结束本次投入，或记录尚未开始")
+        if self.session_id is None and self.block_id is None:
+            raise ValueError("请先开始并结束本次投入，或指明是哪一段安排")
         return self
 
 

@@ -147,17 +147,32 @@ class AssistantService:
                 reply = assistant.parse_reply(raw)
             except (ValueError, ValidationError):
                 reply = assistant.ModelReply(reply="我没能把这些整理成清楚的安排，换个说法再试一次？")
+        if not reply.drafts and not reply.reply.strip():
+            # An empty turn means nothing was done; ask once more before telling the user a no-op.
+            calls += 1
+            retry = [*messages, {"role": "assistant", "content": raw[:4000]},
+                     {"role": "user", "content": "你这条回复是空的。他要是让你改日程，就必须给出 drafts；只是闲聊，就用一句话正常回他。"}]
+            raw = await assistant.complete(conf, key, retry, transport=self.transport())
+            try:
+                reply = assistant.parse_reply(raw)
+            except (ValueError, ValidationError):
+                reply = assistant.ModelReply(reply="刚才没接住，你再说一遍？")
         state = self.store.state()
         drafts, notes = assistant.resolve_drafts(reply, state, refs, self.clock(), requested_at=now)
         usable = []
         for draft in drafts:
             trial = deepcopy(state)
-            try:
-                for kind, payload in assistant.draft_operations(trial, draft['actions'], self.clock()):
-                    apply(trial, Operation(operation_id=identifier(), kind=kind, payload=payload), 'assistant-preview', self.clock())
-                usable.append(draft)
-            except (DomainError, ValidationError) as error:
-                notes.append(error.message if isinstance(error, DomainError) else '安排信息不完整，请补充时间或剩余工作量。')
+            kept = []
+            for action in draft['actions']:
+                # Validate one action at a time: a stale block must not wipe out the rest of the message.
+                try:
+                    for kind, payload in assistant.draft_operations(trial, [action], self.clock()):
+                        apply(trial, Operation(operation_id=identifier(), kind=kind, payload=payload), 'assistant-preview', self.clock())
+                    kept.append(action)
+                except (DomainError, ValidationError) as error:
+                    notes.append(error.message if isinstance(error, DomainError) else '安排信息不完整，请补充时间或剩余工作量。')
+            if kept:
+                usable.append({**draft, "actions": kept})
         drafts = usable
         remembered = self._remember(reply.remember, state, request_id)
         user_id, reply_id = identifier(), identifier()
@@ -210,7 +225,7 @@ class AssistantService:
             said = "".join(part for part in re.split(r"(?<=[。！？!?\n])", said)
                            if part.strip() and not part.strip().endswith(("？", "?")))
         if mode == "confirm":
-            lines = [said or "拟办已整理好，确认后执行。"] if proposed or not notes else []
+            lines = [said or "拟办已整理好，确认后执行。"] if proposed or not notes else ["这次没拟成："]
         elif proposed and applied == proposed:
             lines = [said or "已照办。"]
         elif applied:
@@ -218,7 +233,7 @@ class AssistantService:
         elif proposed:
             lines = ["这次没能改动日程："]
         elif notes:
-            lines = []
+            lines = ["这次没动手："]
         else:
             lines = [said or "收到。"]
         lines += notes[:2]

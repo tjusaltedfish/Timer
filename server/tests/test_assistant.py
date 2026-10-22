@@ -182,3 +182,51 @@ def test_a_blank_reply_that_keeps_blank_becomes_a_plain_answer(client, model):
     reply = client.post("/api/v1/assistant/messages", json={"text": "在吗"})
     assert reply.status_code == 502
     assert "再问一次" in reply.json()["message"]
+
+
+def test_one_bad_action_does_not_discard_the_whole_message(client, model):
+    """一条消息里几件事，其中一件对不上，其余照做——QQ 上常见的「记结果顺便重排」。"""
+    configure(client)
+    model.replies.append((200, {"reply": "记结果并重新排。", "drafts": [{"summary": "结束并重排", "actions": [
+        {"type": "feedback", "block": "b99", "choice": "done"},
+        {"type": "schedule_new", "title": "学习算法", "outcome_criteria": "跑通两个例子",
+         "start_local": "2026-10-19 14:00", "minutes": 60}]}]}))
+    reply = client.post("/api/v1/assistant/messages", json={"text": "结束网络训练，然后下午两点学算法"}).json()["messages"][1]
+    assert [draft["status"] for draft in reply["drafts"]] == ["pending"]
+    assert "不存在" in reply["text"]
+    client.post(f"/api/v1/assistant/drafts/{reply['drafts'][0]['id']}/apply")
+    assert [block["title"] for block in client.get("/api/v1/snapshot").json()["blocks"]] == ["学习算法"]
+
+
+def test_finished_without_a_start_press_is_recorded(client, model):
+    """电脑关着、没在 App 里点过开始，QQ 说「做完了」也要能直接记结果。"""
+    configure(client, confirm_first=False)
+    task = send(client, "task.create", title="网络训练", outcome_criteria="训练跑起来", remaining_minutes=120)
+    block = send(client, "block.create", task_id=task["id"],
+                 start_at="2026-10-19T17:00:00+00:00", end_at="2026-10-19T18:00:00+00:00")
+    assert block["status"] == "scheduled"
+    model.replies.append((200, {"reply": "记上了。", "drafts": [{"summary": "记结果", "actions": [
+        {"type": "feedback", "block": "b1", "choice": "done"}]}]}))
+    reply = client.post("/api/v1/assistant/messages", json={"text": "网络训练做完了"}).json()["messages"][1]
+    assert [draft["status"] for draft in reply["drafts"]] == ["applied"]
+    assert reply["text"] != "收到。"
+    snapshot = client.get("/api/v1/snapshot").json()
+    assert snapshot["blocks"][0]["status"] == "completed"
+    assert snapshot["tasks"][0]["state"] == "done"
+
+
+def test_an_empty_reply_with_no_drafts_is_asked_again(client, model):
+    """模型有时回一条合法 JSON 却既没有说话也没有动作，用户看到的就成了「收到。」。"""
+    configure(client, confirm_first=False)
+    model.replies += [
+        (200, {"reply": "", "drafts": []}),
+        (200, {"reply": "这就排。", "drafts": [{"summary": "排上", "actions": [
+            {"type": "schedule_new", "title": "学习 Transformer", "outcome_criteria": "读完一章",
+             "start_local": "2026-10-19 10:10", "minutes": 60}]}]}),
+    ]
+    reply = client.post("/api/v1/assistant/messages",
+                        json={"text": "十点十分到十一点十分学 transformer"}).json()["messages"][1]
+    assert len(model.requests) == 2
+    assert [draft["status"] for draft in reply["drafts"]] == ["applied"]
+    assert reply["text"] != "收到。"
+    assert [block["title"] for block in client.get("/api/v1/snapshot").json()["blocks"]] == ["学习 Transformer"]

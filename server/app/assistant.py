@@ -306,11 +306,12 @@ SYSTEM_PROMPT = """你是「瞬时」：用户本人的日程执行助理。你�
 
 【怎么做事】
 - 指令能看懂就直接给出动作（drafts），并用一句话说明结果，例如「已排 11:10–12:00 做时间表开发，还差约 10 分钟的量。」reply 一般不超过 40 字。
+- 他让你排、挪、撤、开始、结束、记结果时，**必须**给出 drafts；只回「收到」「好的」这类空话等于没干活。一句话里有几件事，就拆成几个 draft 分开做，别都塞进同一个 draft。
 - 缺的信息能合理推断就用默认值，不要追问：时长默认 60 分钟；没说结果标准时，outcome_criteria 写「完成：标题」；「现在/马上/这就」写 start_local "now"；只说「上午/下午/晚上」就挑该时段第一个空档。
 - 只有在无法推断、而且猜错代价大时才追问，一次只问一个短问题，不给选择题，不要说「你定」。
 - 估时只是参考：截止前时间不够，就把截止前能用的时间排满，用半句话说还差多少；不降低验收标准，不把估时当成不安排的理由。
 - 「取消/删掉/关了/不要了」某段安排用 cancel_block；整件事不做了用 cancel_task。「推迟/挪到」用 move_block，要改时长就带 minutes。
-- 用户说正在做的事做完了、要续时、要暂停，用 control_session / feedback；完成情况以用户的话为准，不替他宣布完成。
+- 用户说正在做的事做完了、要续时、要暂停，用 control_session / feedback；完成情况以用户的话为准，不替他宣布完成。这段在电脑上没点过开始、没有执行记录时，照样用 feedback 记结果（done / interrupted / partial / not_started），系统会把这段安排直接结掉；control_session 只用于已经开始的段。
 - 过去的时间不能新排；用户补充过去发生的事，用 feedback 记录。不要把过去的时刻偷偷改成明天。
 - 只安排在作息范围内，不与已有安排、固定预约(fixed)和保护时段(protected)重叠；任务已有未来安排时优先改期而不是重复创建。
 - 只用名称称呼任务和安排，绝不向用户展示 t1、b2、c1 这类编号。
@@ -466,76 +467,85 @@ def visible_text(text, state, refs):
 
 
 def resolve_drafts(reply, state, refs, now, requested_at=None):
-    """Map short ids to real ids and wall times to UTC; drop unusable drafts."""
+    """Map short ids to real ids and wall times to UTC; keep the actions that make sense."""
     zone = ZoneInfo(state["settings"]["timezone"])
     resolved, notes = [], []
     for draft in reply.drafts:
-        try:
-            actions = []
-            for action in draft.actions:
-                item = action.model_dump()
-                if item['type'] in ('snooze_waiting', 'resolve_waiting'):
-                    short = item.pop('waiting')
-                    check = next((c for c in state['waiting_checks'] if c['id'] == refs.get(short) and not c.get('resolved_at')), None)
-                    if not short.startswith('w') or check is None:
-                        raise DomainError('等待检查点不存在或已处理')
-                    item['check_id'], item['check_version'] = check['id'], check.get('version', 1)
-                for short, field, label in (("task", "task_id", "任务"), ("block", "block_id", "时间块")):
-                    if short in item:
-                        ref = item.pop(short)
-                        if not ref.startswith(short[0]) or ref not in refs:
-                            raise DomainError(f"引用了不存在的{label} {ref}", "DRAFT_INVALID", 422)
-                        item[field] = refs[ref]
-                        collection = state['tasks'] if field == 'task_id' else state['blocks']
-                        entity = next((v for v in collection if v['id'] == refs[ref]), None)
-                        if entity is None:
-                            raise DomainError(f'对应{label}不存在')
-                        item[f'{short}_version'] = entity['version']
-                if "project" in item:
-                    ref = item.pop("project")
-                    item["project_id"] = refs.get(ref) if ref and ref.startswith("c") else None
-                for field, target in (("start_local", "start_at"), ("check_local", "check_at")):
-                    if item.get(field):
-                        raw_at = item.pop(field)
-                        immediate = field == "start_local" and raw_at.lower() in ("now", "现在", "马上")
-                        at = now + timedelta(seconds=5) if immediate else to_utc(raw_at, zone)
-                        # A minute-precision model answer may refer to the current minute.
-                        if field == "start_local" and (now.replace(second=0, microsecond=0) == at or
-                            (requested_at and requested_at.replace(second=0, microsecond=0) == at and now - requested_at <= timedelta(minutes=2))):
-                            immediate = True
-                            at = now + timedelta(seconds=5)
-                        if at <= now:
-                            raise DomainError("建议的时间已经过去", "DRAFT_PAST", 422)
-                        item[target] = stamp(at)
-                        if immediate and item["type"] in ("schedule_new", "schedule_task"):
-                            item["start_mode"] = "now"
-                    else:
-                        item.pop(field, None)
-                if item['type'] == 'control_session' and item['action'] != 'start':
-                    session = next((s for s in reversed(state['sessions']) if s['block_id'] == item['block_id']), None)
-                    if session is None:
-                        raise DomainError('这段还没有开始，请先开始投入')
-                    item['session_id'], item['session_version'] = session['id'], session['version']
-                    if item['action'] == 'extend' and not item.get('minutes'):
-                        raise DomainError('请说明要续时几分钟')
-                until = item.pop("until_local", None)
-                if until:
-                    item["until_at"] = stamp(to_utc(until, zone))
-                    capacity = (parse(item["until_at"]) - parse(item["start_at"])).total_seconds()
-                    item["minutes"] = min(item["minutes"], math.ceil(capacity / 60))
-                    if capacity < 300 or item["minutes"] < 5:
-                        raise DomainError("截止前不足 5 分钟，请选择稍后的时段", "DRAFT_PAST", 422)
-                item["label"] = describe(item, state, zone)
-                actions.append(item)
+        actions = []
+        for action in draft.actions:
+            try:
+                actions.append(resolve_action(action, state, refs, now, requested_at, zone))
+            except DomainError as error:
+                notes.append(note_for(error))
+        if actions:  # one bad action must not throw away the rest of the same message
             resolved.append({"summary": visible_text(draft.summary, state, refs), "actions": actions})
-        except DomainError as error:
-            if error.code == 'DRAFT_PAST':
-                notes.append('这个时刻已经过去了：要补记结果，还是重新安排？')
-            elif '不存在' in error.message:
-                notes.append('对应任务或安排不存在，请明确任务名称。')
-            else:
-                notes.append(error.message)
     return resolved, notes
+
+
+def note_for(error):
+    if error.code == 'DRAFT_PAST':
+        return '这个时刻已经过去了：要补记结果，还是重新安排？'
+    if '不存在' in error.message:
+        return '对应任务或安排不存在，请明确任务名称。'
+    return error.message
+
+
+def resolve_action(action, state, refs, now, requested_at, zone):
+    """Resolve one draft action against the current state, or raise DomainError."""
+    item = action.model_dump()
+    if item['type'] in ('snooze_waiting', 'resolve_waiting'):
+        short = item.pop('waiting')
+        check = next((c for c in state['waiting_checks'] if c['id'] == refs.get(short) and not c.get('resolved_at')), None)
+        if not short.startswith('w') or check is None:
+            raise DomainError('等待检查点不存在或已处理')
+        item['check_id'], item['check_version'] = check['id'], check.get('version', 1)
+    for short, field, label in (("task", "task_id", "任务"), ("block", "block_id", "时间块")):
+        if short in item:
+            ref = item.pop(short)
+            if not ref.startswith(short[0]) or ref not in refs:
+                raise DomainError(f"引用了不存在的{label} {ref}", "DRAFT_INVALID", 422)
+            item[field] = refs[ref]
+            collection = state['tasks'] if field == 'task_id' else state['blocks']
+            entity = next((v for v in collection if v['id'] == refs[ref]), None)
+            if entity is None:
+                raise DomainError(f'对应{label}不存在')
+            item[f'{short}_version'] = entity['version']
+    if "project" in item:
+        ref = item.pop("project")
+        item["project_id"] = refs.get(ref) if ref and ref.startswith("c") else None
+    for field, target in (("start_local", "start_at"), ("check_local", "check_at")):
+        if item.get(field):
+            raw_at = item.pop(field)
+            immediate = field == "start_local" and raw_at.lower() in ("now", "现在", "马上")
+            at = now + timedelta(seconds=5) if immediate else to_utc(raw_at, zone)
+            # A minute-precision model answer may refer to the current minute.
+            if field == "start_local" and (now.replace(second=0, microsecond=0) == at or
+                (requested_at and requested_at.replace(second=0, microsecond=0) == at and now - requested_at <= timedelta(minutes=2))):
+                immediate = True
+                at = now + timedelta(seconds=5)
+            if at <= now:
+                raise DomainError("建议的时间已经过去", "DRAFT_PAST", 422)
+            item[target] = stamp(at)
+            if immediate and item["type"] in ("schedule_new", "schedule_task"):
+                item["start_mode"] = "now"
+        else:
+            item.pop(field, None)
+    if item['type'] == 'control_session' and item['action'] != 'start':
+        session = next((s for s in reversed(state['sessions']) if s['block_id'] == item['block_id']), None)
+        if session is None:
+            raise DomainError('这段还没有开始过，直接说「做完了/被打断/没开始」我来记结果')
+        item['session_id'], item['session_version'] = session['id'], session['version']
+        if item['action'] == 'extend' and not item.get('minutes'):
+            raise DomainError('请说明要续时几分钟')
+    until = item.pop("until_local", None)
+    if until:
+        item["until_at"] = stamp(to_utc(until, zone))
+        capacity = (parse(item["until_at"]) - parse(item["start_at"])).total_seconds()
+        item["minutes"] = min(item["minutes"], math.ceil(capacity / 60))
+        if capacity < 300 or item["minutes"] < 5:
+            raise DomainError("截止前不足 5 分钟，请选择稍后的时段", "DRAFT_PAST", 422)
+    item["label"] = describe(item, state, zone)
+    return item
 
 
 def when_block(block, zone):
@@ -657,10 +667,13 @@ def draft_operations(state, actions, now):
                 payload["check_at"] = future(item["check_at"])
             if session and session["state"] == "awaiting_feedback":
                 payload["session_id"] = session["id"]
-            elif item["choice"] == "not_started" and not session:
+            elif session:
+                raise DomainError(f"「{block['title']}」这段还没结束，先结束再记结果", "DRAFT_STALE", 409)
+            elif block["status"] == "scheduled":
+                # Remote channels (QQ / WeChat) often never see a start press; still record the result.
                 payload["block_id"] = block["id"]
             else:
-                raise DomainError(f"「{block['title']}」还没有可以反馈的执行记录", "DRAFT_STALE", 409)
+                raise DomainError(f"「{block['title']}」这段已经记录过结果了", "DRAFT_STALE", 409)
             operations.append(("feedback.create", payload))
     return operations
 
