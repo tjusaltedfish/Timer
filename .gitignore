@@ -27,3 +27,6 @@ pytest-of-*/
 tmp*/
 .tmp/
 apps/planner/android/.kotlin/
+
+# agent scratch (diagnostics, live DB copies, staging)
+.review-data/
