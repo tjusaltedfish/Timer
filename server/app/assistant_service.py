@@ -53,72 +53,84 @@ def undo_operations(before, after):
 class AssistantService:
     def __init__(self, store, clock, transport=lambda: None):
         self.store, self.clock, self.transport = store, clock, transport
-        self.settings = assistant.AssistantSettings(store.directory)
+        self.configs = assistant.AssistantConfigStore(store)
         with store.connect() as conn:
-            conn.executescript(assistant.SCHEMA)
+            assistant.ensure_schema(conn, store.owner_id)
 
-    def require(self, conn):
-        if not self.settings.configured():
-            raise DomainError("助手还没有配置：请在电脑端「设置 · 助手」填写服务地址、模型和 API Key",
+    def user(self, user_id):
+        """Assistant calls that don't name a user belong to the owner (channels)."""
+        return user_id or self.store.owner_id
+
+    def require(self, conn, user_id=None):
+        user_id = self.user(user_id)
+        if not self.configs.configured(conn, user_id):
+            raise DomainError("助手还没有配置：请在「设置 · 助手」填写服务地址、模型和你自己的 API Key",
                               "ASSISTANT_NOT_CONFIGURED", 409)
-        conf = self.settings.load()
-        if assistant.usage_today(conn, self.clock()) >= conf["daily_limit"]:
-            raise DomainError("今天的助手调用次数已用完，可在电脑端调高上限", "ASSISTANT_LIMIT", 429)
-        return conf, self.settings.key()[0]
+        conf = self.configs.load(conn, user_id)
+        if assistant.usage_today(conn, self.clock(), user_id) >= conf["daily_limit"]:
+            raise DomainError("今天的助手调用次数已用完，可在「设置 · 助手」调高上限", "ASSISTANT_LIMIT", 429)
+        return conf, self.configs.key(conn, user_id)[0]
 
-    def apply_operation(self, kind, payload, device_id="assistant", operation_id=None):
+    def apply_operation(self, kind, payload, device_id="assistant", operation_id=None, user_id=None):
+        user_id = self.user(user_id)
         operation = Operation(operation_id=operation_id or identifier(), kind=kind, payload=payload)
         request_hash = digest(encode(operation.model_dump()))
         with self.store.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            previous = conn.execute("SELECT * FROM operations WHERE id=?", (operation.operation_id,)).fetchone()
+            previous = conn.execute(
+                "SELECT * FROM operations WHERE id=? AND (user_id=? OR user_id IS NULL)",
+                (operation.operation_id, user_id),
+            ).fetchone()
             if previous:
                 if previous["request_hash"] != request_hash or previous["device_id"] != device_id:
                     raise DomainError("操作标识冲突")
                 return json.loads(previous["response"])
-            state = self.store.state(conn)
+            state = self.store.state(conn, user_id)
             entity = apply(state, operation, device_id, self.clock())
             state["revision"] += 1
             result = {"revision": state["revision"], "entity": entity, "operation_id": operation.operation_id}
-            self.store.save(conn, state)
-            conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, self.store.owner_id, request_hash, encode(result)))
-            conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device_id, kind, encode(payload), stamp(self.clock())))
+            self.store.save(conn, state, user_id)
+            conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, user_id, request_hash, encode(result)))
+            self.store.record_event(conn, user_id, state["revision"], device_id, kind, payload, self.clock())
         flush_archives(self.store, self.clock())
         return result
 
-    def _exchange(self, text, answer):
+    def _exchange(self, text, answer, user_id=None):
+        user_id = self.user(user_id)
         now = self.clock()
         with self.store.connect() as conn:
-            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (identifier(), "user", text, stamp(now)))
-            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (identifier(), "assistant", answer, stamp(now + timedelta(microseconds=1))))
-            return assistant.message_rows(conn, 2)
+            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?,?)", (identifier(), "user", text, stamp(now), user_id))
+            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?,?)", (identifier(), "assistant", answer, stamp(now + timedelta(microseconds=1)), user_id))
+            return assistant.message_rows(conn, 2, user_id)
 
-    async def converse(self, text, request_id=None, device_id="assistant", image=None):
+    async def converse(self, text, request_id=None, device_id="assistant", image=None, user_id=None):
         """One user turn. Returns the stored user + assistant rows (with drafts).
 
         ``image`` 是 (mime, bytes)：带上它就把图作为这一轮的用户消息一起发给模型看。
         """
+        user_id = self.user(user_id)
         now = self.clock()
-        expire_due(self.store, now)
+        expire_due(self.store, now, user_id)
         shown = f"[图片] {text}".strip() if image else text
         memory = re.fullmatch(r"(?:请)?记住[：:]\s*(.{1,1000})", text.strip(), re.S)
         forget = re.fullmatch(r"(?:请)?忘记[：:]\s*(.{1,1000})", text.strip(), re.S)
         if memory:
             memory_id = uuid5(NAMESPACE_URL, request_id).hex if request_id else identifier()
             self.apply_operation("memory.save", {"id": memory_id, "text": memory.group(1).strip()},
-                                 operation_id=f'wechat-memory:{request_id}' if request_id else None)
-            return self._exchange(text, "已记住。你可以在助手的「记忆」中查看或删除。")
+                                 operation_id=f'wechat-memory:{request_id}' if request_id else None,
+                                 user_id=user_id)
+            return self._exchange(text, "已记住。你可以在助手的「记忆」中查看或删除。", user_id)
         if forget:
-            matches = [m for m in self.store.state().get("memories", []) if m["text"] == forget.group(1).strip()]
+            matches = [m for m in self.store.state(user_id=user_id).get("memories", []) if m["text"] == forget.group(1).strip()]
             for item in matches:
-                self.apply_operation("memory.delete", {"id": item["id"]})
-            return self._exchange(text, "已删除这条记忆。" if matches else "没有找到这条记忆，可在助手的「记忆」中查看。")
+                self.apply_operation("memory.delete", {"id": item["id"]}, user_id=user_id)
+            return self._exchange(text, "已删除这条记忆。" if matches else "没有找到这条记忆，可在助手的「记忆」中查看。", user_id)
         with self.store.connect() as conn:
-            conf, key = self.require(conn)
-            state = self.store.state(conn)
-            history = conn.execute("SELECT role,text,created_at FROM assistant_messages WHERE created_at>=? "
+            conf, key = self.require(conn, user_id)
+            state = self.store.state(conn, user_id)
+            history = conn.execute("SELECT role,text,created_at FROM assistant_messages WHERE user_id=? AND created_at>=? "
                                    "ORDER BY created_at DESC, rowid DESC LIMIT 10",
-                                   (stamp(now - timedelta(minutes=45)),)).fetchall()
+                                   (user_id, stamp(now - timedelta(minutes=45)))).fetchall()
         # Removing a memory must also keep the original memory command out of model context.
         history = [row for row in history if not (row['role'] == 'user' and re.match(r'^(?:请)?(?:记住|忘记)[：:]', row['text']))]
         context, refs = assistant.build_context(state, now)
@@ -130,7 +142,8 @@ class AssistantService:
             at = parse(row["created_at"]).astimezone(zone)
             return f"[{at:%H:%M}] {row['text']}"
 
-        messages = [{"role": "system", "content": assistant.SYSTEM_PROMPT + "\n" + assistant.MODES[mode]},
+        messages = [{"role": "system", "content": assistant.SYSTEM_PROMPT + "\n" + assistant.MODES[mode]
+                     + f"\n【人设】当前人设：{conf['persona']}。语气按这个人设走，做事规则不变。"},
                     {"role": "system", "content": context},
                     *({"role": row["role"], "content": stamped(row)} for row in reversed(history)),
                     self._turn(text, image)]
@@ -157,7 +170,7 @@ class AssistantService:
                 reply = assistant.parse_reply(raw)
             except (ValueError, ValidationError):
                 reply = assistant.ModelReply(reply="刚才没接住，你再说一遍？")
-        state = self.store.state()
+        state = self.store.state(user_id=user_id)
         drafts, notes = assistant.resolve_drafts(reply, state, refs, self.clock(), requested_at=now)
         usable = []
         for draft in drafts:
@@ -174,36 +187,36 @@ class AssistantService:
             if kept:
                 usable.append({**draft, "actions": kept})
         drafts = usable
-        remembered = self._remember(reply.remember, state, request_id)
-        user_id, reply_id = identifier(), identifier()
+        remembered = self._remember(reply.remember, state, request_id, user_id)
+        reply_id = identifier()
         draft_ids = [identifier() for _ in drafts]
         with self.store.connect() as conn:
-            assistant.count_call(conn, now, calls)
-            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)", (user_id, "user", shown, stamp(now)))
-            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?)",
-                         (reply_id, "assistant", "", stamp(now + timedelta(microseconds=1))))
+            assistant.count_call(conn, now, calls, user_id=user_id)
+            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?,?)", (identifier(), "user", shown, stamp(now), user_id))
+            conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?,?)",
+                         (reply_id, "assistant", "", stamp(now + timedelta(microseconds=1)), user_id))
             for draft_id, draft in zip(draft_ids, drafts):
-                conn.execute("INSERT INTO assistant_drafts VALUES(?,?,?,?,?,?)",
-                             (draft_id, reply_id, draft["summary"][:200], encode(draft["actions"]), "pending", stamp(now)))
+                conn.execute("INSERT INTO assistant_drafts VALUES(?,?,?,?,?,?,?)",
+                             (draft_id, reply_id, draft["summary"][:200], encode(draft["actions"]), "pending", stamp(now), user_id))
         applied = 0
         if mode == "auto":
             for draft_id in draft_ids:
                 try:
-                    self.apply_draft(draft_id, device_id)
+                    self.apply_draft(draft_id, device_id, user_id)
                     applied += 1
                 except DomainError as error:
-                    self.dismiss_draft(draft_id)
+                    self.dismiss_draft(draft_id, user_id)
                     notes.append(error.message)
         answer = self._answer(reply.reply, mode, len(drafts), applied, notes, remembered)
         answer = assistant.visible_text(answer, state, refs)
         with self.store.connect() as conn:
-            conn.execute("UPDATE assistant_messages SET text=? WHERE id=?", (answer, reply_id))
+            conn.execute("UPDATE assistant_messages SET text=? WHERE id=? AND user_id=?", (answer, reply_id, user_id))
             if reply.meme and not notes:
-                conn.execute("INSERT OR REPLACE INTO assistant_memes VALUES(?,?,?)",
-                             (reply_id, reply.meme[:16], stamp(now)))
+                conn.execute("INSERT OR REPLACE INTO assistant_memes VALUES(?,?,?,?)",
+                             (reply_id, reply.meme[:16], stamp(now), user_id))
             elif reply.meme:
-                conn.execute("DELETE FROM assistant_memes WHERE message_id=?", (reply_id,))
-            return assistant.message_rows(conn, 2)
+                conn.execute("DELETE FROM assistant_memes WHERE message_id=? AND user_id=?", (reply_id, user_id))
+            return assistant.message_rows(conn, 2, user_id)
 
     @staticmethod
     def _turn(text, image):
@@ -241,7 +254,7 @@ class AssistantService:
             lines.append("已记下：" + "；".join(remembered))
         return "\n".join(lines)
 
-    def _remember(self, items, state, request_id):
+    def _remember(self, items, state, request_id, user_id):
         """Durable preferences the user just stated about themselves."""
         known = {m["text"] for m in state.get("memories", [])}
         saved = []
@@ -251,26 +264,28 @@ class AssistantService:
                 continue
             memory_id = uuid5(NAMESPACE_URL, f"{request_id}:{index}").hex if request_id else identifier()
             try:
-                self.apply_operation("memory.save", {"id": memory_id, "text": text, "source": "assistant"})
+                self.apply_operation("memory.save", {"id": memory_id, "text": text, "source": "assistant"},
+                                     user_id=user_id)
             except DomainError:
                 continue
             saved.append(text)
         return saved
 
-    def apply_draft(self, draft_id, device_id):
+    def apply_draft(self, draft_id, device_id, user_id=None):
         """Run a confirmed draft as ordinary logged operations, all or nothing."""
+        user_id = self.user(user_id)
         now = self.clock()
-        expire_due(self.store, now)
+        expire_due(self.store, now, user_id)
         with self.store.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT * FROM assistant_drafts WHERE id=?", (draft_id,)).fetchone()
+            row = conn.execute("SELECT * FROM assistant_drafts WHERE id=? AND user_id=?", (draft_id, user_id)).fetchone()
             if not row:
                 raise DomainError("拟办不存在", "NOT_FOUND", 404)
             if row["status"] != "pending":
                 raise DomainError("这条拟办已经处理过了")
             if now - parse(row['created_at']) > timedelta(minutes=15):
                 raise DomainError('拟办已超过 15 分钟，请按当前状态重新生成', 'STALE_PROPOSAL')
-            state = self.store.state(conn)
+            state = self.store.state(conn, user_id)
             before = deepcopy(state)
             actions = json.loads(row["actions"])
             applied = []
@@ -283,29 +298,29 @@ class AssistantService:
                                       "VALIDATION_ERROR", 422) from None
                 state["revision"] += 1
                 result = {"revision": state["revision"], "operation_id": operation.operation_id, "entity": entity}
-                conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, self.store.owner_id,
+                conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, user_id,
                              digest(encode(operation.model_dump())), encode(result)))
-                conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device_id, kind,
-                             encode(payload), stamp(now)))
+                self.store.record_event(conn, user_id, state["revision"], device_id, kind, payload, now)
                 applied.append(kind)
-            self.store.save(conn, state)
+            self.store.save(conn, state, user_id)
             conn.execute("UPDATE assistant_drafts SET status='applied' WHERE id=?", (draft_id,))
             if all(a["type"] in UNDOABLE for a in actions):
-                conn.execute("INSERT OR REPLACE INTO assistant_undo VALUES(?,?,?)",
-                             (draft_id, encode(undo_operations(before, state)), stamp(now)))
+                conn.execute("INSERT OR REPLACE INTO assistant_undo VALUES(?,?,?,?)",
+                             (draft_id, encode(undo_operations(before, state)), stamp(now), user_id))
         flush_archives(self.store, self.clock())
         return {"revision": state["revision"], "applied": applied}
 
-    def undo_draft(self, draft_id, device_id):
+    def undo_draft(self, draft_id, device_id, user_id=None):
         """Put the schedule back the way it was before an applied draft, all or nothing."""
+        user_id = self.user(user_id)
         now = self.clock()
         with self.store.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT d.status, u.operations FROM assistant_drafts d JOIN assistant_undo u "
-                               "ON u.draft_id=d.id WHERE d.id=?", (draft_id,)).fetchone()
+                               "ON u.draft_id=d.id WHERE d.id=? AND d.user_id=?", (draft_id, user_id)).fetchone()
             if not row or row["status"] != "applied":
                 raise DomainError("这条改动不能撤销，或已经撤销过了", "NOT_FOUND", 404)
-            state = self.store.state(conn)
+            state = self.store.state(conn, user_id)
             for kind, payload in json.loads(row["operations"]):
                 operation = Operation(operation_id=identifier(), kind=kind, payload=payload)
                 try:
@@ -314,19 +329,19 @@ class AssistantService:
                     raise DomainError(f"之后日程又有变化，没法整体撤销：{error.message}", "UNDO_STALE", 409) from None
                 state["revision"] += 1
                 result = {"revision": state["revision"], "operation_id": operation.operation_id, "entity": entity}
-                conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, self.store.owner_id,
+                conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, user_id,
                              digest(encode(operation.model_dump())), encode(result)))
-                conn.execute("INSERT INTO events VALUES(?,?,?,?,?)", (state["revision"], device_id, kind,
-                             encode(payload), stamp(now)))
-            self.store.save(conn, state)
+                self.store.record_event(conn, user_id, state["revision"], device_id, kind, payload, now)
+            self.store.save(conn, state, user_id)
             conn.execute("UPDATE assistant_drafts SET status='undone' WHERE id=?", (draft_id,))
             conn.execute("DELETE FROM assistant_undo WHERE draft_id=?", (draft_id,))
         flush_archives(self.store, self.clock())
         return {"revision": state["revision"], "undone": True}
 
-    def dismiss_draft(self, draft_id):
+    def dismiss_draft(self, draft_id, user_id=None):
+        user_id = self.user(user_id)
         with self.store.connect() as conn:
-            result = conn.execute("UPDATE assistant_drafts SET status='dismissed' WHERE id=? AND status='pending'", (draft_id,))
+            result = conn.execute("UPDATE assistant_drafts SET status='dismissed' WHERE id=? AND user_id=? AND status='pending'", (draft_id, user_id))
             if result.rowcount == 0:
                 raise DomainError("拟办不存在或已处理", "NOT_FOUND", 404)
         return {"dismissed": True}

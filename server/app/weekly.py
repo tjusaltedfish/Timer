@@ -120,8 +120,8 @@ class WeeklyBrief:
         """A short model-written paragraph; the numbers above it never depend on it."""
         try:
             with self.store.connect() as conn:
-                conf, key = self.service.require(conn)
-                assistant.count_call(conn, self.clock(), 1)
+                conf, key = self.service.require(conn, self.store.owner_id)
+                assistant.count_call(conn, self.clock(), 1, user_id=self.store.owner_id)
             text = await assistant.complete(conf, key, [
                 {"role": "system", "content": PROMPT},
                 {"role": "user", "content": model_input(monday, facts)},

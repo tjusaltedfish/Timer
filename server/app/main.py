@@ -317,24 +317,31 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     app.state.assistant = service
     materials = MaterialService(service)
     app.state.materials = materials
-    assistant_settings = service.settings
+    configs = service.configs
+
+    def assistant_user(device):
+        return user_of(device)
 
     @app.get("/api/v1/assistant/config")
-    def assistant_config(device=Depends(owner)):
+    def assistant_config(device=Depends(authenticated)):
+        user_id = assistant_user(device)
         with store.connect() as conn:
-            return assistant_settings.public(assistant.usage_today(conn, clock()))
+            return configs.public(conn, user_id, assistant.usage_today(conn, clock(), user_id))
 
     @app.post("/api/v1/assistant/config")
-    def assistant_configure(data: assistant.AssistantConfigIn, device=Depends(owner_desktop)):
-        assistant_settings.update(data)
+    def assistant_configure(data: assistant.AssistantConfigIn, device=Depends(authenticated)):
+        user_id = assistant_user(device)
         with store.connect() as conn:
-            return assistant_settings.public(assistant.usage_today(conn, clock()))
+            conn.execute("BEGIN IMMEDIATE")
+            configs.update(conn, user_id, data)
+            return configs.public(conn, user_id, assistant.usage_today(conn, clock(), user_id))
 
     @app.post("/api/v1/assistant/test")
-    async def assistant_test(device=Depends(owner_desktop)):
+    async def assistant_test(device=Depends(authenticated)):
+        user_id = assistant_user(device)
         with store.connect() as conn:
-            conf, key = service.require(conn)
-            assistant.count_call(conn, clock())
+            conf, key = service.require(conn, user_id)
+            assistant.count_call(conn, clock(), user_id=user_id)
         started, fixed = time.monotonic(), None
         ping = [{"role": "user", "content": "只回复两个字：在的"}]
         try:
@@ -349,7 +356,9 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                                                      transport=app.state.llm_transport)
                 except DomainError:
                     raise error from None
-                assistant_settings.update(assistant.AssistantConfigIn(base_url=candidate["base_url"]))
+                with store.connect() as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    configs.update(conn, user_id, assistant.AssistantConfigIn(base_url=candidate["base_url"]))
                 fixed = candidate["base_url"]
             elif error.code == "LLM_MODEL":
                 models = await assistant.list_models(conf, key, app.state.llm_transport)
@@ -363,32 +372,36 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                 "model": conf["model"], "fixed_base_url": fixed}
 
     @app.get("/api/v1/assistant/models")
-    async def assistant_models(device=Depends(owner_desktop)):
-        conf, key = assistant_settings.load(), assistant_settings.key()[0]
+    async def assistant_models(device=Depends(authenticated)):
+        user_id = assistant_user(device)
+        with store.connect() as conn:
+            conf = configs.load(conn, user_id)
+            key = configs.key(conn, user_id)[0]
         if not (conf["base_url"] and key):
             raise DomainError("先填写服务地址和 API Key", "ASSISTANT_NOT_CONFIGURED", 409)
         return {"models": await assistant.list_models(conf, key, app.state.llm_transport)}
 
     @app.get("/api/v1/assistant/messages")
-    def assistant_history(device=Depends(owner)):
+    def assistant_history(device=Depends(authenticated)):
+        user_id = assistant_user(device)
         with store.connect() as conn:
-            return {"messages": assistant.message_rows(conn)}
+            return {"messages": assistant.message_rows(conn, user_id=user_id)}
 
     @app.post("/api/v1/assistant/messages")
-    async def assistant_message(data: assistant.AssistantMessageIn, device=Depends(owner)):
-        return {"messages": await service.converse(data.text)}
+    async def assistant_message(data: assistant.AssistantMessageIn, device=Depends(authenticated)):
+        return {"messages": await service.converse(data.text, user_id=assistant_user(device))}
 
     @app.post("/api/v1/assistant/drafts/{draft_id}/apply")
-    def assistant_apply(draft_id: str, device=Depends(owner)):
-        return service.apply_draft(draft_id, device["id"])
+    def assistant_apply(draft_id: str, device=Depends(authenticated)):
+        return service.apply_draft(draft_id, device["id"], assistant_user(device))
 
     @app.post("/api/v1/assistant/drafts/{draft_id}/dismiss")
-    def assistant_dismiss(draft_id: str, device=Depends(owner)):
-        return service.dismiss_draft(draft_id)
+    def assistant_dismiss(draft_id: str, device=Depends(authenticated)):
+        return service.dismiss_draft(draft_id, assistant_user(device))
 
     @app.post("/api/v1/assistant/drafts/{draft_id}/undo")
-    def assistant_undo(draft_id: str, device=Depends(owner)):
-        return service.undo_draft(draft_id, device["id"])
+    def assistant_undo(draft_id: str, device=Depends(authenticated)):
+        return service.undo_draft(draft_id, device["id"], assistant_user(device))
 
     # ---- Chat channels: WeChat official account + QQ official bot ------
     channel = WeChatChannel(store, clock, service, lambda: app.state.wechat_transport)

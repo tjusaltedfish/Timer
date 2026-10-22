@@ -125,8 +125,8 @@ class MaterialService:
                 raise DomainError('复盘请求编号被其他内容使用', status=409)
             if previous and previous['status'] == 'done':
                 return json.loads(previous['result'])
-            conf, key = self.service.require(conn)
-            state = self.store.state(conn)
+            conf, key = self.service.require(conn, self.store.owner_id)
+            state = self.store.state(conn, self.store.owner_id)
             selected = [m for m in state.get('materials', []) if m['id'] in request.material_ids]
             if len(selected) != len(set(request.material_ids)) or any(m['date'] != request.date for m in selected):
                 raise DomainError('材料不存在或不属于当天，请重新选择', status=422)
@@ -179,8 +179,10 @@ class MaterialService:
         return entity
 
     async def generate_due(self):
-        state, now = self.store.state(), self.service.clock()
-        if not self.service.settings.configured() or not state['settings'].get('auto_daily_review', True):
+        state, now = self.store.state(user_id=self.store.owner_id), self.service.clock()
+        with self.store.connect() as conn:
+            configured = self.service.configs.configured(conn, self.store.owner_id)
+        if not configured or not state['settings'].get('auto_daily_review', True):
             return
         local = now.astimezone(ZoneInfo(state['settings']['timezone']))
         hour, minute = map(int, state['settings']['daily_review_time'].split(':'))
@@ -208,7 +210,8 @@ class MaterialService:
             # The user can retry manually; do not drain the model budget every minute.
 
     def _reserve(self, conf):
+        user_id = self.store.owner_id
         with self.store.connect() as conn:
-            if assistant.usage_today(conn, self.service.clock()) >= conf['daily_limit']:
+            if assistant.usage_today(conn, self.service.clock(), user_id) >= conf['daily_limit']:
                 raise DomainError('今天模型调用次数已用完；原文和材料已保留', status=429)
-            assistant.count_call(conn, self.service.clock(), 1)
+            assistant.count_call(conn, self.service.clock(), 1, user_id=user_id)

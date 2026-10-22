@@ -93,16 +93,20 @@ def test_operation_id_reuse_across_accounts_is_rejected(client, app):
     assert reused.json()["code"] == "OPERATION_ID_REUSED"
 
 
-def test_members_cannot_use_the_owner_only_assistant_and_channels(client, app):
+def test_members_have_their_own_assistant_but_not_the_owner_channels(client, app):
     make_user(app)
     member_token = login(client, "shidi")
-    blocked = [
+    channels = [
         client.get("/api/v1/wechat/config", headers=bearer(member_token)),
         client.get("/api/v1/qq/config", headers=bearer(member_token)),
-        client.post("/api/v1/assistant/messages", json={"text": "你好"}, headers=bearer(member_token)),
     ]
-    assert [response.status_code for response in blocked] == [403, 403, 403]
-    assert blocked[0].json()["code"] == "OWNER_ONLY"
+    assert [response.status_code for response in channels] == [403, 403]
+    assert channels[0].json()["code"] == "OWNER_ONLY"
+    # The assistant itself is per person: a member sees their own (empty) one.
+    own = client.get("/api/v1/assistant/config", headers=bearer(member_token))
+    assert own.status_code == 200 and own.json()["configured"] is False
+    talking = client.post("/api/v1/assistant/messages", json={"text": "你好"}, headers=bearer(member_token))
+    assert talking.status_code == 409 and talking.json()["code"] == "ASSISTANT_NOT_CONFIGURED"
 
 
 def test_legacy_desktop_token_is_the_owner_account(client, app):

@@ -2,6 +2,15 @@
 
 日期：2026-10-22。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
 
+## v2 多用户 P2：每人自己的助手（2026-10-22）
+
+- 收（`m00732` 方案、`m00671` 拍板「每人自带 key、新用户默认直接执行」）：`assistant_messages/drafts/undo/memes` 五表加 `user_id`（旧库由 `assistant.ensure_schema` 补列并把 v1 行归给主账号，不重建表）；新增 `assistant_configs`、`assistant_keys`、`assistant_usage_by_user`、`assistant_questions`（`server/app/migrations/0002_assistant_multiuser.sql`）。主账号第一次读配置时，把 v1 的 `assistant.json` 与 `secrets/llm-key` 一次性导入数据库，旧安装不用重填。
+- 钥匙只存密文：`AssistantConfigStore` 用 `secrets/llm-master`（32 字节，首次自动生成）派生两条子钥，以 HMAC-SHA256 计数器流加密、独立 HMAC 标签认证（encrypt-then-MAC）；API 只回 `key_hint`，`PLANNER_LLM_API_KEY` 仍只对主账号生效。测试断言数据库文件里没有明文 key。
+- 隔离：`/api/v1/assistant/{config,test,models,messages}` 与 `drafts/{id}/{apply,dismiss,undo}` 从 `OWNER_ONLY` 改为任意登录设备，但只能读写自己的配置、历史、草稿与用量；别人的草稿 id → `404`。人设 `persona` ∈ 大肥鱼/老师/朋友/严格教练，`converse` 把它拼进系统提示。
+- 仍属主账号：微信/QQ 通道、材料与复盘生成、周报仍是主账号数据（`service.user()` 默认落主账号）；公众号多账号绑定与聊天路由在 P2 通道阶段另做。
+- 验证（真实跑过）：`PLANNER_DATA_DIR=.test-data ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **189 passed**（185 + 4：`test_assistant_multiuser.py` 覆盖两人各自配置/历史/用量隔离、成员草稿只改成员日程、他人草稿 404、人设校验、v1 文件一次性导入）。原 `test_assistant.py` 两条断言按新语义更新（钥匙存库内密文、手机可改本人配置）。
+- 未做：通道多账号与路由、材料/复盘/周报按用户、澄清队列真正接进对话（表已建）、客户端人设与助手设置文案（随 P3 页面做）、真实模型联调。
+
 ## v2 多用户 P1：账号、租户隔离与过渡兼容（2026-10-22）
 
 - 依据 [v2 多用户方案](plans/v2-multiuser-plan.md)（`m00732`：按方案开发，用已注册的公众号测试号）。分支 `v2`，不改动 `main` 的已发布行为；旧客户端、桌面 token、配对码三种入口都能继续用。

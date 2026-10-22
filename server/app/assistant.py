@@ -5,6 +5,8 @@ The API key never leaves this computer: it is read from PLANNER_LLM_API_KEY or
 <data>/secrets/llm-key and is never returned by any endpoint.
 """
 import asyncio
+import base64
+import hmac
 import json
 import math
 import os
@@ -20,16 +22,22 @@ from . import memes
 from .domain import DomainError, find, identifier, parse, stamp
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS assistant_messages (id TEXT PRIMARY KEY, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS assistant_drafts (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, summary TEXT NOT NULL, actions TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assistant_messages (id TEXT PRIMARY KEY, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS assistant_drafts (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, summary TEXT NOT NULL, actions TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS assistant_usage (day TEXT PRIMARY KEY, calls INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS assistant_undo (draft_id TEXT PRIMARY KEY, operations TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS assistant_memes (message_id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assistant_undo (draft_id TEXT PRIMARY KEY, operations TEXT NOT NULL, created_at TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS assistant_memes (message_id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS assistant_configs (user_id TEXT PRIMARY KEY, base_url TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', daily_limit INTEGER NOT NULL DEFAULT 200, timeout_seconds INTEGER NOT NULL DEFAULT 45, confirm_first INTEGER NOT NULL DEFAULT 0, persona TEXT NOT NULL DEFAULT '大肥鱼', updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assistant_keys (user_id TEXT PRIMARY KEY, cipher TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assistant_usage_by_user (user_id TEXT NOT NULL, day TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, day));
+CREATE TABLE IF NOT EXISTS assistant_questions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, answered_at TEXT);
 """
 
 RETRY_DELAYS = (0, 1.5, 4.0)
 WEEKDAYS = "一二三四五六日"
-DEFAULTS = {"base_url": "", "model": "", "daily_limit": 200, "timeout_seconds": 45, "confirm_first": False}
+DEFAULTS = {"base_url": "", "model": "", "daily_limit": 200, "timeout_seconds": 45,
+            "confirm_first": False, "persona": "大肥鱼"}
+PERSONAS = ("大肥鱼", "老师", "朋友", "严格教练")
 
 
 class Strict(BaseModel):
@@ -42,7 +50,9 @@ class AssistantConfigIn(Strict):
     api_key: str | None = Field(default=None, max_length=400)
     clear_key: bool = False
     daily_limit: int | None = Field(default=None, ge=1, le=5000)
+    timeout_seconds: int | None = Field(default=None, ge=5, le=300)
     confirm_first: bool | None = None
+    persona: str | None = Field(default=None, max_length=20)
 
     @field_validator("base_url")
     @classmethod
@@ -58,6 +68,13 @@ class AssistantConfigIn(Strict):
     def printable_key(cls, value):
         if value and any(c.isspace() for c in value):
             raise ValueError("API Key 不能包含空格或换行")
+        return value
+
+    @field_validator("persona")
+    @classmethod
+    def known_persona(cls, value):
+        if value is not None and value not in PERSONAS:
+            raise ValueError("人设只能从「大肥鱼 / 老师 / 朋友 / 严格教练」里选")
         return value
 
 
@@ -102,7 +119,7 @@ class AssistantSettings:
 
     def update(self, data: AssistantConfigIn):
         conf = self.load()
-        for field in ("base_url", "model", "daily_limit", "confirm_first"):
+        for field in ("base_url", "model", "daily_limit", "confirm_first", "persona"):
             value = getattr(data, field)
             if value is not None:
                 conf[field] = value
@@ -114,6 +131,166 @@ class AssistantSettings:
         elif data.api_key:
             self.key_path.parent.mkdir(exist_ok=True)
             self.key_path.write_text(data.api_key, encoding="utf-8")
+
+
+class AssistantConfigStore:
+    """Per-user assistant configuration and API keys.
+
+    Every person brings their own key (the product decision behind v2), so the
+    key must be encrypted at rest.  There is no third-party crypto dependency on
+    purpose: the key material lives in ``secrets/llm-master`` and every user key
+    is sealed with HMAC-SHA256 in counter mode, authenticated with a separate
+    HMAC tag (encrypt-then-MAC).  The owner's v1 files are imported once so the
+    existing installation keeps working.
+    """
+
+    def __init__(self, store):
+        self.store = store
+        self.legacy = AssistantSettings(store.directory)
+        self.master_path = store.directory / "secrets" / "llm-master"
+
+    # -- crypto ---------------------------------------------------------
+    def _master(self):
+        try:
+            key = self.master_path.read_bytes()
+        except OSError:
+            key = b""
+        if len(key) != 32:
+            key = os.urandom(32)
+            self.master_path.parent.mkdir(parents=True, exist_ok=True)
+            self.master_path.write_bytes(key)
+        return key
+
+    @staticmethod
+    def _subkeys(master):
+        return (hmac.new(master, b"timer-assistant-encrypt", "sha256").digest(),
+                hmac.new(master, b"timer-assistant-auth", "sha256").digest())
+
+    def seal(self, plaintext: str) -> str:
+        enc, mac = self._subkeys(self._master())
+        nonce, data = os.urandom(16), plaintext.encode("utf-8")
+        stream = b"".join(hmac.new(enc, nonce + counter.to_bytes(8, "big"), "sha256").digest()
+                          for counter in range((len(data) + 31) // 32))
+        cipher = bytes(a ^ b for a, b in zip(data, stream))
+        tag = hmac.new(mac, nonce + cipher, "sha256").digest()
+        return base64.b64encode(nonce + cipher + tag).decode("ascii")
+
+    def unseal(self, sealed: str) -> str:
+        try:
+            raw = base64.b64decode(sealed)
+            nonce, cipher, tag = raw[:16], raw[16:-32], raw[-32:]
+            enc, mac = self._subkeys(self._master())
+            if not hmac.compare_digest(tag, hmac.new(mac, nonce + cipher, "sha256").digest()):
+                return ""
+            stream = b"".join(hmac.new(enc, nonce + counter.to_bytes(8, "big"), "sha256").digest()
+                              for counter in range((len(cipher) + 31) // 32))
+            return bytes(a ^ b for a, b in zip(cipher, stream)).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return ""
+
+    # -- configuration --------------------------------------------------
+    def _row(self, conn, user_id):
+        conn.execute(
+            "INSERT OR IGNORE INTO assistant_configs"
+            "(user_id, base_url, model, daily_limit, timeout_seconds, confirm_first, persona, updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?)",
+            (user_id, "", "", DEFAULTS["daily_limit"], DEFAULTS["timeout_seconds"], 0,
+             DEFAULTS["persona"], _now()),
+        )
+        return conn.execute("SELECT * FROM assistant_configs WHERE user_id=?", (user_id,)).fetchone()
+
+    def load(self, conn, user_id):
+        row = self._row(conn, user_id)
+        conf = {key: (row[key] == 1 if key == "confirm_first" else row[key])
+                for key in ("base_url", "model", "daily_limit", "timeout_seconds", "confirm_first", "persona")}
+        if not conf["base_url"] and not conf["model"] and user_id == self.store.owner_id:
+            # Import the v1 assistant.json exactly once, on first read.
+            legacy = self.legacy.load()
+            if legacy["base_url"] or legacy["model"]:
+                conn.execute(
+                    "UPDATE assistant_configs SET base_url=?, model=?, daily_limit=?, timeout_seconds=?,"
+                    " confirm_first=?, persona=?, updated_at=? WHERE user_id=?",
+                    (legacy["base_url"], legacy["model"], legacy["daily_limit"],
+                     legacy["timeout_seconds"], 1 if legacy["confirm_first"] else 0,
+                     legacy["persona"], _now(), user_id),
+                )
+                if self.legacy.key()[0]:
+                    self.set_key(conn, user_id, self.legacy.key()[0])
+                return self.load(conn, user_id)
+        return conf
+
+    def key(self, conn, user_id):
+        """(key, source) — never returned to the client, only used for calls."""
+        if os.environ.get("PLANNER_LLM_API_KEY") and user_id == self.store.owner_id:
+            return os.environ["PLANNER_LLM_API_KEY"].strip(), "env"
+        row = conn.execute("SELECT cipher FROM assistant_keys WHERE user_id=?", (user_id,)).fetchone()
+        if row is None:
+            return "", "none"
+        key = self.unseal(row["cipher"])
+        return key, ("user" if key else "none")
+
+    def set_key(self, conn, user_id, api_key):
+        conn.execute(
+            "INSERT INTO assistant_keys(user_id, cipher, created_at) VALUES(?,?,?)"
+            " ON CONFLICT(user_id) DO UPDATE SET cipher=excluded.cipher, created_at=excluded.created_at",
+            (user_id, self.seal(api_key), _now()),
+        )
+        conn.execute("UPDATE assistant_configs SET updated_at=? WHERE user_id=?", (_now(), user_id))
+
+    def clear_key(self, conn, user_id):
+        conn.execute("DELETE FROM assistant_keys WHERE user_id=?", (user_id,))
+
+    def configured(self, conn, user_id):
+        conf = self.load(conn, user_id)
+        return bool(conf["base_url"] and conf["model"] and self.key(conn, user_id)[0])
+
+    def public(self, conn, user_id, used_today):
+        conf, (key, source) = self.load(conn, user_id), self.key(conn, user_id)
+        return {"configured": bool(conf["base_url"] and conf["model"] and key),
+                "base_url": conf["base_url"], "model": conf["model"],
+                "daily_limit": conf["daily_limit"], "used_today": used_today,
+                "confirm_first": bool(conf["confirm_first"]), "persona": conf["persona"],
+                "key_source": source,
+                "key_hint": ("····" + key[-4:]) if len(key) >= 8 else ("已设置" if key else "")}
+
+    def update(self, conn, user_id, data):
+        conf = self.load(conn, user_id)
+        for field in ("base_url", "model", "daily_limit", "timeout_seconds", "confirm_first", "persona"):
+            value = getattr(data, field, None)
+            if value is not None:
+                conf[field] = value
+        conn.execute(
+            "UPDATE assistant_configs SET base_url=?, model=?, daily_limit=?, timeout_seconds=?,"
+            " confirm_first=?, persona=?, updated_at=? WHERE user_id=?",
+            (conf["base_url"], conf["model"], conf["daily_limit"], conf["timeout_seconds"],
+             1 if conf["confirm_first"] else 0, conf["persona"], _now(), user_id),
+        )
+        if data.clear_key:
+            self.clear_key(conn, user_id)
+        elif data.api_key:
+            self.set_key(conn, user_id, data.api_key)
+
+
+def _now():
+    from .domain import stamp
+    from .db import utcnow
+
+    return stamp(utcnow())
+
+
+def ensure_schema(conn, owner_id):
+    """Bring a v1 assistant schema up to per-user shape, keeping old rows."""
+    conn.executescript(SCHEMA)
+    for table in ("assistant_messages", "assistant_drafts", "assistant_undo", "assistant_memes"):
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "user_id" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        conn.execute(f"UPDATE {table} SET user_id=? WHERE user_id='' OR user_id IS NULL", (owner_id,))
+    conn.execute(
+        "INSERT OR IGNORE INTO assistant_usage_by_user(user_id, day, calls)"
+        " SELECT ?, day, calls FROM assistant_usage",
+        (owner_id,),
+    )
 
 
 def _relay_message(response, key):
@@ -678,18 +855,25 @@ def draft_operations(state, actions, now):
     return operations
 
 
-def usage_today(conn, now):
-    row = conn.execute("SELECT calls FROM assistant_usage WHERE day=?", (now.date().isoformat(),)).fetchone()
+def usage_today(conn, now, user_id):
+    row = conn.execute("SELECT calls FROM assistant_usage_by_user WHERE user_id=? AND day=?",
+                       (user_id, now.date().isoformat())).fetchone()
     return row["calls"] if row else 0
 
 
-def count_call(conn, now, calls=1):
-    conn.execute("INSERT INTO assistant_usage VALUES(?,?) ON CONFLICT(day) DO UPDATE SET calls=calls+?",
-                 (now.date().isoformat(), calls, calls))
+def count_call(conn, now, calls=1, *, user_id):
+    conn.execute(
+        "INSERT INTO assistant_usage_by_user(user_id, day, calls) VALUES(?,?,?)"
+        " ON CONFLICT(user_id, day) DO UPDATE SET calls=calls+?",
+        (user_id, now.date().isoformat(), calls, calls),
+    )
 
 
-def message_rows(conn, limit=60):
-    rows = conn.execute("SELECT * FROM assistant_messages ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,)).fetchall()
+def message_rows(conn, limit=60, user_id=""):
+    rows = conn.execute(
+        "SELECT * FROM assistant_messages WHERE user_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+        (user_id, limit),
+    ).fetchall()
     result = []
     for row in reversed(rows):
         drafts = conn.execute("SELECT d.*, u.draft_id AS undo FROM assistant_drafts d LEFT JOIN assistant_undo u "

@@ -56,15 +56,18 @@ def send(client, kind, **payload):
     return response.json()["entity"]
 
 
-def test_config_keeps_key_on_this_computer(client, tmp_path):
+def test_config_keeps_key_encrypted_on_the_server(client, tmp_path):
     assert client.get("/api/v1/assistant/config").json()["configured"] is False
     public = configure(client)
     assert public["configured"] is True
     assert public["base_url"] == "https://relay.example/v1"
     assert public["key_hint"] == "····cdef"
     assert SECRET not in json.dumps(public)
-    assert SECRET not in (tmp_path / "assistant.json").read_text(encoding="utf-8")
-    assert (tmp_path / "secrets" / "llm-key").read_text(encoding="utf-8") == SECRET
+    # v2: every person brings their own key; it is sealed inside the database and
+    # never written as plain text to the data directory or returned by the API.
+    assert SECRET.encode() not in (tmp_path / "planner.db").read_bytes()
+    assert not (tmp_path / "assistant.json").exists()
+    assert not (tmp_path / "secrets" / "llm-key").exists()
     # Leaving the key out keeps it; clearing removes it.
     assert configure(client, api_key=None)["key_hint"] == "····cdef"
     assert client.post("/api/v1/assistant/config", json={"clear_key": True}).json()["configured"] is False
@@ -72,12 +75,16 @@ def test_config_keeps_key_on_this_computer(client, tmp_path):
     assert bad.status_code == 422
 
 
-def test_phone_cannot_change_assistant_config(client):
+def test_phone_can_manage_its_own_assistant_config(client):
     code = client.post("/api/v1/pairing/code").json()["code"]
     token = client.post("/api/v1/pairing/confirm", json={"code": code, "name": "手机"}).json()["token"]
     phone = {"Authorization": "Bearer " + token}
-    assert client.post("/api/v1/assistant/config", json={"model": "x"}, headers=phone).status_code == 403
     assert client.get("/api/v1/assistant/config", headers=phone).status_code == 200
+    # The phone belongs to the same person, so it may set that person's own key.
+    set_up = client.post("/api/v1/assistant/config",
+                         json={"base_url": "https://relay.example/v1", "model": "m", "api_key": SECRET},
+                         headers=phone)
+    assert set_up.status_code == 200 and set_up.json()["configured"] is True
 
 
 def test_connection_test_reports_auth_failure_without_leaking_key(client, model):
