@@ -25,6 +25,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import memes
+from .channel_identity import IdentityStore
 from .chat_commands import HELP, ChatCommands, split_text
 from .domain import DomainError, identifier, parse, stamp
 
@@ -173,6 +174,7 @@ class QQChannel:
         self.connect = connect or _websocket_connect  # websockets.connect 的替身，测试用假网关
         self.settings = QQSettings(store.directory)
         self.commands = ChatCommands(store, clock, assistant_service, "qq")
+        self.identities = IdentityStore(store, clock)
         self.lock = asyncio.Lock()
         self.connected = False
         self._token, self._token_expiry = None, None
@@ -207,8 +209,12 @@ class QQChannel:
 
     def unbind(self):
         conf = self.settings.load()
+        legacy = conf["bound_openid"]
         conf.update(bound_openid="", bound_at=None, last_msg_id="", last_msg_at=None)
         self.settings.save(conf)
+        if legacy:
+            with self.store.connect() as conn:
+                self.identities.unbind(conn, "qq", legacy, self.store.owner_id)
         return {"bound": False}
 
     # ---- Inbound ---------------------------------------------------------
@@ -245,27 +251,42 @@ class QQChannel:
             def mark(status, note=None):
                 conn.execute("UPDATE qq_inbox SET status=?, note=? WHERE dedup_key=?", (status, note, msg_id))
 
-            bound = conf["bound_openid"]
-            if bound and openid != bound:
-                mark("ignored", "other account")
-                return False  # 不让陌生人消耗额度
-            if not bound:
-                if re.fullmatch(r"\d{6}", content) and self._bind_code_matches(conf, content, now):
-                    conf.update(bound_openid=openid, bound_at=stamp(now),
-                                last_msg_id=msg_id, last_msg_at=stamp(now),
-                                bind_code_hash="", bind_expires_at=None)
+            self._migrate_legacy_binding(conn, openid, conf, now)
+            user_id = self.identities.user_of(conn, "qq", openid)
+            if user_id is None:
+                is_code = re.fullmatch(r"\d{6}", content) is not None
+                if is_code and self._bind_code_matches(conf, content, now):
+                    # v1 desktop page writes the 6 位码 into qq.json; keep that path working.
+                    conf.update(bound_openid=openid, bound_at=stamp(now), last_msg_id=msg_id,
+                                last_msg_at=stamp(now), bind_code_hash="", bind_expires_at=None)
                     self.settings.save(conf)
+                    self.identities.bind(conn, "qq", openid, self.store.owner_id, "主账号")
+                    self.identities.touch(conn, "qq", openid)
                     self._enqueue(conn, openid, "绑定好了，之后在 QQ 里直接说想安排什么就行。\n\n" + HELP,
                                   now, key=f"bind:{msg_id}", msg_id=msg_id, msg_at=now)
-                    mark("done")
+                    mark("done", "bound")
                     return True
-                if re.fullmatch(r"\d{6}", content):
-                    self._enqueue(conn, openid, "这个绑定码不对，或者已经过期了。在电脑端「设置 · QQ 助手」重新生成一个。",
-                                  now, key=f"badcode:{msg_id}", msg_id=msg_id, msg_at=now)
-                    mark("done")
+                if is_code:
+                    user_id, problem = self.identities.redeem(conn, "qq", content, openid)
+                    self.identities.touch(conn, "qq", openid)
+                    if not user_id:
+                        self._enqueue(conn, openid, problem, now, key=f"badcode:{msg_id}",
+                                      msg_id=msg_id, msg_at=now)
+                        mark("done", "bad code")
+                        return True
+                    conf.update(bound_openid=openid, bound_at=stamp(now), last_msg_id=msg_id,
+                                last_msg_at=stamp(now))
+                    self.settings.save(conf)
+                    self._enqueue(conn, openid,
+                                  f"绑定好了，以后这个 QQ 就是「{self.identities.bindings(conn, user_id)[0]['hint']}」对应的瞬时账号。\n\n" + HELP,
+                                  now, key=f"bind:{msg_id}", msg_id=msg_id, msg_at=now)
+                    mark("done", "bound")
                     return True
-                mark("ignored", "not bound")
-                return False
+                self._enqueue(conn, openid, "这个 QQ 还没绑定瞬时账号。打开瞬时 App →「账号」→「绑定 QQ」，把 6 位绑定码发给我即可。",
+                              now, key=f"unbound:{msg_id}", msg_id=msg_id, msg_at=now)
+                mark("done", "unbound")
+                return True
+            self.identities.touch(conn, "qq", openid)
 
             conf.update(last_msg_id=msg_id, last_msg_at=stamp(now))
             self.settings.save(conf)
@@ -276,6 +297,19 @@ class QQChannel:
                           key=f"media:{msg_id}", msg_id=msg_id, msg_at=now)
             mark("done")
             return True
+
+    def _migrate_legacy_binding(self, conn, openid, conf, now):
+        """v1 kept exactly one bound openid in qq.json; it belonged to the owner."""
+        legacy = conf.get("bound_openid") or ""
+        if legacy and openid == legacy and not self.identities.user_of(conn, "qq", openid):
+            self.identities.bind(conn, "qq", openid, self.store.owner_id, "主账号")
+
+    async def handle(self, text, request_id=None, image=None, user_id=None):
+        """Reply text for one message from a bound account."""
+        commands = self.commands
+        if user_id and user_id != self.store.owner_id:
+            commands = ChatCommands(self.store, self.clock, self.assistant, "qq", user_id)
+        return await commands.reply(text, request_id=request_id, image=image)
 
     # ---- Outbound --------------------------------------------------------
     def _enqueue(self, conn, openid, text, now, key=None, not_before=None, expires_at=None,
@@ -514,6 +548,11 @@ class QQChannel:
             for row in pending:
                 with self.store.connect() as conn:
                     conn.execute("UPDATE qq_inbox SET status='processing' WHERE id=?", (row["id"],))
+                    user_id = self.identities.user_of(conn, "qq", row["openid"])
+                if not user_id:
+                    with self.store.connect() as conn:
+                        conn.execute("UPDATE qq_inbox SET status='done', note='unbound' WHERE id=?", (row["id"],))
+                    continue
                 image, refused = None, ""
                 if row["kind"] == "image" and row["media_url"]:
                     try:
@@ -521,7 +560,7 @@ class QQChannel:
                     except DomainError as error:
                         refused = error.message
                 try:
-                    reply = refused or await self.commands.reply(row["content"], request_id=row["id"], image=image)
+                    reply = refused or await self.handle(row["content"], request_id=row["id"], image=image, user_id=user_id)
                     status = "failed:image" if refused else "done"
                 except Exception as error:  # noqa: BLE001 - 队列不能停，证据要留下
                     log.exception("QQ message handling failed")

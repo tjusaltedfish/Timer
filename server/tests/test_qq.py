@@ -189,23 +189,24 @@ def test_bind_code_persists_and_only_works_once(fake):
     assert app.state.qq.settings.load()["bound_openid"] == OWNER
 
 
-def test_strangers_are_ignored_silently(fake):
+def test_strangers_only_get_the_binding_hint(fake):
     client, app, api, gateway, model = fake
     configure(client)
     bind(client, app)
     run(client, app)
     api.sent.clear()
-    assert message(app, openid=STRANGER, content="帮我加个会", msg_id="m-stranger") is False
+    assert message(app, openid=STRANGER, content="帮我加个会", msg_id="m-stranger") is True
     run(client, app)
-    assert api.sent == []
+    assert [STRANGER in item["path"] for item in api.sent] == [True]
+    assert "还没绑定瞬时账号" in api.sent[0]["body"]["content"]
 
 
-def test_unbound_stranger_gets_no_reply_at_all(fake):
+def test_unbound_stranger_gets_a_binding_hint(fake):
     client, app, api, gateway, model = fake
     configure(client)
-    assert message(app, openid=STRANGER, content="你好", msg_id="m-hi") is False
+    assert message(app, openid=STRANGER, content="你好", msg_id="m-hi") is True
     run(client, app)
-    assert api.sent == []
+    assert len(api.sent) == 1 and "还没绑定瞬时账号" in api.sent[0]["body"]["content"]
 
 
 def test_duplicate_push_is_answered_once(fake):
