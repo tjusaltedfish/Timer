@@ -2,6 +2,7 @@
 
 - 状态：**待拍板**（未改任何代码）
 - 日期：2026-10-22
+- 修订（2026-10-22，用户拍板 `m00541`）：托管形态从「云 VPS」改为**家里电脑常开 + Tailscale 尾网**，数据库从 Postgres 改为**本机 SQLite（WAL）**；本文以下已按此改，云方案只作为备选保留。
 - 基线：`main@7c005e4`（后端 pytest 167 passed / Flutter test 77 passed / analyze 干净）
 - 对应需求：把「只在我电脑上跑的个人助手」改成「师弟也能用的、手机优先、电脑可同步查看」的托管版，同时修掉审查发现的缺陷。
 
@@ -12,16 +13,17 @@
 | 问题 | 推荐做法 |
 | --- | --- |
 | 要不要用户登录？ | **要**。邀请码注册 + 用户名密码登录 + 设备长期令牌；不做手机号验证码（无短信成本、无合规负担） |
-| 真正的后端/数据库 | **Postgres 16 + 常驻云服务器**（Docker Compose）；每用户一个 JSONB 文档（沿用现有 domain 引擎）+ 规范化认证/设备/操作日志/事件/发件箱/密钥表 |
-| 手机、电脑都要开吗？ | **都不用**。服务在云上常开；手机是主客户端，电脑只是可选的第二客户端；原来的 Cloudflare Tunnel + watchdog 退居「本地开发/备用」 |
+| 真正的后端/数据库 | **本机 SQLite（WAL）+ 家里电脑常开**；每用户一行 `user_state.body` 文档（沿用现有 domain 引擎）+ 规范化认证/设备/操作日志/事件/发件箱/密钥表。不引入 Docker、Postgres |
+| 手机、电脑都要开吗？ | **都不用**。家里电脑不关机常驻服务；手机是主客户端，电脑是同机/第二客户端；外网设备通过 **Tailscale 尾网**访问（Cloudflare Tunnel 仅作兜底） |
+| 外网入口 | **Tailscale 优先**：只有尾网内的 3 台设备能连，`tailscale serve` 提供有效 HTTPS，公网暴露面≈0；Cloudflare Tunnel 保留给「不装 Tailscale 的设备」 |
 | 多用户怎么隔离 | 请求上下文强制 `user_id`；仓储层不接受无主查询；文件、通道身份、助手记忆/密钥/人设全部按用户分域；跨租户测试进 CI |
 | 通道二选一 | **QQ 机器人优先**（WebSocket 长连接，不要公网回调/域名/备案）；微信公众号作为可选的第二通道（一个号服务所有用户，openid→用户绑定） |
 | DeepSeek key | 默认**每人自带**、加密入库、只回显尾号；可切换「用站长的共享额度 + 每日限额」 |
 | 新用户引导 | 服务端记录进度的 10 步高亮教程（可跳过、可重看、换设备续上），其中包含 DeepSeek 配置测试、QQ/微信绑定、人格卡选择、第一个任务 |
 | 手机周视图 | 从「7 列小地图 + 详细课表」双模式改为「周条 + 周热图 + 选中日议程」三层结构，点击目标 ≥44dp，空闲/负荷统计常驻 |
 | 助手更智能 | 意图路由（确定性快路 + LLM 工具调用）+ 上下文接地 + 反问澄清 + 实体指代 + 记忆检索 + 人格卡；破坏性操作永远要确认 |
-| 周期 | 约 4–5 周（业余、AI 辅助；全职可压到 3 周），分 5 个阶段，每阶段可独立验收 |
-| 成本 | VPS 2C4G 约 ¥60/月 + 备份 ¥10/月 + 域名已有 + DeepSeek 按人自付；公众号/QQ 机器人本身免费 |
+| 周期 | 约 3.5–4 周（业余、AI 辅助；省掉云环境搭建），分 5 个阶段，每阶段可独立验收 |
+| 成本 | **托管 ¥0**（电脑本来常开、域名已有）；B2 备份可选 ¥10/月；DeepSeek 按人自付 |
 
 ---
 
@@ -52,10 +54,10 @@
 | 设备令牌由桌面启动器写入 `desktop-token` 文件后换取 | `store.py` 设备引导；`tools/Start-Timer.ps1` | 新用户没有「注册」入口；令牌即身份，无法按人吊销 |
 | 数据目录固定 `%USERPROFILE%\TimePlanner` | `store.py` 初始化 | 只能一台机、一个人 |
 | 后台任务跑在 API 进程里（5s/60s/3s 循环） | `server/app/main.py:36-80` | 进程一重启全断；无法水平扩展；多进程会重复触发 |
-| 对外靠家里电脑 + `cloudflared` + watchdog | `docs/STATUS.md:52-62`、`tools/tunnel-watchdog.ps1` | 电脑必须常开——正好违背需求 1「手机与电脑不用都开着」 |
+| 对外只靠临时 `cloudflared` 隧道 + watchdog，且只服务一个人 | `docs/STATUS.md:52-62`、`tools/tunnel-watchdog.ps1` | 电脑常开本身不是问题（用户已决定不关机）；缺的是身份、设备管理和按用户隔离，不是「换个地方托管」 |
 | QQ/微信通道绑定是单例 | `server/app/qq.py`、`wechat.py`、`store.py` 中 bind 表 | 只能记一个 openid；换人即串台 |
 | 助手设定/记忆/人格写死在提示词与 `assistant_messages` | `server/app/assistant.py`、`assistant_service.py` | 「主人/大肥鱼」是作者个人口味，无法给师弟换人格 |
-| 版本与 APK 由本机静态目录提供 | `server/app/releases.py`、`main.py` `/app/download` | 可以复用，但需要 HTTPS 域名与签名管理 |
+| 版本与 APK 由本机静态目录提供 | `server/app/releases.py`、`main.py` `/app/download` | 可以复用；HTTPS 由尾网/隧道提供，签名与 keystore 管理不变 |
 | 个人常量散落 | 默认时区 `America/Los_Angeles`（`store.py:28`）、`desktop-token`、个人表情库 | 通用版要改成「首次登录由设备时区初始化 + 用户可改」 |
 
 另外，上一轮审查已确认的一批缺陷（P0/P1 见 §11）必须在改造期间一起修，否则多用户会把单机 bug 放大成「数据串台/数据丢失」。
@@ -67,31 +69,35 @@
 ```
             ┌───────────────┐   ┌────────────────┐   ┌──────────────┐
             │ Android 手机   │   │ Windows 桌面    │   │ QQ / 微信     │
-            │ (主客户端)     │   │ (可选第二端)    │   │ (IM 通道)     │
+            │ (主客户端)     │   │ (同机/第二端)   │   │ (IM 通道)     │
             └───────┬───────┘   └───────┬────────┘   └──────┬───────┘
-                    │ HTTPS + Bearer 设备令牌            │ 长连接/回调
-                    ▼                   ▼                    ▼
+                    │ Tailscale 尾网 HTTPS     │ 长连接出站/回调 │
+                    ▼                         ▼                ▲
         ┌──────────────────────────────────────────────────────────┐
-        │                    云服务器（Docker Compose）              │
-        │  Caddy(TLS) ── api(FastAPI, 无状态) ── worker(后台任务)     │
-        │                      │                     │              │
-        │                      └──────┬──────────────┘              │
-        │                        Postgres 16                          │
-        │   users / devices / user_state(jsonb) / operations_log /    │
-        │   events / outbox / jobs / channel_identities /             │
-        │   assistant_configs / memories / materials / audit_log      │
-        │                      文件卷：users/<uuid>/materials|memes   │
+        │              家里电脑（不关机，常驻服务）                  │
+        │   tailscale serve(TLS) ── uvicorn api(FastAPI，单进程)     │
+        │        │ 同进程后台循环：超时结算/提醒/周报/归档            │
+        │        │                                                  │
+        │   SQLite（WAL，单文件）                                    │
+        │   users / devices / user_state(body JSON) /                │
+        │   operations_log / events / outbox / jobs /                │
+        │   channel_identities / channel_bind_codes /                │
+        │   assistant_configs / assistant_messages /                 │
+        │   assistant_drafts / assistant_memories /                  │
+        │   materials / audit_log / schema_version                   │
+        │   文件：%USERPROFILE%\TimePlanner\users\<uuid>\materials…   │
         └──────────────────────────────────────────────────────────┘
-                    │ 每日 pg_dump 加密 → 对象存储（B2/S3）
+                    │ 每日 sqlite .backup + robocopy
                     ▼
-              备份 / 监控（自检 + 异常时用 QQ 机器人告警）
+        第二块硬盘 / OneDrive / B2（可选）+ 每月恢复演练
 ```
 
 关键点：
 
-- **手机与电脑都只是客户端**，服务器常开；任一客户端离线不影响另一个，也不影响后台（按时段提醒、超时结算、周报）。
-- API 进程无状态（令牌在 DB），可重启；后台任务移到 `worker` 进程，用 `jobs` + `outbox` 表驱动，**同一任务只执行一次**。
+- **手机与电脑都只是客户端**，服务器就是这台不关机的家用电脑；任一客户端离线不影响另一个，也不影响后台（按时段提醒、超时结算、周报）。
+- **单进程足够**：3 个用户、SQLite 单写者，一个 uvicorn 进程 + 同进程后台循环；重启后靠 `jobs`/`outbox`/事件游标续跑，不需要 worker 容器、Redis、Docker。
 - 数据同步：保留现有 `/operations`（幂等、按设备）+ `/snapshot`，增加 `ETag`/`gzip` 和 `/sync?since=revision` 轻量增量提示；客户端仍只渲染服务端状态（业务逻辑继续只写在 `domain.py`，客户端不做第二套规则）。
+- 对外入口：`tailscale serve` 把本机服务发布到尾网地址（仅尾网内可达、自动 HTTPS）；QQ 机器人走长连接出站，不依赖入口；微信公众号可选，需要公网回调时用 Cloudflare Tunnel 子域。
 - 通道与助手都通过「用户上下文」工作：IM 消息先解析 `channel + external_id` → 用户，再走同一个助手管线。
 
 ---
@@ -107,22 +113,24 @@
 
 **为什么不是「免登录、只靠配对码」**：订阅式 IM 绑定可以作为第二身份，但 App 本身必须有账号——否则换手机、清数据、多设备同步、助手记忆归属都无解。
 
-### D2 数据库：Postgres 16，每用户一份 JSONB 状态 + 规范化周边表
+### D2 数据库：SQLite（WAL），每用户一行 JSON 状态 + 规范化周边表
 
-- 继续复用 `domain.py / planning.py / adjustments.py`（纯字符串状态机，167 个测试保护），只把 `store.py` 换成 `repo.py`：`state_for(conn, user_id)` 读写 `user_state.body`。
+- 3 个用户、单台电脑、单进程写：SQLite 足够且最省心——数据库就是一个文件，备份=复制，不需要 Docker/WSL2、不需要调 Postgres 参数、也不用为 3 个人维护一个数据库服务。WAL 下多读单写，写事务 `BEGIN IMMEDIATE` 排队（现有 `busy_timeout=15s` 保留），3 人峰值远低于瓶颈。
+- 继续复用 `domain.py / planning.py / adjustments.py`（纯字符串状态机，171 个测试保护），只把 `store.py` 换成 `repo.py`：`state_for(conn, user_id)` 读写 `user_state.body`（TEXT 存 JSON，用 SQLite 的 `json_*` 函数做少量查询）。
 - 认证、设备、操作日志、事件、发件箱、任务队列、通道身份、助手配置、记忆、素材**全部规范化成表**（这些需要索引、按人查询、并发安全）。
-- 迁移用 Alembic；测试仍用临时 SQLite（同一套仓储接口），生产 Postgres——用 SQLAlchemy Core + JSON 类型抹平两边差异。
-- **不做**全表化（tasks/blocks 每行一条）：改造量是 2–4 周且高风险，收益在 100 人以内不明显；先用「JSONB + 定期归档」把单文档控制在 1 MB 内（§5.5），真有性能问题再拆。
+- 迁移用轻量版本化（`schema_version` 表 + 有序 SQL 脚本），不引入 Alembic——测试与生产同一个引擎，避免两套行为分叉。
+- **不做**全表化（tasks/blocks 每行一条）：改造量是 2–4 周且高风险，3 人规模收益为负；先用「JSON + 定期归档」把单文档控制在 1 MB 内（§5.5），真要跨机多写再迁 Postgres（迁移面已隔离在 `repo.py`）。
 
-### D3 进程形态：api + worker + postgres + caddy 四个容器
+### D3 进程形态：单进程 uvicorn + 同进程后台循环
 
-- `api`：只处理请求；写操作仍走 `BEGIN IMMEDIATE` 等价物（`SELECT ... FOR UPDATE` 锁 `user_state` 行）。
-- `worker`：`jobs`/`outbox` 轮询（`FOR UPDATE SKIP LOCKED`），负责超时结算、归档、每日复盘、周报、通道重试、备份自检；`main.py` 里的三个后台循环删除。
-- 暂不引入 Redis/Celery：给 2–20 人用纯 DB 队列足够，少一个组件少一处故障。
+- 一个 `uvicorn` 进程服务 FastAPI；`main.py` 现有三个循环（5s 超时结算、3s 通道/主动提醒、60s 素材/周报）保留，加一次 SQLite 写冲突重试即可。
+- 单实例：SQLite 单写者，本机没有多进程争抢问题，省掉 jobs 抢占、重复触发的复杂度；进程崩溃由计划任务/`Start-Timer.ps1` 拉起，`jobs` 表保证重启后把没做完的活续上。
+- 以后真要上多进程（用户涨到 10+ 或要独立升级 API），再按 §5.1 的 `jobs` 表拆出 `worker.py` 子进程；表结构已预留，不用重构。
+- 不引入 Redis/Celery/Docker：3 个人一个进程就是最优解，少一个组件少一处故障。
 
 ### D4 通道：QQ 机器人优先，微信公众号可选，二者都按「一个应用 + 多用户绑定」设计
 
-- QQ：官方机器人 WebSocket 长连接，**不需要公网回调、域名、备案**（`docs/qqbot-c2c-api-spec.md:341` 已确认），部署到云上最省事；你已有的 AppID 直接服务所有用户。
+- QQ：官方机器人 WebSocket 长连接，**不需要公网回调、域名、备案**（`docs/qqbot-c2c-api-spec.md:341` 已确认），放在本机也最省事（只需出站长连接）；你已有的 AppID 直接服务所有用户。
 - 微信：一个公众号/测试号，openid 众多；每用户独立绑定码。限制要写进设计：被动回复 5 秒、客服消息 48 小时窗口、个人订阅号接口权限有限。
 - 引导里二选一：QQ（默认推荐）或微信（标注「需公众号可用，实验性」）；两者都支持 = 同一套 `channel_identities` 表，不写两套绑定逻辑。
 
@@ -132,45 +140,58 @@
 - 默认要求用户填自己的 key（引导第 5 步，带「测试连接」）；也允许切换「用站长的 key」并受每日调用上限约束。
 - 原「key 只存本机、不进服务端」的铁律作废（托管版必然要进服务端），改为「加密 + 仅本人可读写 + 永不回显 + 不进日志」。
 
-### D6 托管形态：云 VPS（香港/新加坡轻量 2C4G，Ubuntu 24.04）
+### D6 托管形态：家里电脑常开 + Tailscale 尾网（Cloudflare Tunnel 备用）
 
-- 域名复用已买的 `studydazi.top`（`plan2.` 子域），Caddy 自动 HTTPS。
-- 大陆服务器需备案；微信「服务器配置」对域名备案也有实际要求，所以**先 QQ、后微信**能把合规不确定性隔离掉。
-- 家里电脑保留「本地模式」自用与开发调试；`cloudflared` 只作为备用入口保留文档，不再作为主链路。
+- 用户已确认：电脑不关机、使用者 ≤3 人。这台电脑就是服务器——不需要云 VPS、不需要域名备案；Windows 计划任务 + 现有 `tools/Start-Timer.ps1`（含基础解释器兜底）继续负责自启与服务恢复。
+- 外网入口：`tailscale serve --bg 8765` 把本机服务发布为 `https://<host>.<tailnet>.ts.net`（仅同一 tailnet 内的设备可达，自动 HTTPS 证书）；三台手机/电脑加入同一 tailnet 即可，不依赖公网 IP、端口转发或 DDNS。公网暴露面≈0，这是对 3 人规模最稳的选择。
+- 备选：若有人不愿装 Tailscale，保留现有 `cloudflared` + `tools/tunnel-watchdog.ps1`（`docs/STATUS.md:52-62`），但默认关闭；启用时加 Cloudflare Access 或严格限流，且只作为兜底入口。
+- QQ 机器人不需要公网入口（长连接出站），照常工作；微信公众号需要公网回调，走 Cloudflare Tunnel 子域（可选，见 D4）。
+- 本机开发与服务隔离：服务固定端口（8765）+ 独立数据目录；测试一律用 `PLANNER_DATA_DIR` 指向临时目录（HANDOFF 已有规矩），避免跑测试写脏真实数据。
+- 成本：托管 ¥0（电脑本来常开、域名已有）；可选 B2 备份 ¥10/月；DeepSeek 按人自付。
 
 ### D7 客户端：手机优先，桌面精简为「查看 + 编辑」同构页面
 
-- 同一套 Flutter 代码，Android 为主；Windows 保留现有宽屏布局，但去掉开机自启/隧道/本地数据目录这些「单机时代」的耦合。
+- 同一套 Flutter 代码，Android 为主；Windows 保留现有宽屏布局，桌面端直接连本机 `http://127.0.0.1:8765`，手机连尾网地址。
 - 手机承担：登录、引导、通知、周视图、随手记录、助手对话；桌面承担：大屏周课表、批量整理、配置与备份导出。
+- 服务地址在登录页可配置（本机地址 / 尾网地址 / 隧道域名），保存在设备上；换服务器或加设备不用重装 App。
 - 更新：服务器托管 APK + `/api/v1/app/latest`（`releases.py` 已有），签名密钥离线保管。
+
+### D8 数据与运维：一份 SQLite + 一个文件目录，靠备份保命
+
+- 数据全在 `%USERPROFILE%\TimePlanner\data`：`planner.db`（WAL）、`secrets/`（Fernet master key、QQ/微信凭证）、`users/<uuid>/`（素材、表情包）、`assistant.json` 等；全部不进 Git（已有规矩）。
+- 每日 03:00 计划任务：`sqlite3 planner.db ".backup"` 出在线一致快照 → `robocopy /MIR` 到第二块硬盘；可选 rclone 加密到 Backblaze B2。保留 14 日 + 8 周。
+- `tools/host/restore.ps1` 一键恢复（停服务 → 还原 db/文件 → 起服务 → 校验 `/snapshot`）；**每月做一次恢复演练**并记录结果。
+- 供电与自启：小 UPS（防瞬时断电）、BIOS 设「来电自启」、Windows 更新只允许在深夜并自动重启后拉起服务。
+- 监控：`/healthz`（含 DB 可写检查）由本机 watchdog + 手机尾网探活；异常（连续失败/磁盘 <20%/备份失败/LLM 错误率 >20%）通过 QQ 机器人给管理员发消息。
 
 ---
 
 ## 5. 数据模型
 
-### 5.1 表清单（`server/app/migrations/`，Alembic）
+### 5.1 表清单（`server/app/migrations/`，轻量版本化；`schema_version` 记已应用版本）
 
 | 表 | 关键字段 | 说明 |
 | --- | --- | --- |
-| `users` | id uuid, username citext unique, password_hash(Argon2id), display_name, role(admin/member), status, onboarding jsonb, timezone, created_at, last_login_at | 通用化核心 |
+| `users` | id TEXT(uuid), username TEXT COLLATE NOCASE unique, password_hash(Argon2id), display_name, role(admin/member), status, onboarding TEXT(JSON), timezone, created_at, last_login_at | 通用化核心 |
 | `invites` | code_hash, note, created_by, expires_at, used_by, used_at | 邀请制注册 |
-| `devices` | id uuid, user_id, name, platform, token_hash, created_at, last_seen_at, revoked_at | 令牌只存 sha256 |
-| `user_state` | user_id pk, body jsonb, revision int, size_bytes, updated_at | 业务状态（沿用现有 dict 结构） |
-| `operations_log` | user_id, operation_id, device_id, request_hash, response jsonb, created_at, PK(user_id, operation_id) | 幂等重放，按人隔离 |
-| `events` | user_id, revision, kind, payload jsonb, recorded_at, PK(user_id, revision) | 客户端拉取/通道通知 |
+| `devices` | id TEXT(uuid), user_id, name, platform, token_hash, created_at, last_seen_at, revoked_at | 令牌只存 sha256 |
+| `user_state` | user_id PK, body TEXT(JSON), revision INTEGER, size_bytes, updated_at | 业务状态（沿用现有 dict 结构） |
+| `operations_log` | user_id, operation_id, device_id, request_hash, response TEXT(JSON), created_at, PK(user_id, operation_id) | 幂等重放，按人隔离 |
+| `events` | user_id, revision, kind, payload TEXT(JSON), recorded_at, PK(user_id, revision) | 客户端拉取/通道通知 |
 | `channel_identities` | id, channel(qq/wechat), external_id, user_id, display_name, bound_at, last_seen_at, unique(channel, external_id) | 一个 IM 账号映射一个用户 |
 | `channel_bind_codes` | code_hash, user_id, channel, expires_at, used_at, attempts | 6 位数字/一次性/10 分钟 |
-| `outbox` | id, user_id, channel, kind, payload jsonb, status(pending/sending/sent/failed/dead), attempts, next_at, msg_seq, error | 每用户发件箱（QQ 主动消息配额、微信 48h 窗口都靠它） |
-| `jobs` | id, kind, user_id null, run_at, status, payload, attempts, last_error, unique(kind, key) | 后台任务（超时结算/复盘/归档/备份） |
-| `assistant_configs` | user_id pk, base_url, model, api_key_cipher, key_hint, daily_limit, confirm_first, persona_id, persona jsonb, updated_at | 含人格卡 |
+| `outbox` | id, user_id, channel, kind, payload TEXT(JSON), status(pending/sending/sent/failed/dead), attempts, next_at, msg_seq, error | 每用户发件箱（QQ 主动消息配额、微信 48h 窗口都靠它） |
+| `jobs` | id, kind, user_id null, run_at, status, payload TEXT(JSON), attempts, last_error, unique(kind, key) | 后台任务（超时结算/复盘/归档/备份），重启后续跑 |
+| `assistant_configs` | user_id PK, base_url, model, api_key_cipher, key_hint, daily_limit, confirm_first, persona_id, persona TEXT(JSON), updated_at | 含人格卡 |
 | `assistant_messages` | user_id, role, text, image_path, status, created_at | 保留 90 天 |
-| `assistant_drafts` | id, user_id, message_id, operations jsonb, status(pending/applied/dismissed/undone), expires_at, undolog jsonb | 15 分钟过期 |
-| `assistant_memories` | id, user_id, kind, text, tags[], source_msg_id, created_at, last_used_at, pinned | 上限 200 条/人 |
+| `assistant_drafts` | id, user_id, message_id, operations TEXT(JSON), status(pending/applied/dismissed/undone), expires_at, undolog TEXT(JSON) | 15 分钟过期 |
+| `assistant_memories` | id, user_id, kind, text, tags TEXT(JSON), source_msg_id, created_at, last_used_at, pinned | 上限 200 条/人 |
 | `assistant_usage` | user_id, day, calls, tokens_in, tokens_out, cost_micros, PK(user_id, day) | 限额与成本 |
-| `assistant_pending_questions` | id, user_id, question, options jsonb, expires_at | 澄清式追问 |
+| `assistant_pending_questions` | id, user_id, question, options TEXT(JSON), expires_at | 澄清式追问 |
 | `materials` | id, user_id, name, path, bytes, created_at | 文件落在 `users/<uuid>/materials/` |
-| `audit_log` | id, actor_user_id, action, target, detail jsonb, created_at | 管理操作留痕 |
+| `audit_log` | id, actor_user_id, action, target, detail TEXT(JSON), created_at | 管理操作留痕 |
 | `app_releases` | version, platform, url, sha256, notes, created_at | APK 分发 |
+| `schema_version` | version INTEGER, applied_at | 迁移版本，启动时先跑未应用的脚本 |
 
 ### 5.2 `user_state.body` 结构
 
@@ -183,23 +204,23 @@
 ### 5.3 每用户状态读写
 
 ```
-repo.read(conn, user_id) -> (state, revision)      # SELECT body FROM user_state WHERE user_id=$1 FOR UPDATE
-repo.write(conn, user_id, state, expected_rev)    # UPDATE ... WHERE revision=expected_rev（乐观锁）
-repo.apply_operation(conn, user_id, device_id, op) # 事务内：校验幂等 → domain.apply → revision+1 → 写 events/operations_log → 归档触发
+repo.read(conn, user_id) -> (state, revision)      # SELECT body FROM user_state WHERE user_id=?
+repo.write(conn, user_id, state, expected_rev)     # UPDATE ... WHERE user_id=? AND revision=?（乐观锁）
+repo.apply_operation(conn, user_id, device_id, op) # 事务内（BEGIN IMMEDIATE）：校验幂等 → domain.apply → revision+1 → 写 events/operations_log → 归档触发
 ```
 
-并发：同一用户的写操作串行（行锁）；不同用户互不阻塞。客户端并发提交时，`expected_rev` 冲突返回 `REVISION_CONFLICT`，客户端重拉快照（现有行为，保留）。
+并发：WAL 下多读单写，写事务用 `BEGIN IMMEDIATE` 排队（`busy_timeout=15s` 已配）；同一用户的写串行，不同用户只排队不丢。3 人规模下这就是最简单可靠的方案。客户端并发提交时，`expected_rev` 冲突返回 `REVISION_CONFLICT`，客户端重拉快照（现有行为，保留）。
 
 ### 5.4 迁移与初始化
 
-- `tools/migrate-v1-to-v2.py`（在 VPS 上跑，输入旧 SQLite 的只读副本）：
+- `tools/migrate-v1-to-v2.py`（**在本机跑**，先复制一份旧 DB 再操作，原库只读）：
   1. 创建 owner 用户（用户名/密码来自交互或环境变量）；
   2. 原样导入 `document.body` 为 `user_state`（revision 保留），`operations`/`events` 补 `user_id` 后导入；
-  3. `devices`：把旧 `token_hash` 原样迁入，手机无需重新登录即可连新域名；
+  3. `devices`：把旧 `token_hash` 原样迁入，手机无需重新登录即可连新地址；
   4. 复制 `materials/`、`memes/` 到 `users/<id>/`，路径改相对；
-  5. 旧 QQ/微信绑定 → `channel_identities`；旧 `wechat.json`/`qwen.json`/`qq.json` 的模型与 key → `assistant_configs`（加密）；
+  5. 旧 QQ/微信绑定 → `channel_identities`；旧 `wechat.json`/`qq.json`/`assistant.json` 的模型与 key → `assistant_configs`（加密）；
   6. 校验脚本：逐字段 diff 旧快照 vs 新快照（除时间戳/版本号），数量对不上就中止。
-- 切换：新域名并行跑 2 周只读观察 → 手机改「服务地址」→ 旧隧道保留回滚 → 下线 watchdog。
+- 切换：新 schema 在同机新端口/新数据目录并行跑 2 周只读观察 → 手机改「服务地址」→ 旧库与旧隧道保留 30 天回滚 → 下线旧入口。
 
 ### 5.5 状态瘦身（避免整份 JSON 越滚越大）
 
@@ -232,7 +253,7 @@ repo.apply_operation(conn, user_id, device_id, op) # 事务内：校验幂等 �
 
 - 密码：Argon2id（`argon2-cffi`），最少 10 位；登录失败 5 次/10 分钟/IP+用户名 限流，10 次锁 15 分钟。
 - 令牌：32 字节随机 base64url，DB 存 sha256；比较用 `hmac.compare_digest`；可疑时一键吊销全部设备。
-- 传输：仅 HTTPS（Caddy 自动证书），HSTS；禁止明文 HTTP 端口对外。
+- 传输：仅 HTTPS（Tailscale 尾网自动证书；兜底隧道由 Cloudflare 提供 TLS），HSTS；明文 HTTP 只允许绑在 `127.0.0.1`，供桌面端与 Tailscale 转发。
 - 响应头：`X-Content-Type-Options`、`Referrer-Policy`、严格 CORS（App 不需要浏览器跨域）。
 - 日志：绝不打 token、密码、API key、消息正文；审计日志只记动作与目标 id。
 - 限流：每用户 120 req/min（登录/LLM/上传单独更严），每 IP 600 req/min；上传单文件 20 MB、单用户每日 100 MB。
@@ -240,7 +261,7 @@ repo.apply_operation(conn, user_id, device_id, op) # 事务内：校验幂等 �
 
 ### 6.3 客户端
 
-- 登录页：服务地址（托管版内置默认，可改）→ 用户名/密码 → 记住设备；注册页填邀请码。
+- 登录页：服务地址（内置默认 `http://127.0.0.1:8765` 或尾网 `https://<host>.<tailnet>.ts.net`，可改）→ 用户名/密码 → 记住设备；注册页填邀请码。
 - 设置页：账号、设备管理、修改密码、退出登录、导出数据、删除账号。
 - 桌面端首次运行同样走登录页；不再需要启动器写 `desktop-token`。
 
@@ -519,7 +540,7 @@ POST /assistant/chat {client_msg_id, text?, image?}
 ```
 server/
   app/
-    db.py            # SQLAlchemy engine/session/JSON 编解码
+    db.py            # SQLite 连接/JSON 编解码/事务（BEGIN IMMEDIATE）
     auth.py          # users/invites/devices/tokens
     tenancy.py       # AuthContext、current_user 依赖
     repo.py          # 取代 store.py：state_for/apply_operation/events/outbox
@@ -528,10 +549,10 @@ server/
     channels/        # qq.py wechat.py binding.py dispatch.py base.py
     assistant/       # service.py persona.py intents.py memories.py eval.py
     routers/         # auth.py sync.py operations.py assistant.py channels.py admin.py
-    worker.py        # jobs/outbox 处理循环
+    worker.py        # 后台循环（同进程启动，以后可拆进程）
     admin.py         # CLI：invite/reset/disable/export
-    migrations/      # Alembic
-  tests/             # 现有 167 + tenancy/auth/sync/migration 新测试
+    migrations/      # 轻量版本化 SQL（schema_version）
+  tests/             # 现有 171 + tenancy/auth/sync/migration 新测试
 apps/planner/lib/
   auth/              # login_page.dart session.dart
   onboarding/        # coach_overlay.dart steps.dart keys.dart
@@ -539,7 +560,7 @@ apps/planner/lib/
   week/              # week_strip.dart week_heatmap.dart day_agenda.dart
   settings/          # account/devices/channel_bind/onboarding 入口
 tools/
-  deploy/            # docker-compose.yml Caddyfile backup.ps1 restore-drill.md
+  host/              # tailscale-serve.ps1 backup.ps1 restore.ps1 restore-drill.md
   migrate-v1-to-v2.py
 docs/plans/v2-multiuser-plan.md（本文件）
 ```
@@ -551,9 +572,9 @@ docs/plans/v2-multiuser-plan.md（本文件）
 3. **认证**：注册/登录/设备/邀请码；手机端加登录页；旧 device token 迁入（重登即可）。
 4. **通道多租户**：`channel_identities` + 绑定码；QQ 先改，微信后改；发件箱按用户。
 5. **助手多租户**：config/key 加密、人格卡、记忆、澄清、评测集。
-6. **worker**：把后台循环迁走；删 `main.py` 三个循环。
+6. **worker**：把 `main.py` 三个循环抽成 `worker.py` 模块（同进程启动，接口与线程模型不变），`main.py` 只负责装配；以后要拆子进程只改启动方式。
 7. **客户端**：引导、周视图、账号设置、bug 修复。
-8. **部署与迁移**：Compose、Caddy、备份、APK 分发；旧数据导入；灰度。
+8. **部署与迁移**：本机新数据目录、备份/恢复脚本、Tailscale serve、APK 分发；旧数据导入；灰度。
 
 ---
 
@@ -561,41 +582,43 @@ docs/plans/v2-multiuser-plan.md（本文件）
 
 | 阶段 | 内容 | 工期（业余） | 验收 |
 | --- | --- | --- | --- |
-| P0 决策与地基 | 拍板 §16；买 VPS；域名子域；Compose 跑通；分支/备份策略 | 1–2 天 | 空环境 `curl /health` 200；备份可恢复 |
+| P0 决策与地基 | 拍板 §17；建 v2 分支；本机新数据目录 + 备份/恢复脚本；Tailscale serve 跑通 | 0.5–1 天 | 尾网内 `curl /health` 200；备份恢复演练一次成功 |
 | P1 认证与多租户 | DB schema、repo、auth、invites、devices、每用户状态、迁移脚本、tenancy 测试、P0 后端修复 | 5–7 天 | 两账号交叉全 404；旧数据导入一致；pytest ≥190 |
 | P2 助手与通道 | 通道身份/绑定/发件箱；助手 config/persona/memory/usage；澄清；评测集；P0/P1 通道修复 | 4–6 天 | 两用户 QQ/微信互不串台；评测 ≥90%；key 加密可验 |
 | P3 客户端 | 登录/注册、引导 10 步、人格卡页、周视图重做、同步/提醒/跨午夜 bug、桌面精简 | 5–7 天 | 360dp 周视图可用；引导可跳过/续播；flutter test ≥100 |
-| P4 上线 | 部署、监控、备份演练、APK 签名分发、邀请码给师弟、灰度两周 | 3–4 天 | 师弟独立注册使用一周无串台/丢数据；RTO ≤1h |
+| P4 上线 | 数据迁移、监控、备份/恢复演练、APK 分发、邀请码给师弟、Tailscale 拉设备、灰度两周 | 2–3 天 | 师弟独立注册使用一周无串台/丢数据；RTO ≤1h |
 
-关键路径：P1 → P2（通道可并行）→ P3（周视图/引导可与 P2 并行）→ P4。总日历约 4–5 周。
+关键路径：P1 → P2（通道可并行）→ P3（周视图/引导可与 P2 并行）→ P4。总日历约 3.5–4 周（家 PC 省掉云环境搭建，比原计划快约一周）。
 
 ---
 
 ## 14. 测试与验收清单
 
-- 后端：现有 167 + 认证/租户/同步/迁移/评测 ≈ 220+；`pytest -q` 全绿。
+- 后端：现有 171 + 认证/租户/同步/迁移/评测 ≈ 220+；`pytest -q` 全绿。
 - 客户端：`flutter test`（现有 77 + 周视图/引导/登录）；`flutter analyze` 零问题。
 - 多租户：§7.2 八条 + 「所有非 public 路由都有鉴权」遍历断言。
 - 迁移：快照 diff（忽略 revision/时间戳）+ 素材数量 + 令牌可用性。
 - 通道：QQ 两账号真机（师弟号）各发一条，确认归属；微信同（若启用）。
 - 助手：意图评测离线 100% 无非法写入、在线 ≥90%；破坏性操作一律要确认。
 - 周视图：360dp/390dp/430dp 三档截图核对；点击命中；空状态；捏合边界。
-- 备份：`pg_dump` → 新库恢复 → snapshot 对比一致；每月演练。
-- 压测：20 用户 × 100 operations，p95 `/snapshot` < 300ms，无跨用户错乱。
+- 备份：`sqlite3 .backup` → 新数据目录恢复 → `/snapshot` 对比一致；每月演练。
+- 压测：3 用户 × 1000 operations 并发提交，p95 `/snapshot` < 300ms（gzip 后 < 100ms），无跨用户错乱、无 `database is locked`。
 - 安全：secret 扫描（git 无 key）、依赖审计、越权/限流/日志检查。
 - 隐私：导出/删除账号可用；日志抽查无正文/密钥。
 
 ---
 
-## 15. 部署与运维
+## 15. 部署与运维（家用机常开）
 
-- Compose 四容器：`postgres:16`、`api`（uvicorn 2 worker）、`worker`、`caddy`；卷 `pgdata`、`data`（用户文件）、`caddy`。
-- 域名 `plan2.studydazi.top`；Caddy 自动证书；只开放 443。
-- 备份：每日 03:00 `pg_dump -Fc` + `data/` 增量 → age 加密 → rclone 到 Backblaze B2；保留 14 日 + 8 周；恢复脚本 `tools/deploy/restore.ps1`。
-- 监控：`/healthz`（含 DB 检查）由外部探活；异常（连续 3 次失败/磁盘 >80%/备份失败/LLM 错误率 >20%）通过 QQ 机器人给自己发消息；日志 journald 轮转。
-- 发布：`tools/build-android.ps1` 产物 → 上传到 `/srv/timer/releases` → 更新 `app_releases`；APK 签名 keystore 离线两份备份（不入 Git）。
-- 成本：VPS ¥60/月、B2 ¥10/月、域名已有、TLS 免费、deepseek 各付；2–20 人规模足够。
-- 迁移期：旧隧道与 watchdog 保留只读；手机改地址后观察 2 周再下线。
+- 进程：Windows 计划任务 `TimePlannerBackend` 运行 `tools\Start-Timer.ps1`（已有；先 venv python，15 秒内 `/health` 不通则用基础解释器兜底）；服务固定端口 8765，只绑 `127.0.0.1`，由 `tailscale serve` 对外发布。
+- 入口：`tailscale serve --bg 8765` → `https://<host>.<tailnet>.ts.net`；三台设备加入同一 tailnet。备选 `cloudflared`（现有 watchdog）只在有设备拒绝装 Tailscale 时启用，并加 Cloudflare Access 策略或强限流。
+- 数据目录：`%USERPROFILE%\TimePlanner\data`（`planner.db` + `secrets/` + `users/`）；从不进 Git（已有规矩）。
+- 备份：每日 03:00 计划任务 → `sqlite3 planner.db ".backup"` 到 `%USERPROFILE%\TimePlanner\backups\daily\` + `robocopy` 到第二块盘（或 rclone 加密到 B2）；保留 14 日 + 8 周；`tools\host\restore.ps1` 一键恢复；每月演练一次并在 STATUS 记结果。
+- 可靠性：小 UPS；BIOS 来电自启；Windows 更新设活动时间；`/health` 自检 + `Start-Timer.ps1` 兜底；磁盘剩余 <20% 告警。
+- 监控：`/healthz`（含 DB 可写检查）由本机 watchdog + 手机尾网探活；异常（连续失败/磁盘满/备份失败/LLM 错误率 >20%）通过 QQ 机器人给管理员发消息；服务日志轮转保留 7 天。
+- 发布：`tools/build-android.ps1` 产物 → 数据目录 `releases/` → 更新 `app_releases`；keystore 离线两份备份（不入 Git）。
+- 成本：托管 ¥0；B2 可选 ¥10/月；域名已有（仅微信/兜底隧道需要）；DeepSeek 各付。
+- 迁移期：旧 cloudflared 入口与新尾网入口并存两周；手机改地址后观察，再退役旧隧道。
 
 ---
 
@@ -603,25 +626,26 @@ docs/plans/v2-multiuser-plan.md（本文件）
 
 | 风险 | 概率 | 应对 |
 | --- | --- | --- |
-| 公众号注册/认证/备案卡住 | 中 | QQ 先行；微信通道代码就绪但不作为默认；引导文案明说 |
-| QQ 机器人对多用户/主动消息风控 | 中 | 按用户配额 + 被动优先 + 失败降级到 App 通知 |
-| 数据迁移丢历史 | 低 | 双跑 2 周、快照 diff、旧数据保留 30 天、可回滚 |
-| 云主机故障 | 低 | 每日备份 + 重建脚本；RTO ≤1h |
-| DeepSeek 费用/滥用 | 中 | 每人 key 默认 + 每日限额 + 全局熔断 |
+| 家里断电/断网 | 中 | 客户端离线队列恢复后补同步；小 UPS；服务重启后 `jobs`/`outbox` 续跑；断网期间提醒延迟可接受 |
+| 硬盘坏/误删 | 低 | 每日 `.backup` + 第二块盘/异地；每月恢复演练；旧库保留 30 天 |
+| Windows 更新/崩溃重启 | 中 | 计划任务自启 + `Start-Timer.ps1` 兜底 + `/health`；更新设活动时间 |
+| Tailscale 故障/账号问题 | 低 | 保留 Cloudflare Tunnel 兜底入口；服务仍在本机，数据不动 |
+| 公网暴露（启用兜底隧道时） | 中 | 邀请码 + 密码 + 登录限流 + 设备令牌；默认用 Tailscale 时无公网暴露；隧道加 Access/限流 |
+| 助手/模型费用 | 中 | 每人 key 默认 + 每日限额 + 全局熔断 |
 | 手机后台被杀导致提醒不准 | 中 | 服务端通道提醒 + 本地闹钟双路 + outbox 未送达列表 |
 | 改造面过大延期 | 中 | 阶段化交付；P1 完成即可先让师弟用「无助手」基础版 |
 
-回滚：v1 数据与隧道保留；DNS 切回即恢复；新库只读导出回 v1 格式脚本随迁移脚本提供（一次性）。
+回滚：旧 SQLite 副本与旧入口保留；手机改回地址即恢复；新库可导出回 v1 格式（一次性脚本随迁移脚本提供）。
 
 ---
 
 ## 17. 待拍板（6 项，已给推荐）
 
-1. **服务器地区**：香港/新加坡（推荐，免备案、QQ 直连；微信 48h 窗口仍受限于公众号权限）还是大陆（需备案）？
+1. **外网入口**：Tailscale 为主（推荐，仅尾网可达）还是 Cloudflare Tunnel 为主（免装客户端、但要公网暴露）？还是「Tailscale 为主 + 隧道兜底」（推荐组合）？
 2. **公众号节奏**：先只做 QQ（推荐）还是同步申请公众号？公众号主体用个人订阅号可以吗（客服消息权限有限）？
 3. **DeepSeek 归属**：每人自带 key（推荐，默认）还是站长统一 key + 限额？两者都支持是否要？
-4. **登录**：邀请码 + 用户名密码（推荐）还是手机号验证码（需短信服务商）？
-5. **数据保留**：消息 90 天、日程永久、已完成任务 180 天后归档（推荐）；是否需要「导出全部数据」按钮？
+4. **登录**：邀请码 + 用户名密码（推荐，已定）；忘记密码由站长 CLI 重置，还是做邮箱找回（需要发信服务）？
+5. **数据保留**：消息 90 天、日程永久、已完成任务 180 天后归档（推荐）；是否要「导出全部数据」按钮？
 6. **自动执行默认值**：新用户默认「先确认」（推荐）还是「直接执行」？老用户迁移保持现有设置？
 
 ---
@@ -629,8 +653,8 @@ docs/plans/v2-multiuser-plan.md（本文件）
 ## 18. 下一步（你确认后我按这个顺序动手）
 
 1. 按 §17 拍板 → 建 `v2` 分支、写 ADR（本文件转正）。
-2. P0 阶段：VPS + Compose + 空库跑通 + 备份演练（半天）。
+2. P0：本机新数据目录 + 备份/恢复脚本 + `tailscale serve` 跑通 + 备份恢复演练（半天到一天）。
 3. P1：认证/租户/迁移（先让自己旧数据在新系统跑起来，作为第一个真实用例）。
 4. P2/P3 并行：通道多租户、助手 2.0、引导、周视图。
 5. 修 §11 的 P0，再逐级清 P1。
-6. 给师弟发邀请码，灰度两周，补文档（HANDOFF 铁律改写 + STATUS 进度 + 部署手册）。
+6. 给师弟发邀请码 + Tailscale 邀请，灰度两周，补文档（HANDOFF 铁律改写 + STATUS 进度 + 家用机运维手册）。
