@@ -130,3 +130,15 @@ def test_weekly_brief_reaches_each_accounts_own_follower(client, app):
     owner_briefs = [r["text"] for r in rows if r["openid"] == "owner-openid" and "本周简报" in r["text"]]
     shidi_briefs = [r["text"] for r in rows if r["openid"] == "shidi-openid" and "本周简报" in r["text"]]
     assert len(owner_briefs) == 1 and len(shidi_briefs) == 1
+
+
+def test_material_files_live_under_the_uploaders_folder(client, app):
+    shidi = make_user(app)
+    token = login(client, "shidi")
+    entity = upload(client, token)
+    folder = app.state.store.directory / "materials" / shidi["id"]
+    assert (folder / f"{entity['id']}.source").read_bytes() == "傅里叶变换要点：采样与频谱。".encode()
+    assert (folder / f"{entity['id']}.txt").is_file()
+    # The owner's folder holds no trace of another account's upload.
+    owner_folder = app.state.store.directory / "materials" / app.state.store.owner_id
+    assert not owner_folder.exists() or not any(owner_folder.iterdir())

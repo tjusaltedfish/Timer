@@ -397,7 +397,16 @@ class PlannerController extends ChangeNotifier {
     try {
       while (pending.isNotEmpty) {
         final operation = pending.first;
-        await request('POST', '/api/v1/operations', operation);
+        try {
+          await request('POST', '/api/v1/operations', operation);
+        } on ApiFailure catch (error) {
+          // 有些操作电脑永远不会接受（payload 不合法、引用的实体不存在、
+          // 新版服务端规则更严）。把它留在队头会让之后所有操作都同步不了，
+          // 所以隔离它、留下证据，让下面的 snapshot 把界面拉回电脑的真实状态。
+          if (!_permanentRejection(error)) rethrow;
+          await _quarantine(operation, error);
+          continue;
+        }
         pending.removeAt(0);
         await _save();
       }
@@ -426,6 +435,53 @@ class PlannerController extends ChangeNotifier {
       syncing = false;
       _notify();
     }
+  }
+
+  static bool _permanentRejection(ApiFailure error) =>
+      const {400, 403, 404, 422}.contains(error.status);
+
+  static const Map<String, String> _operationLabels = {
+    'task.create': '新建待办',
+    'task.update': '修改待办',
+    'block.create': '新增安排',
+    'block.update': '修改安排',
+    'block.delete': '删除安排',
+    'session.start': '开始投入',
+    'session.pause': '暂停投入',
+    'session.resume': '继续投入',
+    'session.end': '结束投入',
+    'session.extend': '延长投入',
+    'feedback.create': '记录结果',
+    'waiting.resolve': '处理等待',
+    'waiting.snooze': '稍后再问',
+    'review.save': '保存复盘',
+    'material.add': '添加材料',
+    'memory.save': '记住偏好',
+    'memory.delete': '忘记偏好',
+    'settings.update': '修改设置',
+    'project.save': '保存项目',
+    'sleep.start': '记录睡眠',
+    'sleep.end': '记录起床',
+    'plan.apply': '应用调整',
+    'plan.undo': '撤销调整',
+  };
+
+  /// 把永远不可能成功的操作从队列里拿出来，连同错误原因留档。
+  Future<void> _quarantine(Json operation, ApiFailure error) async {
+    pending.remove(operation);
+    preservedConflicts.add({
+      'saved_at': nowUtc.toIso8601String(),
+      'operations': [operation],
+      'reason': error.message,
+      'status': error.status,
+    });
+    if (preservedConflicts.length > 20) {
+      preservedConflicts.removeRange(0, preservedConflicts.length - 20);
+    }
+    final label =
+        _operationLabels[operation['kind'] as String? ?? ''] ?? '这条操作';
+    conflict = '「$label」电脑没有接受：${error.message}。副本已保留，不影响后面的操作。';
+    await _save();
   }
 
   Future<void> preserveConflictAndRefresh() async {

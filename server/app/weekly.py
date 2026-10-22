@@ -130,13 +130,23 @@ class WeeklyBrief:
             if conn.execute("INSERT OR IGNORE INTO weekly_briefs(user_id,week,sent_at) VALUES(?,?,?)",
                             (user_id, monday.isoformat(), stamp(now))).rowcount == 0:
                 return
-        facts = week_facts(state, monday, now)
-        summary = None
-        if facts["sessions"] or facts["done"] or any(d["review"] for d in facts["days"].values()):
-            summary = await self._summary(user_id, monday, facts)
-        self.channel.enqueue_to(openid, brief_text(monday, facts, summary),
-                                key=f"weekly:{user_id}:{monday.isoformat()}",
-                                expires_at=now + timedelta(hours=12))
+        try:
+            facts = week_facts(state, monday, now)
+            summary = None
+            if facts["sessions"] or facts["done"] or any(d["review"] for d in facts["days"].values()):
+                summary = await self._summary(user_id, monday, facts)
+            self.channel.enqueue_to(openid, brief_text(monday, facts, summary),
+                                    key=f"weekly:{user_id}:{monday.isoformat()}",
+                                    expires_at=now + timedelta(hours=12))
+        except Exception:  # noqa: BLE001
+            # The claim above exists to avoid double sends, but if writing the
+            # outbox fails (or the week facts cannot be built) the claim would
+            # silently swallow this week's brief forever. Release it and let the
+            # next tick (60s) try again.
+            with self.store.connect() as conn:
+                conn.execute("DELETE FROM weekly_briefs WHERE user_id=? AND week=?",
+                             (user_id, monday.isoformat()))
+            raise
 
     async def _summary(self, user_id, monday, facts):
         """A short model-written paragraph; the numbers above it never depend on it."""

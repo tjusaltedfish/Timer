@@ -95,6 +95,23 @@ class MaterialService:
                 if 'user_id' not in columns:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
                 conn.execute(f"UPDATE {table} SET user_id=? WHERE user_id='' OR user_id IS NULL", (self.store.owner_id,))
+            # v2: material files live under a per-account folder. Move the
+            # single-user install's loose files (originals + extracted text)
+            # into the owner's folder once, so a second account cannot read
+            # another member's uploads even by guessing a generated id.
+            root = self.store.directory / 'materials'
+            if root.is_dir():
+                loose = [path for path in root.iterdir() if path.is_file()]
+                if loose:
+                    owner_folder = root / self.store.owner_id
+                    owner_folder.mkdir(parents=True, exist_ok=True)
+                    for path in loose:
+                        path.replace(owner_folder / path.name)
+
+    def _folder(self, user_id):
+        folder = self.store.directory / 'materials' / user_id
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
 
     def upload(self, name, day, description, external_allowed, content, user_id=None):
         user_id = self.service.user(user_id)
@@ -109,8 +126,7 @@ class MaterialService:
             raise DomainError('每天最多 10 份材料，请先移除不需要的材料', status=422)
         text = extract(name, content)
         key = identifier()
-        folder = self.store.directory / 'materials'
-        folder.mkdir(exist_ok=True)
+        folder = self._folder(user_id)
         # Only generated IDs become paths. Originals and extracted text stay on this PC.
         (folder / f'{key}.source').write_bytes(content)
         (folder / f'{key}.txt').write_text(text, encoding='utf-8')
@@ -156,7 +172,7 @@ class MaterialService:
             if not item['external_allowed']:
                 evidence.append(f"{item['name']}：仅采用用户说明：{item['description']}；原文未发送。")
                 continue
-            source = (self.store.directory / 'materials' / f"{item['id']}.txt").read_text(encoding='utf-8')
+            source = (self._folder(user_id) / f"{item['id']}.txt").read_text(encoding='utf-8')
             if item.get('summary'):
                 summary = item['summary']
             else:

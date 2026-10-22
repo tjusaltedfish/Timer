@@ -3,6 +3,8 @@ import asyncio
 import json
 from datetime import timedelta
 
+import pytest
+
 from test_assistant import client, model, configure, send, NOW  # noqa: F401  (fixtures)
 from test_wechat import env, configure as configure_wechat, bind, run  # noqa: F401
 from app import materials
@@ -74,6 +76,31 @@ def test_brief_still_goes_out_when_the_model_fails(env):
     client, app, wechat, model = weekly_env(env, sunday_evening())
     focus_and_finish(client, '实验报告')  # no model configured at all
     asyncio.run(app.state.weekly.run_due())
+    run(client, app)
+    [brief] = [b['text']['content'] for _, b in wechat.custom if '本周简报' in b['text']['content']]
+    assert '完成：实验报告' in brief
+
+
+def test_a_failed_send_does_not_swallow_the_week(env):
+    client, app, wechat, model = weekly_env(env, sunday_evening())
+    focus_and_finish(client, '实验报告')
+    channel = app.state.weekly.channel.wechat
+    original = channel.enqueue_to
+    attempts = {'n': 0}
+
+    def flaky(openid, text, **kwargs):
+        attempts['n'] += 1
+        if attempts['n'] == 1:
+            raise RuntimeError('outbox briefly unavailable')
+        return original(openid, text, **kwargs)
+
+    channel.enqueue_to = flaky
+    try:
+        with pytest.raises(RuntimeError):
+            asyncio.run(app.state.weekly.run_due())  # claimed, then failed
+        asyncio.run(app.state.weekly.run_due())      # claim released → retries
+    finally:
+        channel.enqueue_to = original
     run(client, app)
     [brief] = [b['text']['content'] for _, b in wechat.custom if '本周简报' in b['text']['content']]
     assert '完成：实验报告' in brief

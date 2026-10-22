@@ -1,5 +1,13 @@
 # 当前状态
 
+## v2 P2 补修：审查报告里的两个真 bug + 材料按账号分目录（2026-10-22）
+
+- 客户端同步队列永久卡死（审查报告 P0）：`_synchronize()` 把电脑拒绝的操作留在队头，`onlineRequest` 又要求 `pending` 为空，于是一条 400/403/404/422 的永失败操作会让之后所有操作都同步不了。现在这四类状态视为永久拒绝：摘出队列、记入本地 `preservedConflicts`（`saved_at/operations/reason/status`，最多 20 条）、状态栏提示「『新建待办』电脑没有接受：……副本已保留，不影响后面的操作。」，队列继续；409 仍按冲突阻塞（需要人处理）。
+- 周日周报可能永久丢失（审查报告 P2）：`WeeklyBrief._run_for` 先 `INSERT OR IGNORE INTO weekly_briefs` 占位再发送。模型摘要失败本来就已兜住，但写 outbox 失败或周事实构建失败时占位不释放，这一周的周报就再也不会发。现在失败会删占位并抛出，下一轮（60 秒）重试。
+- 材料文件按账号分目录（审查报告 P2）：原来所有账号的 `.source`/`.txt` 都堆在 `<data>/materials/` 下，靠不可猜的 UUID 兜底。现在按 `<data>/materials/<user_id>/` 存放，启动时把老库的散落文件一次性搬进 owner 目录；读取也只走调用者自己的目录。
+- 验证（真实跑过）：后端新增 `test_a_failed_send_does_not_swallow_the_week`、`test_material_files_live_under_the_uploaders_folder`，`test_daily_and_weekly.py` 5/5、`test_materials_multiuser.py` 5/5；客户端新增 `test/sync_quarantine_test.dart`（422 被隔离且队列继续、409 仍阻塞），`flutter analyze` 无问题、`flutter test` 105 全绿。
+- 未做：后台保留 20 条上限是拍的；没有界面让用户查看/重放已被隔离的操作；材料删除后磁盘文件仍未清理。
+
 ## v2 P2 收尾：通道按账号并行，一个人算题不再卡住其他人（2026-10-22）
 
 - 收（`m00732` 方案「两三个用户共用一台电脑，某个人发消息不能拖住别人」+ 审查报告的「通道串行阻塞」）：微信/QQ 的 `run_once` 原来是逐条处理 inbox，每条都要等完整个模型往返（超时 45s）。改成 **按账号分组**：先按 openid 解析出用户并把未绑定的直接答「去 App 绑定」；同一个账号内保持到达顺序，不同账号用 `asyncio.gather` 并行，上限 `CHAT_CONCURRENCY = 4`。
