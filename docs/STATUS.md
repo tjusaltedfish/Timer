@@ -1,5 +1,12 @@
 # 当前状态
 
+## v2 多用户联调：真实公众号消息 + 第二个账号（2026-10-22）
+
+- 真实微信消息跑通：主账号 openid `…3bTQ` 在 09:27:22 发「取消今晚的待办」，`wechat_inbox` 记为 done，助手按 auto 模式撤掉 18:30 的 vla 段，`wechat_outbox` 已 sent 回复「今晚 18:30 那段 vla 代码撤了……不对的话回复「撤销 6EAA」」。说明 v2 后端的 openid 路由、每人独立的助手上下文与默认直接执行在真实公众号上工作。
+- 第二账号：本机 `python -m app.admin user add shidi` 建号（显示名「师弟」，Asia/Shanghai，密码另告本人），用 HTTP 探针在真实后端上验证了「生成绑定码 → 网页端推送码 → 绑定成功 → 只列自己的绑定 → 解绑」与「owner 数据一条不变」；探针是临时脚本，验证后已删除，不进仓库。
+- 修多账号暴露的时区 bug：`admin user add` 建号时把文档时区写死成服务端 `America/Los_Angeles`，`PATCH /me` 也只改 `users` 表；现在 `initial_state(timezone)` / `store.state` 首次建文档读 `users.timezone`，`PATCH /me` 同步文档（revision+1 并记 `settings.update`）。`test_tenancy.py` 加 2 个用例，全量 **200 passed**。
+- 未做：师弟真机安装 1.2.0+10、关注测试号并绑定、填他自己的 DeepSeek key（都在他那边操作，我只在文档里给了步骤）；Windows 桌面端重装 v2；QQ 通道真实消息联调。
+
 ## v2 多用户 P4：发布 1.2.0+10（2026-10-22）
 
 - 版本：`apps/planner/pubspec.yaml` 由 `1.1.1+9` 升到 `1.2.0+10`（版本号是升级判断的唯一依据）。
