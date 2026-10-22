@@ -29,7 +29,7 @@ from .models import Operation, PairConfirm, PlanRequest
 from .planning import propose
 from .maintenance import compact_all, expire_due
 from .repo import Repository
-from .reports import flush_archives, report_for
+from .reports import flush_archives, flush_archives_all, report_for
 from .store import Store, digest, encode, utcnow
 
 
@@ -41,7 +41,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     @asynccontextmanager
     async def lifespan(app):
         expire_due(store, clock())
-        flush_archives(store, clock())
+        flush_archives_all(store, clock())
         async def maintain():
             ticks = 0
             while True:
@@ -49,7 +49,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                 ticks += 1
                 try:
                     expire_due(store, clock())
-                    flush_archives(store, clock())
+                    flush_archives_all(store, clock())
                     if ticks % 720 == 0:  # roughly hourly: trim history nobody rereads
                         compact_all(store, clock())
                 except (OSError, RuntimeError):
@@ -367,7 +367,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
                 result = repo.apply(conn, user_id, device["id"], operation, clock())
             except ValidationError as error:
                 raise DomainError("输入不符合要求：" + "; ".join(str(e["msg"]) for e in error.errors()), "VALIDATION_ERROR", 422) from None
-        flush_archives(store, clock())
+        flush_archives(store, clock(), user_id)
         return result
 
     @app.get("/api/v1/reports/{day}")

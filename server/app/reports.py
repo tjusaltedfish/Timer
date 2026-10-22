@@ -56,10 +56,12 @@ def report_for(state, day, now=None):
             "version": reviews[-1]["version"] if reviews else 0}
 
 
-def flush_archives(store, now=None):
+def flush_archives(store, now=None, user_id=None):
+    """Write finished reviews to disk, one folder per account (no same-day collisions)."""
+    user_id = user_id or store.owner_id
     with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        state = store.state(conn)
+        state = store.state(conn, user_id)
         changed = False
         for job in state["jobs"]:
             if job["status"] != "pending":
@@ -67,9 +69,11 @@ def flush_archives(store, now=None):
             review = next(r for r in state["reviews"] if r["id"] == job["review_id"])
             report = report_for(state, review["date"], now)
             folder = store.directory / "archives"
+            if user_id != store.owner_id:
+                folder = folder / f"u-{str(user_id)[:8]}"
             job["attempts"] += 1
             try:
-                folder.mkdir(exist_ok=True)
+                folder.mkdir(parents=True, exist_ok=True)
                 for name, content in [(f"{review['date']}.md", report["markdown"]),
                                       (f"{review['date']}.json", json.dumps(report, ensure_ascii=False, indent=2))]:
                     target = folder / name
@@ -78,7 +82,7 @@ def flush_archives(store, now=None):
                     temporary.replace(target)
                 # Retain each submitted original even after a later revision.
                 versions = folder / "versions"
-                versions.mkdir(exist_ok=True)
+                versions.mkdir(parents=True, exist_ok=True)
                 (versions / f"{review['date']}-v{review['version']}.json").write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
                 job["status"] = "done"
                 review["archive_status"] = "saved"
@@ -86,4 +90,12 @@ def flush_archives(store, now=None):
                 review["archive_status"] = "pending"
             changed = True
         if changed:
-            store.save(conn, state)
+            store.save(conn, state, user_id)
+
+
+def flush_archives_all(store, now=None):
+    """Flush every account that might have a pending archive job."""
+    with store.connect() as conn:
+        users = [row["id"] for row in conn.execute("SELECT id FROM users WHERE status = 'active'")]
+    for user_id in users:
+        flush_archives(store, now, user_id)

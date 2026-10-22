@@ -140,3 +140,22 @@ def test_compaction_keeps_recent_history_only(tmp_path):
         assert removed["proposals"] == 10 and removed["feedbacks"] == 50 and removed["reviews"] == 20
         assert conn.execute("SELECT COUNT(*) FROM user_events WHERE user_id=?",
                             (user_id,)).fetchone()[0] == 29
+
+
+def test_compaction_also_trimmed_the_notification_dedupe_table(tmp_path):
+    from app.maintenance import compact
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    app = create_app(tmp_path, clock=lambda: now, background=False)
+    store = app.state.store
+    with store.connect() as conn:
+        for index in range(5005):
+            conn.execute("INSERT OR IGNORE INTO notification_refs VALUES(?,?)", (f"key-{index}", "{}"))
+    removed = compact(store, now, store.owner_id)
+    with store.connect() as conn:
+        left = conn.execute("SELECT COUNT(*) FROM notification_refs").fetchone()[0]
+        assert left == 5000
+        # the newest rows survive, so recent dedupe still works
+        assert conn.execute("SELECT COUNT(*) FROM notification_refs WHERE key='key-5004'").fetchone()[0] == 1
+    assert removed["notifications"] == 5
+

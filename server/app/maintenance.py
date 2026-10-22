@@ -33,6 +33,7 @@ FEEDBACK_KEEP = 200
 REVIEW_KEEP = 100
 EVENT_KEEP = 5000
 OPERATION_KEEP = 20000
+NOTIFY_KEEP = 5000  # dedupe rows only matter for a few days of events
 
 
 def compact(store, now, user_id=None):
@@ -44,7 +45,7 @@ def compact(store, now, user_id=None):
     every message ever sent.
     """
     user_id = user_id or store.owner_id
-    removed = {"proposals": 0, "feedbacks": 0, "reviews": 0, "events": 0, "operations": 0}
+    removed = {"proposals": 0, "feedbacks": 0, "reviews": 0, "events": 0, "operations": 0, "notifications": 0}
     with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         state = store.state(conn, user_id)
@@ -74,6 +75,14 @@ def compact(store, now, user_id=None):
                 (over,),
             )
             removed["operations"] = over
+        stale = conn.execute("SELECT COUNT(*) FROM notification_refs").fetchone()[0] - NOTIFY_KEEP
+        if stale > 0:
+            conn.execute(
+                "DELETE FROM notification_refs WHERE rowid IN "
+                "(SELECT rowid FROM notification_refs ORDER BY rowid ASC LIMIT ?)",
+                (stale,),
+            )
+            removed["notifications"] = stale
     return removed
 
 

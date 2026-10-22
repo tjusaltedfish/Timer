@@ -191,7 +191,7 @@ class AssistantService:
             self.store.save(conn, state, user_id)
             conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, user_id, request_hash, encode(result)))
             self.store.record_event(conn, user_id, state["revision"], device_id, kind, payload, self.clock())
-        flush_archives(self.store, self.clock())
+        flush_archives(self.store, self.clock(), user_id)
         return result
 
     def _exchange(self, text, answer, user_id=None):
@@ -472,7 +472,7 @@ class AssistantService:
             if all(a["type"] in UNDOABLE for a in actions):
                 conn.execute("INSERT OR REPLACE INTO assistant_undo VALUES(?,?,?,?)",
                              (draft_id, encode(undo_operations(before, state)), stamp(now), user_id))
-        flush_archives(self.store, self.clock())
+        flush_archives(self.store, self.clock(), user_id)
         return {"revision": state["revision"], "applied": applied}
 
     def undo_draft(self, draft_id, device_id, user_id=None):
@@ -500,7 +500,7 @@ class AssistantService:
             self.store.save(conn, state, user_id)
             conn.execute("UPDATE assistant_drafts SET status='undone' WHERE id=?", (draft_id,))
             conn.execute("DELETE FROM assistant_undo WHERE draft_id=?", (draft_id,))
-        flush_archives(self.store, self.clock())
+        flush_archives(self.store, self.clock(), user_id)
         return {"revision": state["revision"], "undone": True}
 
     def dismiss_draft(self, draft_id, user_id=None):

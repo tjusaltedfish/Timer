@@ -1,5 +1,12 @@
 # 当前状态
 
+## v2 归档与去重表按账号隔离（2026-10-22）
+
+- plan §11 P1 ⚠：归档原来所有人写同一个 `archives/` 目录、同一天的文件互相覆盖。现在主账号写 `archives/`（老路径不变），其他账号写 `archives/u-<账号前 8 位>/`；后台维护对所有活跃账号逐个落盘（`reports.flush_archives(..., user_id)` / `flush_archives_all`），操作接口只落当前账号。
+- `operations` 写入后触发的落盘一度把别的账号状态存进主账号文档，已改为显式带 `user_id` 保存。
+- 顺带修 plan §11 P2「去重表无界」：`compact()` 现在把 `notification_refs` 裁到最近 5000 行。
+- 测试：`server/tests/test_archives_tenancy.py`（两个账号同日复盘各自成文件、互不包含）+ `test_workflow.py` 去重表裁剪用例。后端全量 **235 passed**。
+
 ## v2 意图评测：14 条真实说法 × 固定状态（2026-10-22）
 
 - 依据 plan §9.6：离线用 MockLLM 回放，CI 必跑。衡量的是「模型这么说了，系统有没有按说的做对」——草稿解析、时段换算、护栏、失败降级都在这条链上，不是模型智商。
