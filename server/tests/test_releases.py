@@ -66,6 +66,8 @@ def test_download_is_public_and_matches_its_checksum(client, tmp_path):
     releases.publish(tmp_path, apk, "1.0.0+7")
     # 新手机还没账号时要能装包，所以这两个接口是公开的（只暴露安装包本身）。
     latest = client.get("/api/v1/app/latest").json()
+    # 宣传页在另一个域名上读版本号，这个公开接口要允许跨域。
+    assert client.get("/api/v1/app/latest").headers["access-control-allow-origin"] == "*"
     assert (latest["version"], latest["build"], latest["size"]) == ("1.0.0+7", 7, len(payload))
     assert "file" not in latest
     download = client.get("/api/v1/app/download")

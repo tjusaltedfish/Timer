@@ -117,6 +117,9 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
+        if request.url.path == "/api/v1/app/latest":
+            # 公开信息，宣传页要跨域读版本来显示「最新版」。
+            response.headers["Access-Control-Allow-Origin"] = "*"
         return response
 
     def authenticated(authorization: str = Header(default="")):

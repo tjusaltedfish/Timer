@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>瞬时</title>
-<meta name="description" content="瞬时：一个人的时间表。此刻为主、一色一事的周视图、入定专注，AI 助手一句话替你排好改好，到点在微信里问你做完了吗。Android 与 Windows 同步。">
+<meta name="description" content="瞬时：把一句话变成一段有结果的时间。账号制，每人一份日程；手机为主、电脑同步，数据和助手 Key 都在你自己的电脑上。公众号里也能直接和助手说话。">
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2323211F'/%3E%3Ctext x='32' y='43' font-size='30' text-anchor='middle' fill='%23fff' font-family='serif'%3E瞬%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
@@ -85,6 +85,12 @@ nav a:hover { background: var(--wash); color: var(--jiao); }
 .cta:hover { transform: translateY(-1px); }
 .cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 34px; }
 .cta-row .cta { margin-top: 0; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }
+.step { position: relative; background: var(--paper-raised); border-radius: 18px; padding: 22px 20px 18px; box-shadow: var(--halo); }
+.step .num { display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 9px; background: var(--jiao); color: var(--paper); font-size: 13px; margin-bottom: 10px; }
+.step h3 { margin: 0 0 6px; font-size: 17px; }
+.step p { margin: 0; color: var(--zhong); font-size: 14px; line-height: 1.7; }
+.step code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; background: var(--wash-strong); padding: 1px 5px; border-radius: 6px; }
 .cta.ghost { background: transparent; color: var(--jiao); border: 1px solid var(--bloom); }
 .cta.ghost:hover { background: var(--wash); }
 .dl-note { margin: 10px 0 0; font-size: 13px; color: var(--dan); }
@@ -260,7 +266,7 @@ footer .kai { font-size: 26px; display: block; margin-bottom: 10px; }
   <div class="wrap">
     <a class="brand" href="#top"><span class="seal">瞬</span><b>瞬时</b></a>
     <nav aria-label="页面导航">
-      <a href="#week">一周</a><a href="#focus">专注</a><a href="#assistant">助手</a><a href="#wechat">公众号</a><a href="#download">下载</a><a href="#more">更多</a>
+      <a href="#phone">手机版</a><a href="#desktop">电脑版</a><a href="#week">一周</a><a href="#assistant">助手</a><a href="#download">下载</a><a href="#more">更多</a>
     </nav>
   </div>
 </header>
@@ -273,9 +279,10 @@ footer .kai { font-size: 26px; display: block; margin-bottom: 10px; }
       <p class="lead">瞬时以「此刻」为中心安排你的一天。说一句「今天十二点前把项目做完」，助手就替你排好；到点了，它在微信里问你一句：做完了吗？</p>
       <div class="chips"><span class="chip">Android</span><span class="chip">Windows</span><span class="chip">微信公众号</span><span class="chip">数据留在自己的电脑</span></div>
       <div class="cta-row">
-        <a class="cta" href="https://timer.studydazi.top/api/v1/app/download">下载 Android 版 <span aria-hidden="true">↓</span></a>
+        <a class="cta" href="https://timer.studydazi.top/api/v1/app/download" id="hero-download">下载 Android 版 <span aria-hidden="true">↓</span></a>
         <a class="cta ghost" href="#week">看看它怎么用</a>
       </div>
+      <p class="dl-note"><span class="chip" id="version-badge" style="margin-right:8px">最新版 1.2.16</span>装好直接注册自己的账号；账号由你在 App 里自己建。</p>
       <p class="dl-note">Android 直接下载安装；Windows 版在电脑上构建。数据默认留在你自己的电脑上。</p>
     </div>
     <div class="phone" role="img" aria-label="手机首页示意：大号时钟、七日条和当前待办卡片">
@@ -445,6 +452,40 @@ footer .kai { font-size: 26px; display: block; margin-bottom: 10px; }
       </div>
     </div>
   </section>
+  <section id="phone">
+    <div class="wrap">
+      <div class="reveal">
+        <p class="kicker">手 机 版</p>
+        <h2 class="section-title">从下载到能排出第一件事。</h2>
+        <p class="lead">Android 手机装上就能用。第一次打开会带你走四件小事：称呼、每天几点到几点、助手怎么说话、以及要不要现在就试试。</p>
+      </div>
+      <div class="steps">
+        <div class="step reveal"><span class="num">1</span><h3>下载安装</h3><p>点下面的按钮下载 APK（约 22MB）。手机提示「未知来源」时选允许；装完直接打开「瞬时」。</p></div>
+        <div class="step reveal"><span class="num">2</span><h3>自己注册</h3><p>服务器地址默认已经填好（这台电脑的公网域名），点「没有账号？自己注册」，用户名 3–32 位字母数字，密码至少 10 位。</p></div>
+        <div class="step reveal"><span class="num">3</span><h3>设置你的每天</h3><p>注册后第一屏：称呼、时区（默认洛杉矶，国内用户改成 Asia/Shanghai）、每天开始与结束时间。之后随时能在设置里改。</p></div>
+        <div class="step reveal"><span class="num">4</span><h3>排第一件事</h3><p>下方「+」新建待办，写清「做到什么算完成」和预计多久，点保存；它会出现在今天的时间轴上。</p></div>
+        <div class="step reveal"><span class="num">5</span><h3>接上公众号（可选）</h3><p>设置 →「微信」/「QQ」里看绑定教程，生成 6 位码发到公众号对话里。绑定后到点在微信里问你「做完了吗」，直接回一句话就能改日程。</p></div>
+        <div class="step reveal"><span class="num">6</span><h3>配自己的助手模型（可选）</h3><p>设置 →「助手」里填你自己的模型地址、模型名和 Key（存在你自己的电脑上，不经过我这里）。不填也能用日程和提醒。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="desktop">
+    <div class="wrap">
+      <div class="reveal">
+        <p class="kicker">电 脑 版</p>
+        <h2 class="section-title">Windows：大屏看周视图，挂件常驻桌面。</h2>
+        <p class="lead">电脑版和手机共用同一个账号和同一份日程。它由你（或站长）在自己的电脑上构建后运行；如果你的电脑常开，它同时就是整个系统的后台——数据与模型 Key 都只在那台电脑上。</p>
+      </div>
+      <div class="steps">
+        <div class="step reveal"><span class="num">1</span><h3>准备电脑</h3><p>一台 Windows 10/11，装好 Flutter 3.47.7（仓库里 <code>tools/setup-dev.ps1</code> 会自动装好）。</p></div>
+        <div class="step reveal"><span class="num">2</span><h3>构建</h3><p>在仓库根目录运行 <code>tools\build-windows.ps1</code>，产物在 <code>artifacts\windows-preview-*</code> 下，打开 <code>time_planner.exe</code> 即可，免安装。</p></div>
+        <div class="step reveal"><span class="num">3</span><h3>登录同一账号</h3><p>打开后填服务器地址和账号密码，登录后看到和手机上一样的日程；窗口可缩成置顶挂件。</p></div>
+        <div class="step reveal"><span class="num">4</span><h3>要当后台的话</h3><p>运行 <code>python -m app.admin ...</code> 建账号，用 <code>Start-Timer.ps1 -BackendOnly</code> 让后台与隧道常驻；手机和公众号的消息都从这台电脑收发。</p></div>
+      </div>
+    </div>
+  </section>
+
   <section id="download">
     <div class="wrap">
       <div class="reveal" style="text-align:center">
@@ -468,6 +509,18 @@ footer .kai { font-size: 26px; display: block; margin-bottom: 10px; }
 
 <script>
 (() => {
+  // 让宣传页跟着线上安装包走：/api/v1/app/latest 是公开的。
+  const badge = document.getElementById('version-badge');
+  const dl = document.getElementById('hero-download');
+  const api = 'https://timer.studydazi.top/api/v1/app/latest';
+  fetch(api, { cache: 'no-store' })
+    .then(r => (r.ok ? r.json() : null))
+    .then(v => {
+      if (!v || !v.version) return;
+      if (badge) badge.textContent = '最新版 ' + v.name;
+      if (dl) dl.href = 'https://timer.studydazi.top/api/v1/app/download?version=' + encodeURIComponent(v.version);
+    })
+    .catch(() => {});
   const pad = n => String(n).padStart(2, '0');
   const week = '一二三四五六日';
   const clock = document.getElementById('clock');
