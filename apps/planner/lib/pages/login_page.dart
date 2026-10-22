@@ -128,7 +128,7 @@ class _LoginPageState extends State<LoginPage> {
       'AUTH_FAILED' => '用户名或密码不对（$code）',
       'RATE_LIMITED' => '尝试太频繁，请稍后再试（$code）',
       'ACCOUNT_DISABLED' => '账号已停用，请联系站长（$code）',
-      'REGISTRATION_CLOSED' => '这个服务器还没开注册，请让站长在电脑上开一下。',
+      'REGISTRATION_CLOSED' => '这个服务器还没开注册，请让站长打开注册开关。',
       'USERNAME_TAKEN' => '这个用户名已经有人用了，换一个。',
       'WEAK_PASSWORD' => '密码至少 10 位，再长一点。',
       'INVALID_USERNAME' => '用户名用 3–32 位字母、数字、下划线、点或短横线。',

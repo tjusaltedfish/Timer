@@ -198,7 +198,7 @@ def test_unconfigured_model_still_answers_basics(env):
     bind(client, app, token)
     push(client, token, OWNER, "帮我排明天", msg_id="u1")
     run(client, app)
-    assert "模型服务还没在电脑上配置好" in wechat.custom[-1][1]["text"]["content"]
+    assert "模型服务还没配置好" in wechat.custom[-1][1]["text"]["content"]
 
 
 def test_window_closed_falls_back_to_template_or_fails_clearly(env):

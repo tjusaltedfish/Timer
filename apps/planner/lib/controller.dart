@@ -359,7 +359,7 @@ class PlannerController extends ChangeNotifier {
 
   /// Streams a large authenticated download (the phone update package).
   Future<http.StreamedResponse> openDownload(String path) async {
-    if (!configured) throw ApiFailure('请先在设置里连接电脑。', 409);
+    if (!configured) throw ApiFailure('助手还没配置，去「我的 → 助手设置」填地址和 Key。', 409);
     final request = http.Request('GET', Uri.parse('$serverUrl$path'))
       ..headers['Authorization'] = 'Bearer $_token';
     final response = await transport
@@ -573,7 +573,7 @@ class PlannerController extends ChangeNotifier {
 
   Future<Json> _assistant(String method, String path, [Json? body]) async {
     if (!configured) {
-      throw ApiFailure('助手在电脑上运行，请先在设置里连接电脑。', 409);
+      throw ApiFailure('连不上服务器：家中的电脑可能没开或后台没起来。', 409);
     }
     return request(
       method,
@@ -592,7 +592,7 @@ class PlannerController extends ChangeNotifier {
     bool externalAllowed,
     List<int> bytes,
   ) async {
-    if (!configured) throw ApiFailure('请先连接电脑，材料保存在电脑上。', 409);
+    if (!configured) throw ApiFailure('材料保存在服务器上，先确认已登录。', 409);
     if (bytes.length > 8 * 1024 * 1024) {
       throw ApiFailure('文件超过 8 MB，请拆分后上传。', 422);
     }
@@ -694,7 +694,7 @@ class PlannerController extends ChangeNotifier {
 
   Future<Json> _wechat(String method, String path, [Json? body]) async {
     if (!configured) {
-      throw ApiFailure('助手在电脑上运行，请先在设置里连接电脑。', 409);
+      throw ApiFailure('连不上服务器：家中的电脑可能没开或后台没起来。', 409);
     }
     return request(method, '/api/v1/wechat$path', body);
   }
@@ -730,7 +730,7 @@ class PlannerController extends ChangeNotifier {
 
   Future<Json> _qq(String method, String path, [Json? body]) async {
     if (!configured) {
-      throw ApiFailure('QQ 机器人在电脑上运行，请先在设置里连接电脑。', 409);
+      throw ApiFailure('连不上服务器：家中的电脑可能没开或后台没起来。', 409);
     }
     return request(method, '/api/v1/qq$path', body);
   }

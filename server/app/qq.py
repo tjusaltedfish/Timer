@@ -284,7 +284,7 @@ class QQChannel:
                                   now, key=f"bind:{msg_id}", msg_id=msg_id, msg_at=now)
                     mark("done", "bound")
                     return True
-                self._enqueue(conn, openid, "这个 QQ 还没绑定瞬时账号。打开瞬时 App →「账号」→「绑定 QQ」，把 6 位绑定码发给我即可。",
+                self._enqueue(conn, openid, "这个 QQ 还没绑定瞬时账号。打开瞬时 App →「我的」→「QQ」，把 6 位绑定码发给我即可。",
                               now, key=f"unbound:{msg_id}", msg_id=msg_id, msg_at=now)
                 mark("done", "unbound")
                 return True
@@ -384,7 +384,7 @@ class QQChannel:
         """Queue a message to the bound account (reminders, reports, tests)."""
         bound = self.settings.load()["bound_openid"]
         if not bound:
-            raise DomainError("还没有绑定 QQ：在电脑端「设置 · QQ 助手」生成绑定码，然后在 QQ 里发给机器人",
+            raise DomainError("还没有绑定 QQ：打开瞬时 App →「我的」→「QQ」生成 6 位绑定码，然后在 QQ 里发给机器人",
                               "QQ_NOT_BOUND", 409)
         with self.store.connect() as conn:
             self._enqueue(conn, bound, text, self.clock(), key, not_before, expires_at)

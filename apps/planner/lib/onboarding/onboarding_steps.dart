@@ -106,14 +106,14 @@ const List<CoachStep> coachSteps = [
   CoachStep(
     id: StepId.assistant,
     title: '叫得应的助手',
-    body: '「助手」在电脑上读你的日程，可以帮你排期、改计划，也会说明它做了什么。',
+    body: '「助手」在服务器上读你的日程，可以帮你排期、改计划，也会说明它做了什么。',
     target: CoachKeys.navAssistant,
     page: 4,
   ),
   CoachStep(
     id: StepId.account,
     title: '账号与设置',
-    body: '右上角（电脑端在左下）的「设置」里有账号、提醒和每天的起止时间。',
+    body: '「我的」里有账号、提醒和每天的起止时间；手机也能配置助手和绑定公众号。',
     target: CoachKeys.settingsEntry,
     page: 0,
   ),

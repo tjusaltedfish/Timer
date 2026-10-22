@@ -69,7 +69,7 @@ class ChatCommands:
                                                      user_id=self.user_id)
             except DomainError as error:
                 if error.code == "ASSISTANT_NOT_CONFIGURED":
-                    return "模型服务还没在电脑上配置好，我暂时看不了图。"
+                    return "模型服务还没配置好，我暂时看不了图。手机「我的 → 助手设置」或电脑「设置 · 助手」都能填地址和 Key。"
                 return error.message
             self.meme = rows[-1].get("meme") or ""
             return self.render(rows[-1])
@@ -114,7 +114,7 @@ class ChatCommands:
                                                  user_id=self.user_id)
         except DomainError as error:
             if error.code == "ASSISTANT_NOT_CONFIGURED":
-                return "模型服务还没在电脑上配置好，我暂时只能回答「今天」「帮助」。"
+                return "模型服务还没配置好，我暂时只能回答「今天」「帮助」。手机「我的 → 助手设置」或电脑「设置 · 助手」都能填地址和 Key。"
             return error.message
         self.meme = rows[-1].get("meme") or ""
         return self.render(rows[-1])

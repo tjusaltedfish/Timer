@@ -261,7 +261,7 @@ class WeChatChannel:
                     return True
                 # Unbound follower: answer once per message with the way to bind.
                 mark("done", "unbound")
-                self._enqueue(conn, openid, "这个微信号还没绑定瞬时账号。打开瞬时 App →「账号」→「绑定微信」，把 6 位绑定码发给我即可。", now)
+                self._enqueue(conn, openid, "这个微信号还没绑定瞬时账号。打开瞬时 App →「我的」→「微信」，把 6 位绑定码发给我即可。", now)
                 return True
             self.identities.touch(conn, "wechat", openid)
             if kind == "event":
@@ -310,7 +310,7 @@ class WeChatChannel:
         """Queue a message to the bound account (reminders, reports, tests)."""
         bound = self.settings.load()["bound_openid"]
         if not bound:
-            raise DomainError("还没有绑定微信大号：在电脑端「设置 · 微信助手」生成绑定码", "WECHAT_NOT_BOUND", 409)
+            raise DomainError("还没有绑定微信：打开瞬时 App →「我的」→「微信」生成 6 位绑定码", "WECHAT_NOT_BOUND", 409)
         with self.store.connect() as conn:
             self._enqueue(conn, bound, text, self.clock(), key, not_before, expires_at)
 
