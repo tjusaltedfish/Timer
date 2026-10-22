@@ -92,36 +92,58 @@ class WeeklyBrief:
     def __init__(self, store, channel, service, clock):
         self.store, self.channel, self.service, self.clock = store, channel, service, clock
         with store.connect() as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS weekly_briefs(week TEXT PRIMARY KEY, sent_at TEXT NOT NULL)")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(weekly_briefs)")}
+            if columns and "user_id" not in columns:
+                conn.execute("ALTER TABLE weekly_briefs RENAME TO weekly_briefs_v1")
+            conn.execute("CREATE TABLE IF NOT EXISTS weekly_briefs("
+                         "user_id TEXT NOT NULL, week TEXT NOT NULL, sent_at TEXT NOT NULL, "
+                         "PRIMARY KEY(user_id, week))")
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='weekly_briefs_v1'").fetchone():
+                conn.execute("INSERT OR IGNORE INTO weekly_briefs(user_id,week,sent_at) "
+                             "SELECT ?, week, sent_at FROM weekly_briefs_v1", (store.owner_id,))
+                conn.execute("DROP TABLE weekly_briefs_v1")
 
     async def run_due(self):
-        conf = self.channel.settings.load()
-        if not conf["bound_openid"] or not conf.get("proactive_enabled", True):
+        if not self.channel.settings.load().get("proactive_enabled", True):
             return
         now = self.clock()
-        state = self.store.state()
+        with self.store.connect() as conn:
+            rows = [dict(row) for row in conn.execute(
+                "SELECT i.user_id AS user_id, i.external_id AS openid FROM channel_identities i "
+                "JOIN users u ON u.id = i.user_id WHERE i.channel = 'wechat' AND u.status = 'active'")]
+        if not rows:
+            # v1 install that never migrated its bound follower into channel_identities.
+            bound = self.channel.settings.load()["bound_openid"]
+            if bound:
+                rows = [{"user_id": self.store.owner_id, "openid": bound}]
+        for row in rows:
+            await self._run_for(row["user_id"], row["openid"], now)
+
+    async def _run_for(self, user_id, openid, now):
+        state = self.store.state(user_id=user_id)
         local = now.astimezone(ZoneInfo(state["settings"]["timezone"]))
         if local.weekday() != 6 or local.time() < SEND_AT:
             return
         monday = local.date() - timedelta(days=6)
         with self.store.connect() as conn:
             # Claim the week first so a slow or failing model never sends twice.
-            if conn.execute("INSERT OR IGNORE INTO weekly_briefs VALUES(?,?)",
-                            (monday.isoformat(), stamp(now))).rowcount == 0:
+            if conn.execute("INSERT OR IGNORE INTO weekly_briefs(user_id,week,sent_at) VALUES(?,?,?)",
+                            (user_id, monday.isoformat(), stamp(now))).rowcount == 0:
                 return
         facts = week_facts(state, monday, now)
         summary = None
         if facts["sessions"] or facts["done"] or any(d["review"] for d in facts["days"].values()):
-            summary = await self._summary(monday, facts)
-        self.channel.enqueue(brief_text(monday, facts, summary), key=f"weekly:{monday.isoformat()}",
-                             expires_at=now + timedelta(hours=12))
+            summary = await self._summary(user_id, monday, facts)
+        self.channel.enqueue_to(openid, brief_text(monday, facts, summary),
+                                key=f"weekly:{user_id}:{monday.isoformat()}",
+                                expires_at=now + timedelta(hours=12))
 
-    async def _summary(self, monday, facts):
+    async def _summary(self, user_id, monday, facts):
         """A short model-written paragraph; the numbers above it never depend on it."""
         try:
             with self.store.connect() as conn:
-                conf, key = self.service.require(conn, self.store.owner_id)
-                assistant.count_call(conn, self.clock(), 1, user_id=self.store.owner_id)
+                conf, key = self.service.require(conn, user_id)
+                assistant.count_call(conn, self.clock(), 1, user_id=user_id)
             text = await assistant.complete(conf, key, [
                 {"role": "system", "content": PROMPT},
                 {"role": "user", "content": model_input(monday, facts)},

@@ -520,7 +520,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         return {"messages": qq.outbox()}
 
     @app.post('/api/v1/materials/upload')
-    async def upload_material(request: Request, name: str, day: str, description: str = '', external_allowed: bool = True, device=Depends(owner)):
+    async def upload_material(request: Request, name: str, day: str, description: str = '', external_allowed: bool = True, device=Depends(authenticated)):
         content = bytearray()
         async for chunk in request.stream():
             content.extend(chunk)
@@ -529,14 +529,15 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         if len(description) > 2000:
             raise DomainError('说明过长', status=422)
         try:
-            return await asyncio.to_thread(materials.upload, name, day, description, external_allowed, bytes(content))
+            return await asyncio.to_thread(materials.upload, name, day, description, external_allowed, bytes(content),
+                                            tenancy.user_id(store, device))
         except ValueError:
             raise DomainError('日期格式无效', status=422) from None
 
     @app.post('/api/v1/reviews/generate')
-    async def generate_review(data: GenerateReview, device=Depends(owner)):
+    async def generate_review(data: GenerateReview, device=Depends(authenticated)):
         try:
-            return await materials.generate(data)
+            return await materials.generate(data, tenancy.user_id(store, device))
         except ValueError:
             raise DomainError('日期或材料格式无效', status=422) from None
 

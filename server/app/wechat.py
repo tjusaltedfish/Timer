@@ -310,6 +310,11 @@ class WeChatChannel:
         with self.store.connect() as conn:
             self._enqueue(conn, bound, text, self.clock(), key, not_before, expires_at)
 
+    def enqueue_to(self, openid, text, key=None, not_before=None, expires_at=None):
+        """Queue a message to one follower (per-user reminders and briefs)."""
+        with self.store.connect() as conn:
+            self._enqueue(conn, openid, text, self.clock(), key, not_before, expires_at)
+
     def outbox(self, limit=20):
         with self.store.connect() as conn:
             rows = conn.execute("SELECT id,text,status,channel,attempts,last_error,created_at,sent_at "

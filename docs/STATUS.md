@@ -2,6 +2,15 @@
 
 日期：2026-10-22。总体目标：完成 Android + Windows 的个人日程管理初版。尚未达到完整交付条件。
 
+## v2 多用户 P2：材料、复盘与周报按用户（2026-10-22）
+
+- 收（`m00732` 方案「材料/复盘/周报按用户」）：`materials` 的生成表 `review_generations` / `auto_review_attempts` 加 `user_id` 列并回填主账号（`ALTER TABLE` + 空值回填，旧行不丢）；行键改为 `${user_id}|${request_id}`，避免两个账号用同一个 request_id 互相覆盖；`operations.id` 有 100 字上限，复盘写入的 operation_id 改为「前缀 + sha256(user:request) 前 60 位」。
+- 接口：`POST /materials/upload`、`POST /reviews/generate` 从 owner 门改为任意已登录设备，按 `tenancy.user_id(store, device)` 取人；材料、复盘原文与分析、素材摘要全部写进该用户自己的 `user_state`。
+- 生成：素材摘要、复盘正文、自动复盘都按该用户的助手配置、密钥、额度和时区跑；自动复盘遍历 `users(status='active')`，每个账号各自计数与 15 分钟退避（attempts 行键带 user 前缀），一个账号的模型失败不影响另一个。
+- 周报：`weekly_briefs` 主键改为 `(user_id, week)`，旧表自动迁到主账号；周日 20:00 后遍历「已绑定微信且账号启用」的用户，按各自时区算本周、按各自 `user_state` 取事实，用 `channel.enqueue_to(openid)` 只发本人微信；去重键 `weekly:{user_id}:{week}`，`RoutedChannel` 补了 `enqueue_to` 转发微信通道。
+- 验证（真实跑过）：新增 `server/tests/test_materials_multiuser.py` 4 个用例（材料只进调用者、复盘只存请求者、同 request_id 跨账号不冲突、周报只发给各自 follower）；`PLANNER_DATA_DIR=.test-data ./server/.venv/Scripts/python.exe -m pytest server/tests -q` → **198 passed**（194 + 4）。修了两个只有多用户才暴露的问题：`review.analysis` 漏传 user_id 会写进主账号、operation_id 超长 100 字上限。
+- 未做：真实公众号发消息联调（等用户下一次发微信）、客户端「材料/复盘」页按用户的真机核对、周报仍只走微信不路由到 QQ（有意为之）。
+
 ## v2 多用户 P2 通道：一个公众号多人用（2026-10-22）
 
 - 收（`m00732` 方案「通道多账号」）：绑定不再只认主账号。`0003_channel_identity.sql` 建 `channel_identities`（微信/QQ 的 openid → 用户）与 `channel_bind_codes`（6 位码、10 分钟有效、一次性）；`server/app/channel_identity.py` 的 `IdentityStore` 负责绑定/解绑/换绑与旧文件绑定迁移。旧安装的 `wechat.json`/`qq.json` 里已有的 openid 第一次收消息时自动归给主账号，不用重绑。
