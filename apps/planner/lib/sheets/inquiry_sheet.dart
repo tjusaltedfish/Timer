@@ -45,141 +45,144 @@ extension _InquirySheet on _PlannerHomeState {
           };
           return AlertDialog(
             title: const Text('这一段，进展如何？'),
-            content: SizedBox(
-              width: 460,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      block['title'],
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    if (t != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          '说好的结果：${t['outcome_criteria']}',
-                          style: Theme.of(context).textTheme.bodySmall,
+            content: ConstrainedBox(
+              constraints: sheetBodyConstraints(context),
+              child: SizedBox(
+                width: 460,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        block['title'],
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      if (t != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            '说好的结果：${t['outcome_criteria']}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                         ),
-                      ),
-                    const SizedBox(height: 16),
-                    for (final row in [
-                      choices.entries.take(2),
-                      choices.entries.skip(2),
-                    ]) ...[
-                      Row(
-                        children: [
-                          for (final (i, entry) in row.indexed) ...[
-                            if (i > 0) const SizedBox(width: 10),
-                            Expanded(
-                              child: _ChoiceTile(
-                                key: ValueKey('feedback.${entry.key}'),
-                                title: entry.value.$1,
-                                hint: entry.value.$2,
-                                selected: choice == entry.key,
-                                onTap: () =>
-                                    setDialog(() => choice = entry.key),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    AnimatedSize(
-                      duration: InkMetrics.micro,
-                      alignment: Alignment.topCenter,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (choice == 'partial' ||
-                              choice == 'interrupted') ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              '还需要多久？',
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                            const SizedBox(height: 10),
-                            Center(
-                              child: InkWheel(
-                                key: const Key('feedback.remaining-wheel'),
-                                count: 48,
-                                index: remaining ~/ 5 - 1,
-                                looping: false,
-                                width: 140,
-                                semanticLabel: '还需要多久',
-                                label: (i) => '${(i + 1) * 5} 分钟',
-                                onChanged: (i) =>
-                                    setDialog(() => remaining = (i + 1) * 5),
-                              ),
-                            ),
-                          ],
-                          if (choice == 'waiting') ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              '什么时候去看结果？',
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                for (final entry in quick.entries)
-                                  ChoiceChip(
-                                    label: Text(entry.key),
-                                    selected: pickedWhen == entry.key,
-                                    onSelected: (_) => setDialog(() {
-                                      pickedWhen = entry.key;
-                                      check = entry.value;
-                                    }),
-                                  ),
-                                ChoiceChip(
-                                  label: const Text('自己挑'),
-                                  selected: pickedWhen == 'custom',
-                                  onSelected: (_) =>
-                                      setDialog(() => pickedWhen = 'custom'),
+                      const SizedBox(height: 16),
+                      for (final row in [
+                        choices.entries.take(2),
+                        choices.entries.skip(2),
+                      ]) ...[
+                        Row(
+                          children: [
+                            for (final (i, entry) in row.indexed) ...[
+                              if (i > 0) const SizedBox(width: 10),
+                              Expanded(
+                                child: _ChoiceTile(
+                                  key: ValueKey('feedback.${entry.key}'),
+                                  title: entry.value.$1,
+                                  hint: entry.value.$2,
+                                  selected: choice == entry.key,
+                                  onTap: () =>
+                                      setDialog(() => choice = entry.key),
                                 ),
-                              ],
-                            ),
-                            if (pickedWhen == 'custom')
-                              Padding(
-                                padding: const EdgeInsets.only(top: 14),
-                                child: Center(
-                                  child: InkDateTimeWheel(
-                                    initial: check,
-                                    today: opened,
-                                    minimum: opened,
-                                    days: 60,
-                                    onChanged: (d, h, m) => check = DateTime(
-                                      d.year,
-                                      d.month,
-                                      d.day,
-                                      h,
-                                      m,
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      AnimatedSize(
+                        duration: InkMetrics.micro,
+                        alignment: Alignment.topCenter,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (choice == 'partial' ||
+                                choice == 'interrupted') ...[
+                              const SizedBox(height: 18),
+                              Text(
+                                '还需要多久？',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                              const SizedBox(height: 10),
+                              Center(
+                                child: InkWheel(
+                                  key: const Key('feedback.remaining-wheel'),
+                                  count: 48,
+                                  index: remaining ~/ 5 - 1,
+                                  looping: false,
+                                  width: 140,
+                                  semanticLabel: '还需要多久',
+                                  label: (i) => '${(i + 1) * 5} 分钟',
+                                  onChanged: (i) =>
+                                      setDialog(() => remaining = (i + 1) * 5),
+                                ),
+                              ),
+                            ],
+                            if (choice == 'waiting') ...[
+                              const SizedBox(height: 18),
+                              Text(
+                                '什么时候去看结果？',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (final entry in quick.entries)
+                                    ChoiceChip(
+                                      label: Text(entry.key),
+                                      selected: pickedWhen == entry.key,
+                                      onSelected: (_) => setDialog(() {
+                                        pickedWhen = entry.key;
+                                        check = entry.value;
+                                      }),
+                                    ),
+                                  ChoiceChip(
+                                    label: const Text('自己挑'),
+                                    selected: pickedWhen == 'custom',
+                                    onSelected: (_) =>
+                                        setDialog(() => pickedWhen = 'custom'),
+                                  ),
+                                ],
+                              ),
+                              if (pickedWhen == 'custom')
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 14),
+                                  child: Center(
+                                    child: InkDateTimeWheel(
+                                      initial: check,
+                                      today: opened,
+                                      minimum: opened,
+                                      days: 60,
+                                      onChanged: (d, h, m) => check = DateTime(
+                                        d.year,
+                                        d.month,
+                                        d.day,
+                                        h,
+                                        m,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 18),
-                    TextField(
-                      controller: text,
-                      maxLines: 2,
-                      maxLength: 4000,
-                      decoration: const InputDecoration(
-                        labelText: '留下了什么，或卡在哪里（可选）',
-                        hintText: '文件名、链接、数据，或一句卡点',
+                      const SizedBox(height: 18),
+                      TextField(
+                        controller: text,
+                        maxLines: 2,
+                        maxLength: 4000,
+                        decoration: const InputDecoration(
+                          labelText: '留下了什么，或卡在哪里（可选）',
+                          hintText: '文件名、链接、数据，或一句卡点',
+                        ),
                       ),
-                    ),
-                    if (error != null)
-                      Text(error!, style: TextStyle(color: p.accent)),
-                  ],
+                      if (error != null)
+                        Text(error!, style: TextStyle(color: p.accent)),
+                    ],
+                  ),
                 ),
               ),
             ),

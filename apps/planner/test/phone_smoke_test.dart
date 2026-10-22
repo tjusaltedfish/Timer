@@ -184,6 +184,51 @@ void main() {
     c.dispose();
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('手机弹层的保存按钮留在屏幕内', (tester) async {
+    tzdata.initializeTimeZones();
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    // 每个用例独立的服务器状态（上一个用例会 PATCH /me 改掉全局 `me`）。
+    me = user(
+      onboarding: {
+        'version': 2,
+        'step': 10,
+        'done': ['welcome', 'setup', 'finish'],
+        'skipped': <String>[],
+      },
+    );
+    final storage = MemoryStore();
+    storage.token = 'tok-1';
+    storage.values['auth_session'] = jsonEncode({
+      'base_url': 'http://127.0.0.1:8787',
+      'user': me,
+      'device': {'id': 'd1', 'name': '瞬时客户端', 'role': 'phone'},
+    });
+    final c = PlannerController(
+      storage: storage,
+      transport: backend(),
+      clock: () => DateTime.utc(2026, 10, 19, 17, 30),
+    );
+    await c.initialize();
+    await tester.pumpWidget(PlannerApp(controller: c, requireLogin: true));
+    await tester.pumpAndSettle();
+
+    // 睡眠记录弹层：两个时间轮盘叠起来，最容易把动作按钮挤出去。
+    // 首次设置页先「开始使用」，才进到主页。
+    await tester.tap(find.byTooltip('睡眠记录'));
+    await tester.pumpAndSettle();
+    final save = tester.getRect(find.text('记下'));
+    expect(save.bottom, lessThanOrEqualTo(844.0));
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
 
 http.Response _json(Object body) => http.Response(

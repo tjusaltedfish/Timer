@@ -143,65 +143,68 @@ extension _SleepSheet on _PlannerHomeState {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialog) => AlertDialog(
           title: Text(existing == null ? '记一下睡眠' : '这一觉'),
-          content: SizedBox(
-            width: 440,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  label('什么时候睡下'),
-                  Center(
-                    child: InkDateTimeWheel(
-                      key: const Key('sleep.slept'),
-                      initial: slept,
-                      today: nowWall,
-                      firstDay: firstDay,
-                      days: 14,
-                      maximum: nowWall,
-                      onChanged: (d, h, m) =>
-                          slept = DateTime(d.year, d.month, d.day, h, m),
+          content: ConstrainedBox(
+            constraints: sheetBodyConstraints(context),
+            child: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    label('什么时候睡下'),
+                    Center(
+                      child: InkDateTimeWheel(
+                        key: const Key('sleep.slept'),
+                        initial: slept,
+                        today: nowWall,
+                        firstDay: firstDay,
+                        days: 14,
+                        maximum: nowWall,
+                        onChanged: (d, h, m) =>
+                            slept = DateTime(d.year, d.month, d.day, h, m),
+                      ),
                     ),
-                  ),
-                  label('什么时候醒来'),
-                  Center(
-                    child: InkDateTimeWheel(
-                      key: const Key('sleep.woke'),
-                      initial: woke,
-                      today: nowWall,
-                      firstDay: firstDay,
-                      days: 14,
-                      maximum: nowWall,
-                      onChanged: (d, h, m) =>
-                          woke = DateTime(d.year, d.month, d.day, h, m),
+                    label('什么时候醒来'),
+                    Center(
+                      child: InkDateTimeWheel(
+                        key: const Key('sleep.woke'),
+                        initial: woke,
+                        today: nowWall,
+                        firstDay: firstDay,
+                        days: 14,
+                        maximum: nowWall,
+                        onChanged: (d, h, m) =>
+                            woke = DateTime(d.year, d.month, d.day, h, m),
+                      ),
                     ),
-                  ),
-                  label('睡得怎么样（可不填）'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (var i = 0; i < 5; i++)
-                        ChoiceChip(
-                          label: Text(sleepQuality[i]),
-                          selected: quality == i + 1,
-                          onSelected: (on) =>
-                              setDialog(() => quality = on ? i + 1 : null),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: note,
-                    maxLength: 500,
-                    decoration: const InputDecoration(
-                      labelText: '备注（可不填）',
-                      hintText: '半夜醒了一次、睡前喝了咖啡…',
+                    label('睡得怎么样（可不填）'),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (var i = 0; i < 5; i++)
+                          ChoiceChip(
+                            label: Text(sleepQuality[i]),
+                            selected: quality == i + 1,
+                            onSelected: (on) =>
+                                setDialog(() => quality = on ? i + 1 : null),
+                          ),
+                      ],
                     ),
-                  ),
-                  if (error != null)
-                    Text(error!, style: TextStyle(color: palette.accent)),
-                ],
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: note,
+                      maxLength: 500,
+                      decoration: const InputDecoration(
+                        labelText: '备注（可不填）',
+                        hintText: '半夜醒了一次、睡前喝了咖啡…',
+                      ),
+                    ),
+                    if (error != null)
+                      Text(error!, style: TextStyle(color: palette.accent)),
+                  ],
+                ),
               ),
             ),
           ),

@@ -7,7 +7,8 @@ extension _BlockDetailSheet on _PlannerHomeState {
     final span = blockSpan(block, s);
     final localStart = tz.TZDateTime.from(span.start, zone);
     final localEnd = tz.TZDateTime.from(span.end, zone);
-    final planned = '原定 ${dateKey(local(block['start_at']))} '
+    final planned =
+        '原定 ${dateKey(local(block['start_at']))} '
         '${hm(local(block['start_at']))}—${hm(local(block['end_at']))}';
     final differs =
         s != null &&
