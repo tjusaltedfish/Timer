@@ -219,7 +219,7 @@ class _QqSettingsState extends State<QqSettingsPanel> {
                 padding: EdgeInsets.only(top: 12),
                 child: LinearProgressIndicator(minHeight: 2),
               ),
-            if (c.configured && loaded && desktop) ...[
+            if (c.configured && loaded && owner) ...[
               const SizedBox(height: 16),
               TextField(
                 key: const Key('qq.app-id'),

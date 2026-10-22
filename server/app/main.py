@@ -505,27 +505,27 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         return channel.settings.public(device["role"] == "desktop")
 
     @app.post("/api/v1/wechat/config")
-    def wechat_configure(data: WeChatConfigIn, device=Depends(owner_desktop)):
+    def wechat_configure(data: WeChatConfigIn, device=Depends(owner)):
         channel.settings.update(data)
         return channel.settings.public(True)
 
     @app.post("/api/v1/wechat/bind-code")
-    def wechat_bind_code(device=Depends(owner_desktop)):
+    def wechat_bind_code(device=Depends(owner)):
         return channel.new_bind_code()
 
     @app.post("/api/v1/wechat/unbind")
-    def wechat_unbind(device=Depends(owner_desktop)):
+    def wechat_unbind(device=Depends(owner)):
         return channel.unbind()
 
     @app.post("/api/v1/wechat/test")
-    async def wechat_test(device=Depends(owner_desktop)):
+    async def wechat_test(device=Depends(owner)):
         channel.enqueue("这是一条来自瞬时的测试消息。收到就说明电脑后台能给你发微信了。")
         if background:
             asyncio.create_task(channel.run_once())
         return {"queued": True}
 
     @app.get("/api/v1/wechat/outbox")
-    def wechat_outbox(device=Depends(owner_desktop)):
+    def wechat_outbox(device=Depends(owner)):
         return {"messages": channel.outbox()}
 
     # ---- Chat identities: one WeChat/QQ handle per account -----------------
@@ -561,27 +561,27 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         return {**qq.settings.public(device["role"] == "desktop"), **qq.status()}
 
     @app.post("/api/v1/qq/config")
-    def qq_configure(data: QQConfigIn, device=Depends(owner_desktop)):
+    def qq_configure(data: QQConfigIn, device=Depends(owner)):
         qq.settings.update(data)
         return {**qq.settings.public(True), **qq.status()}
 
     @app.post("/api/v1/qq/bind-code")
-    def qq_bind_code(device=Depends(owner_desktop)):
+    def qq_bind_code(device=Depends(owner)):
         return qq.new_bind_code()
 
     @app.post("/api/v1/qq/unbind")
-    def qq_unbind(device=Depends(owner_desktop)):
+    def qq_unbind(device=Depends(owner)):
         return qq.unbind()
 
     @app.post("/api/v1/qq/test")
-    async def qq_test(device=Depends(owner_desktop)):
+    async def qq_test(device=Depends(owner)):
         qq.enqueue("这是一条来自瞬时的测试消息。收到就说明电脑后台能通过 QQ 找到你了。")
         if background:
             asyncio.create_task(qq.run_once())
         return {"queued": True}
 
     @app.get("/api/v1/qq/outbox")
-    def qq_outbox(device=Depends(owner_desktop)):
+    def qq_outbox(device=Depends(owner)):
         return {"messages": qq.outbox()}
 
     @app.post('/api/v1/materials/upload')

@@ -166,4 +166,85 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
+
+  testWidgets('the owner can fill appID and secret from a phone too', (
+    tester,
+  ) async {
+    tzdata.initializeTimeZones();
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final posted = <String, Json>{};
+    var wechat = <String, dynamic>{
+      'configured': false,
+      'app_id': '',
+      'secret_hint': '',
+      'template_id': '',
+      'callback_path': '/wechat/callback',
+      'bound': false,
+      'bound_hint': '',
+      'token': 'TokenForWeChatPage0123456789abcd',
+    };
+    final snapshot = {
+      ...blankState(),
+      'user': {'id': 'u1', 'username': 'me', 'role': 'admin'},
+      'device': {'id': 'phone', 'role': 'phone'},
+    };
+    final c = PlannerController(
+      storage: MemoryStore(),
+      transport: MockClient((request) async {
+        final path = request.url.path;
+        if (request.method == 'POST') {
+          posted[path] = jsonDecode(request.body) as Json;
+        }
+        Json body = switch (path) {
+          '/api/v1/snapshot' => snapshot,
+          '/api/v1/assistant/config' => {'configured': false, 'key_hint': ''},
+          '/api/v1/wechat/outbox' => {'messages': <Json>[]},
+          '/api/v1/channels/bindings' => {'items': <Json>[]},
+          _ => {},
+        };
+        if (path == '/api/v1/wechat/config') {
+          if (request.method == 'POST') {
+            final sent = posted[path]!;
+            wechat = {
+              ...wechat,
+              'configured': true,
+              'app_id': sent['app_id'],
+              'secret_hint': '····cdef',
+            };
+          }
+          body = wechat;
+        }
+        return http.Response(
+          jsonEncode(body),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+    await c.initialize();
+    await c.connect('http://127.0.0.1:8787', 'phone-token');
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('设置').first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('wechat.app-id')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('wechat.app-id')),
+      'wx0123456789abcdef',
+    );
+    await tester.enterText(
+      find.byKey(const Key('wechat.secret')),
+      '0123456789abcdef0123456789abcdef',
+    );
+    await tester.ensureVisible(find.byKey(const Key('wechat.save')));
+    await tester.tap(find.byKey(const Key('wechat.save')));
+    await tester.pumpAndSettle();
+    expect(posted['/api/v1/wechat/config']!['app_id'], 'wx0123456789abcdef');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
 }

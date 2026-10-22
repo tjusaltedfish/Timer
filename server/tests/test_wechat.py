@@ -7,7 +7,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import assistant
+from app import assistant, auth
 from app.main import create_app
 
 NOW = datetime(2026, 10, 19, 16, 0, tzinfo=timezone.utc)  # 09:00 Los Angeles
@@ -120,8 +120,9 @@ def test_secrets_stay_on_the_computer(env, tmp_path):
     phone = {"Authorization": "Bearer " + client.post("/api/v1/pairing/confirm", json={"code": code, "name": "手机"}).json()["token"]}
     seen = client.get("/api/v1/wechat/config", headers=phone).json()
     assert "token" not in seen and seen["configured"] is True
-    assert client.post("/api/v1/wechat/config", json={"template_id": "x"}, headers=phone).status_code == 403
-    assert client.post("/api/v1/wechat/bind-code", headers=phone).status_code == 403
+    # 站长本人在手机上也能改（之前的「只认桌面设备」把手机端锁死了）
+    assert client.post("/api/v1/wechat/config", json={"template_id": "x"}, headers=phone).status_code == 200
+    assert client.post("/api/v1/wechat/bind-code", headers=phone).status_code == 200
     assert client.post("/api/v1/wechat/config", json={"app_id": "not-an-app-id"}).status_code == 422
 
 
@@ -329,3 +330,21 @@ def test_assistant_changes_apply_at_once_and_undo_by_reply(env):
     push(client, token, OWNER, "撤销", msg_id="a3")
     run(client, app)
     assert "没有找到可以撤销" in wechat.custom[-1][1]["text"]["content"]
+
+
+def test_the_owner_can_configure_from_a_phone_too(tmp_path, monkeypatch):
+    """以前的接口只认「桌面设备」，站长在手机上填 AppID 会 403。"""
+    monkeypatch.setattr(assistant, "RETRY_DELAYS", (0, 0, 0))
+    app = create_app(tmp_path, clock=lambda: NOW, wechat_transport=httpx.MockTransport(FakeWeChat()),
+                     background=False)
+    with TestClient(app) as client:
+        with app.state.store.connect() as conn:
+            device, token = auth.issue_device(conn, app.state.store.owner_id, "我的手机", "android", now=NOW)
+        assert device["role"] == "phone"
+        client.headers["Authorization"] = "Bearer " + token
+        response = client.post("/api/v1/wechat/config",
+                               json={"app_id": "wx0123456789abcdef", "app_secret": APP_SECRET})
+        assert response.status_code == 200, response.text
+        assert response.json()["configured"] is True
+        qq = client.post("/api/v1/qq/config", json={"app_id": "123456", "app_secret": "s" * 32})
+        assert qq.status_code == 200, qq.text

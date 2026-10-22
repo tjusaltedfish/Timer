@@ -275,7 +275,7 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
                   ),
                 ),
             ],
-            if (c.configured && loaded && desktop) ...[
+            if (c.configured && loaded && owner) ...[
               const SizedBox(height: 16),
               TextField(
                 key: const Key('wechat.app-id'),

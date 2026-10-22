@@ -83,6 +83,11 @@ nav a:hover { background: var(--wash); color: var(--jiao); }
 .cta { display: inline-flex; align-items: center; gap: 8px; margin-top: 34px; background: var(--jiao); color: var(--paper);
   text-decoration: none; border-radius: 16px; padding: 14px 24px; font-size: 15px; box-shadow: var(--halo); }
 .cta:hover { transform: translateY(-1px); }
+.cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 34px; }
+.cta-row .cta { margin-top: 0; }
+.cta.ghost { background: transparent; color: var(--jiao); border: 1px solid var(--bloom); }
+.cta.ghost:hover { background: var(--wash); }
+.dl-note { margin: 10px 0 0; font-size: 13px; color: var(--dan); }
 
 /* Phone frame */
 .phone { width: min(340px, 100%); margin-inline: auto; aspect-ratio: 9 / 18.5; border-radius: 42px; padding: 12px;
@@ -255,7 +260,7 @@ footer .kai { font-size: 26px; display: block; margin-bottom: 10px; }
   <div class="wrap">
     <a class="brand" href="#top"><span class="seal">瞬</span><b>瞬时</b></a>
     <nav aria-label="页面导航">
-      <a href="#week">一周</a><a href="#focus">专注</a><a href="#assistant">助手</a><a href="#wechat">公众号</a><a href="#more">更多</a>
+      <a href="#week">一周</a><a href="#focus">专注</a><a href="#assistant">助手</a><a href="#wechat">公众号</a><a href="#download">下载</a><a href="#more">更多</a>
     </nav>
   </div>
 </header>
@@ -267,7 +272,11 @@ footer .kai { font-size: 26px; display: block; margin-bottom: 10px; }
       <h1>把一句话，<br>变成一段有结果的时间。</h1>
       <p class="lead">瞬时以「此刻」为中心安排你的一天。说一句「今天十二点前把项目做完」，助手就替你排好；到点了，它在微信里问你一句：做完了吗？</p>
       <div class="chips"><span class="chip">Android</span><span class="chip">Windows</span><span class="chip">微信公众号</span><span class="chip">数据留在自己的电脑</span></div>
-      <a class="cta" href="#week">看看它怎么用 <span aria-hidden="true">↓</span></a>
+      <div class="cta-row">
+        <a class="cta" href="https://timer.studydazi.top/api/v1/app/download">下载 Android 版 <span aria-hidden="true">↓</span></a>
+        <a class="cta ghost" href="#week">看看它怎么用</a>
+      </div>
+      <p class="dl-note">Android 直接下载安装；Windows 版在电脑上构建。数据默认留在你自己的电脑上。</p>
     </div>
     <div class="phone" role="img" aria-label="手机首页示意：大号时钟、七日条和当前待办卡片">
       <div class="screen">
@@ -433,6 +442,20 @@ footer .kai { font-size: 26px; display: block; margin-bottom: 10px; }
         <div class="node core"><h3>电脑后台</h3><p>日程、执行记录、复盘归档<br>模型 Key 只存这里</p></div>
         <div class="link" aria-hidden="true"></div>
         <div><div class="node"><h3>微信公众号</h3><p>主动提醒 · 直接对话</p></div><div class="node"><h3>模型服务</h3><p>DeepSeek 等兼容接口</p></div></div>
+      </div>
+    </div>
+  </section>
+  <section id="download">
+    <div class="wrap">
+      <div class="reveal" style="text-align:center">
+        <p class="kicker">装 在 手 上</p>
+        <h2 class="section-title">下载瞬时，先用起来。</h2>
+        <p class="lead">装好打开就能注册账号；日程默认存在你自己的电脑上，手机与电脑同步查看。</p>
+        <div class="cta-row" style="justify-content:center">
+          <a class="cta" id="download-android" href="https://timer.studydazi.top/api/v1/app/download">下载 Android 版</a>
+          <a class="cta ghost" href="#how">它怎么连到我的电脑</a>
+        </div>
+        <p class="dl-note">当前是测试阶段，Android 版约 22MB；Windows 版需要在自己的电脑上构建后使用。</p>
       </div>
     </div>
   </section>

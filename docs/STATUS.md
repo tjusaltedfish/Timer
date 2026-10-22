@@ -1,5 +1,13 @@
 # 当前状态
 
+## v2 补：站长在手机上也能配置公众号/QQ（2026-10-22，1.2.16+26）
+
+- 之前 `POST /api/v1/wechat/config`、`/qq/config` 等十个管理员接口都挂 `owner_desktop`（只认桌面设备），所以站长在手机上填 AppID/AppSecret 会收到「只对主账号开放」；同时客户端把配置表单包在 `desktop` 条件里，手机端根本不显示输入框。
+- 现在：服务端这十个接口只要求主账号（`owner`），不再要求桌面设备；客户端的微信/QQ 设置页对主账号在手机上同样显示 appID/appsecret/保存/发测试消息/发件箱，普通成员仍只看到自己的绑定卡片。
+- 站长账号需是管理员：`python -m app.admin user promote --username zzxx`（线上已执行，`me` 与 `zzxx` 都是 admin）。
+- 宣传页 `site/index.html`：首屏与新增的「下载」区都放了下载按钮（指向 `https://timer.studydazi.top/api/v1/app/download`），导航加「下载」入口。
+- 测试：后端 `test_secrets_stay_on_the_computer` 改为断言手机也能改；新增「主账号用手机角色设备也能配置」；客户端新增「站长在手机上填 appID/secret 并保存」。后端 **236 passed**，客户端 **126 passed**。
+
 ## v2 补：QQ 也能自己绑定了（2026-10-22，1.2.15+25）
 
 - 之前只有微信有「自己绑定」页面，QQ 页面对普通成员只是一句说明。现在 QQ 页和微信页一样：成员能看到 4 步绑定教程、生成 6 位绑定码、看到已绑定状态、自己解绑；服务端 `channel_identities` 早在 v2 就支持按 openid 绑到任意账号，缺的只是客户端入口。
