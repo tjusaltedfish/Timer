@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -99,13 +101,18 @@ class _LoginPageState extends State<LoginPage> {
       // The gate swaps this page for the planner on the next notification.
     } on ApiFailure catch (error) {
       debugPrint('[auth] api failure: ${error.status} ${error.code}: ${error.message}');
+      if (error.status == 0) {
+        unawaited(widget.controller.reportAuthFailure('api status 0: ${error.message}'));
+      }
       if (!mounted) return;
       setState(() {
         _busy = false;
         _error = _describe(error);
       });
-    } catch (error) {
+    } catch (error, stack) {
       debugPrint('[auth] submit failed: ${error.runtimeType}: $error');
+      final detail = '${error.runtimeType}: $error\n$stack';
+      unawaited(widget.controller.reportAuthFailure(detail));
       if (!mounted) return;
       setState(() {
         _busy = false;

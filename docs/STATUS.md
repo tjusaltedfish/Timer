@@ -1,5 +1,14 @@
 # 当前状态
 
+## v2 P4 修：登录成功却被判「连不上」——release 包插件类错位（2026-10-22）
+
+- 收（USER m03722「已经注册好的登录不进去、没注册好的也无法连接」+ m03786「我已经跑好注册和登录了，就是你先帮我修复这个bug吧」）：真机复现到服务端已经建号/登录成功（`users.last_login_at` 有值、`devices` 有记录），客户端却显示「连不上服务器」。
+- 取证：新增 `POST /api/v1/client-log`（客户端把真实异常回传到电脑端数据目录 `client_errors.log`，release 包不落 logcat 也能看），第一次真机复现就抓到根因：`java.lang.NoSuchMethodError: no non-static method "Lio/flutter/plugins/sharedpreferences/SharedPreferencesApiRegistrar;.getAll(...)"`——release 包里 Dart 侧 Pigeon 代码与 Gradle 增量编译残留的 `shared_preferences_android` Java 类版本不一致（debug 包不受影响）。
+- 修一（根因）：全量 `flutter clean` + `flutter pub get` 后重新出 release 包（插件类与 Dart 侧对齐），`tools/build-android.ps1 -Mode release`；新包重新发布为 1.2.6+16（sha256 `d0a8bc16…`，23,004,007 字节）。
+- 修二（兜底）：`apps/planner/lib/storage.dart` 的 `DeviceStore` 不再让任何存储后端决定登录成败——安全存储失败退回 `SharedPreferences` 明文 token，明文也失败就只记内存（本次会话可用、重启后重新登录），`read`/`write` 同样吞掉异常；`controller.dart` 登录成功后 `_save()` 也包 try/catch，并新增 `reportAuthFailure` 把真实异常上报。
+- 验证（真实跑过）：干净安装 1.2.6 后用测试账号在手机上登录 → 进入「先说说你想怎么用它」引导页（账号显示名正确、`client_errors.log` 无新报错）；再 `force-stop` 重启仍在登录态（会话持久化正常）。后端新增 `server/tests/test_client_log.py` 2 例，全量 `pytest` **211 passed**；客户端 `dart analyze` 无问题、`flutter test` **106 passed**。
+- 未做：ColorOS 上安全存储偶发失败的具体原因没有单独定位（已由明文/内存兜底绕过）；`client_errors.log` 没有读取界面；release 包仍用 debug 签名。
+
 ## v2 P4 修：手机登录默认走公网地址、失败自动重试（2026-10-22）
 
 - 收（USER m03620「把服务器的默认地址改掉」+ 之前「依旧登录不上」）：登录页原来默认写死 `http://127.0.0.1:8765`（本机电脑），手机上点登录直接连不上；而且这个默认值会被旧缓存的 `server_url` 覆盖，手机端一直显示本机地址。

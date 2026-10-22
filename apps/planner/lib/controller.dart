@@ -14,6 +14,9 @@ part 'auth/session.dart';
 
 typedef Json = Map<String, dynamic>;
 
+/// Shown in diagnostics and the client error report.
+const String clientVersion = '1.2.6+16';
+
 class ApiFailure implements Exception {
   ApiFailure(this.message, this.status, {this.code});
   final String message;
@@ -206,10 +209,37 @@ class PlannerController extends ChangeNotifier {
     connected = false;
     connectionError = null;
     conflict = null;
-    await _save();
+    try {
+      await _save();
+    } catch (error) {
+      // 本地缓存写失败不该让「服务器已经登录成功」这一步作废。
+      debugPrint('[auth] save after login failed: ${error.runtimeType}: $error');
+    }
     _notify();
     await sync();
     return auth.user;
+  }
+
+  /// Best effort: report an unexpected client-side auth failure so the desktop
+  /// log has the real reason (the release package cannot write logcat).
+  Future<void> reportAuthFailure(String message) async {
+    if (serverUrl.isEmpty) return;
+    try {
+      await transport
+          .post(
+            Uri.parse('$serverUrl/api/v1/client-log'),
+            headers: const {'content-type': 'application/json'},
+            body: jsonEncode({
+              'source': 'client-auth',
+              'version': clientVersion,
+              'platform': 'mobile',
+              'message': message,
+            }),
+          )
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // Reporting must never make a failed login worse.
+    }
   }
 
   /// Revokes the device token (best effort) and returns to the login page.

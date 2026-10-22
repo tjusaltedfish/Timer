@@ -154,6 +154,30 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         latest = releases.read_latest(store.directory)
         return {"status": "ok", "version": version, "app_latest": latest["version"] if latest else None}
 
+    # Release packages cannot write logcat, so the phone reports unexpected
+    # client-side failures here; the desktop log is what we actually read.
+    @app.post("/api/v1/client-log")
+    async def client_log(data: dict, request: Request):
+        entry = {
+            "at": utcnow().isoformat(),
+            "ip": client_address(request),
+            "ua": request.headers.get("user-agent", "")[:200],
+        }
+        for key in ("source", "version", "platform", "message"):
+            value = data.get(key)
+            if isinstance(value, str):
+                entry[key] = value[:4000]
+        path = store.directory / "client_errors.log"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists() and path.stat().st_size > 4 * 1024 * 1024:
+                path.replace(store.directory / "client_errors.old.log")
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            logging.getLogger("planner").warning("client log write failed", exc_info=True)
+        return {"ok": True}
+
     # ---- Accounts (v2) ---------------------------------------------------
     @app.post("/api/v1/auth/login")
     def auth_login(data: auth.LoginIn, request: Request):
