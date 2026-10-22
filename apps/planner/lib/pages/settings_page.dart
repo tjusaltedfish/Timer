@@ -85,6 +85,11 @@ extension _SettingsPage on _PlannerHomeState {
                     ),
                   ),
                   Text(widget.reminders!.status),
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.reminders!.diagnostics,
+                    style: const TextStyle(fontSize: 11),
+                  ),
                   const SizedBox(height: 14),
                   Wrap(
                     spacing: 8,

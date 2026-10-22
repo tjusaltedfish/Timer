@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest.dart' as data;
 import 'package:time_planner/app.dart';
@@ -279,11 +281,62 @@ void main() {
     c.dispose();
   });
 
+  testWidgets('通知权限查询卡住时，开关不能一直没反应，状态里要给出原因', (tester) async {
+    final c = PlannerController(storage: MemoryStore());
+    await c.initialize();
+    final driver = FakeDriver()..hangPermission = true;
+    final service = ReminderService(
+      controller: c,
+      driver: driver,
+      clock: () => now,
+    );
+    await service.initialize();
+    await tester.pumpWidget(PlannerApp(controller: c, reminders: service));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pumpAndSettle();
+    final toggle = find.byType(SwitchListTile).first;
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 9));
+    await tester.pumpAndSettle();
+    expect(service.status, contains('没有响应'));
+    expect(service.enabled, isFalse);
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile).first).value, isFalse);
+    service.dispose();
+    c.dispose();
+  });
 
+  testWidgets('开启提醒抛异常时，状态里要显示失败原因', (tester) async {
+    final c = PlannerController(storage: MemoryStore());
+    await c.initialize();
+    final driver = FakeDriver()..permissionError = StateError('notification channel broken');
+    final service = ReminderService(
+      controller: c,
+      driver: driver,
+      clock: () => now,
+    );
+    await service.initialize();
+    await tester.pumpWidget(PlannerApp(controller: c, reminders: service));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pumpAndSettle();
+    final toggle = find.byType(SwitchListTile).first;
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(service.status, contains('开启提醒失败'));
+    expect(service.status, contains('notification channel broken'));
+    service.dispose();
+    c.dispose();
+  });
 }
 
 class FakeDriver implements ReminderDriver {
   bool allowPermission = true;
+  bool hangPermission = false;
+  Object? permissionError;
   final pending = <int, ReminderItem>{};
   final active = <int>{};
   final cancelled = <int>[];
@@ -298,7 +351,11 @@ class FakeDriver implements ReminderDriver {
   @override
   Future<bool> allowed() async => true;
   @override
-  Future<bool> requestPermission() async => allowPermission;
+  Future<bool> requestPermission() async {
+    if (hangPermission) return Completer<bool>().future;
+    if (permissionError != null) throw permissionError!;
+    return allowPermission;
+  }
   @override
   Future<void> requestExactPermission() async {}
   @override

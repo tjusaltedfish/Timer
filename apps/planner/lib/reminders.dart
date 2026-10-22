@@ -354,22 +354,42 @@ class ReminderService extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  static const _driverTimeout = Duration(seconds: 8);
+
+  /// 系统提醒接口在个别手机上会不返回（尤其 ColorOS 的通知权限查询）。
+  /// 这里一律加超时并把失败原因写到 status，避免用户点了按钮却什么也看不到。
   Future<void> enable() async {
-    if (!initialized) await initialize();
-    if (!initialized) return;
-    if (!driver.supported) {
-      status = '此预览环境不提供离线系统提醒，请使用原生客户端。';
+    try {
+      if (!initialized) await initialize().timeout(_driverTimeout);
+      if (!initialized) {
+        status = '系统提醒没能初始化（可能是系统限制）。退出 App 重进，或到手机设置里允许「瞬时」通知后再试。';
+        _notify();
+        return;
+      }
+      if (!driver.supported) {
+        status = '此预览环境不提供离线系统提醒，请使用原生客户端。';
+        _notify();
+        return;
+      }
+      enabled = await driver.requestPermission().timeout(_driverTimeout);
+      await controller.storage.write('reminders_enabled', enabled.toString());
+      await refresh(force: true);
+      if (!enabled) {
+        status = '系统没允许通知。到手机设置里给「瞬时」打开通知权限，再回来打开这个开关。';
+        _notify();
+      }
+    } on TimeoutException {
+      status = '开启提醒的请求 8 秒没有响应（系统提醒接口卡住）。退出 App 重进再试一次。';
       _notify();
-      return;
-    }
-    enabled = await driver.requestPermission();
-    await controller.storage.write('reminders_enabled', enabled.toString());
-    await refresh(force: true);
-    if (!enabled) {
-      status = '系统没允许通知。到手机设置里给「瞬时」打开通知权限，再回来打开这个开关。';
+    } catch (error) {
+      status = '开启提醒失败：$error';
       _notify();
     }
   }
+
+  String get diagnostics =>
+      '初始化${initialized ? '完成' : '未完成'} · 系统调度${driver.schedulesInSystem ? '是' : '否'}'
+      ' · 准时${driver.precise ? '是' : '否'} · 开关${enabled ? '开' : '关'}';
 
   Future<void> disable() async {
     enabled = false;
@@ -411,9 +431,15 @@ class ReminderService extends ChangeNotifier {
   Future<void> refresh({bool force = false}) {
     _dirty = true;
     _force = _force || force;
-    return _refreshing ??= _refreshLoop().whenComplete(() {
-      _refreshing = null;
-    });
+    return _refreshing ??= _refreshLoop()
+        .timeout(const Duration(seconds: 20))
+        .catchError((Object error) {
+          status = '刷新提醒失败：$error';
+          _notify();
+        })
+        .whenComplete(() {
+          _refreshing = null;
+        });
   }
 
   Future<void> _refreshLoop() async {
