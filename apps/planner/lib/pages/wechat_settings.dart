@@ -205,10 +205,21 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
                 style: theme.textTheme.titleSmall,
               ),
               const SizedBox(height: 6),
+              Center(
+                child: Image.asset(
+                  'assets/wechat-qr.png',
+                  key: const Key('wechat.qr'),
+                  width: 140,
+                  height: 140,
+                  filterQuality: FilterQuality.none,
+                  semanticLabel: '公众号测试号二维码',
+                ),
+              ),
+              const SizedBox(height: 10),
               for (final (i, step) in const [
-                '微信里搜索并关注测试号（管理员给的二维码，或测试号页面上的二维码）',
+                '用微信扫上面的二维码，关注测试公众号（测试号最多关注 100 人）',
                 '点下面「生成绑定码」，记下 6 位码',
-                '在测试号的对话里把这 6 位码发出去',
+                '在公众号的对话里把这 6 位码发出去',
                 '收到「绑定好了」就完成了；之后在对话里发消息，就是跟你的助手说话',
               ].indexed)
                 Padding(

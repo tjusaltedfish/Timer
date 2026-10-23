@@ -44,6 +44,7 @@ class CoachStep {
     required this.body,
     this.target,
     this.page,
+    this.image,
   });
 
   final String id;
@@ -56,6 +57,10 @@ class CoachStep {
 
   /// Planner page the tour switches to before the step is measured.
   final int? page;
+
+  /// Optional asset shown in the card (the WeChat test-account QR, for people
+  /// who want reminders inside WeChat without hunting for the QR page).
+  final String? image;
 }
 
 /// Ten steps, in order: today / add / start-pause-finish / waiting feedback /
@@ -112,10 +117,11 @@ const List<CoachStep> coachSteps = [
   ),
   CoachStep(
     id: StepId.account,
-    title: '账号与设置',
-    body: '「我的」里有账号、提醒和每天的起止时间；手机也能配置助手和绑定公众号。',
+    title: '账号、设置与公众号',
+    body: '「我的」里有账号、提醒和每天的起止时间。想在微信里收提醒，用微信扫这个码关注测试号，再到设置 →「微信助手」生成绑定码发过去。',
     target: CoachKeys.settingsEntry,
     page: 0,
+    image: 'assets/wechat-qr.png',
   ),
   CoachStep(
     id: StepId.server,

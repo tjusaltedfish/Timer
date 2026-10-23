@@ -114,18 +114,22 @@ class _CoachOverlayState extends State<CoachOverlay>
     final size = MediaQuery.sizeOf(context);
     final width = math.min(size.width - _edge * 2, _cardWidth);
     final hole = _hole;
+    // The QR step is taller than the plain text card; account for it so the
+    // card still lands above/below the highlighted rectangle instead of
+    // running off the bottom edge.
+    final cardHeight = _cardHeightGuess + (step.image == null ? 0 : 168);
 
     double left = (size.width - width) / 2;
-    double top = math.max(_edge * 2, size.height * .5 - _cardHeightGuess / 2);
+    double top = math.max(_edge * 2, size.height * .5 - cardHeight / 2);
     if (hole != null) {
       left = (hole.center.dx - width / 2).clamp(
         _edge,
         math.max(_edge, size.width - width - _edge),
       );
       final below = hole.bottom + 18;
-      top = below + _cardHeightGuess <= size.height
+      top = below + cardHeight <= size.height
           ? below
-          : math.max(_edge, hole.top - 18 - _cardHeightGuess);
+          : math.max(_edge, hole.top - 18 - cardHeight);
     }
 
     return Semantics(
@@ -177,6 +181,19 @@ class _CoachOverlayState extends State<CoachOverlay>
                     style: Theme.of(context).textTheme.bodyMedium
                         ?.copyWith(color: palette.inkZhong, height: 1.5),
                   ),
+                  if (step.image != null) ...[
+                    const SizedBox(height: 10),
+                    Center(
+                      child: Image.asset(
+                        step.image!,
+                        key: const Key('onboarding.qr'),
+                        width: 140,
+                        height: 140,
+                        filterQuality: FilterQuality.none,
+                        semanticLabel: '公众号测试号二维码',
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   Row(
                     children: [
