@@ -98,7 +98,9 @@ class _LoginPageState extends State<LoginPage> {
         await widget.controller.login(url, username, password);
       }
       TextInput.finishAutofillContext();
-      // The gate swaps this page for the planner on the next notification.
+      // 登录门模式下这一步之后整页会被换成主界面；从设置里点「登录账号」
+      // 打开的登录页是路由，得自己关掉，否则会停在转圈上。
+      if (mounted && Navigator.of(context).canPop()) Navigator.pop(context);
     } on ApiFailure catch (error) {
       debugPrint('[auth] api failure: ${error.status} ${error.code}: ${error.message}');
       if (error.status == 0) {
