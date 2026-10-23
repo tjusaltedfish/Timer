@@ -94,7 +94,7 @@ extension _UpdateBanner on _PlannerHomeState {
                   ),
               const SizedBox(height: 10),
               Text(
-                '更新包来自已配对的电脑，下载后先校验 SHA-256 再交给系统安装。只能覆盖安装同一调试签名打出的包。',
+                '更新包从你的电脑下载，安装前会先校验完整性。',
                 style: theme.textTheme.bodySmall,
               ),
             ],

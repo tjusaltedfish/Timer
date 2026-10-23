@@ -150,3 +150,16 @@ def test_profile_timezone_change_reaches_the_document(app, client):
     after = client.get("/api/v1/snapshot", headers=bearer(token)).json()
     assert after["settings"]["timezone"] == "Asia/Tokyo"
     assert after["revision"] == before["revision"] + 1
+
+def test_a_promoted_admin_can_manage_the_shared_server_settings(client, app):
+    make_user(app, username="zzxx")
+    with app.state.store.connect() as conn:
+        conn.execute("UPDATE users SET role='admin' WHERE username='zzxx'")
+    token = login(client, "zzxx")
+    config = client.get("/api/v1/wechat/config", headers=bearer(token))
+    assert config.status_code == 200, config.text
+    assert client.get("/api/v1/qq/config", headers=bearer(token)).status_code == 200
+    # 普通成员仍然拿不到站长的通道配置。
+    make_user(app, username="zhang")
+    member = login(client, "zhang")
+    assert client.get("/api/v1/wechat/config", headers=bearer(member)).status_code == 403

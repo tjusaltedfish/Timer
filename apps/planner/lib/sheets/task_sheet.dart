@@ -194,13 +194,22 @@ extension _TaskSheet on _PlannerHomeState {
                           throw ApiFailure('这个时刻已经过去了，换一个还没到来的时间吧。', 422);
                         }
                         final end = begin.add(Duration(minutes: length));
-                        if (c.blocks.any(
-                          (b) =>
-                              b['status'] == 'scheduled' &&
-                              begin.isBefore(DateTime.parse(b['end_at'])) &&
-                              end.isAfter(DateTime.parse(b['start_at'])),
-                        )) {
-                          throw ApiFailure('这段时间已经有安排了，换一个时间吧。', 409);
+                        final clashes = c.blocks
+                            .where(
+                              (b) =>
+                                  b['status'] == 'scheduled' &&
+                                  begin.isBefore(DateTime.parse(b['end_at'])) &&
+                                  end.isAfter(DateTime.parse(b['start_at'])),
+                            )
+                            .toList();
+                        if (clashes.isNotEmpty) {
+                          throw ApiFailure(
+                            '这段时间和「${clashes.first['title']}」撞了，'
+                            '${hm(DateTime.parse(clashes.first['start_at']).toLocal())}–'
+                            '${hm(DateTime.parse(clashes.first['end_at']).toLocal())}，'
+                            '换一个时间，或者先把那一段挪开。',
+                            409,
+                          );
                         }
                         final taskId = protected
                             ? null
@@ -232,11 +241,18 @@ extension _TaskSheet on _PlannerHomeState {
                         if (mounted) selectDate(day);
                         if (dialogContext.mounted) Navigator.pop(dialogContext);
                       } catch (value) {
+                        final text = value is ApiFailure
+                            ? value.message
+                            : value.toString();
                         if (context.mounted) {
                           setDialog(() {
-                            error = value.toString();
+                            error = text;
                             saving = false;
                           });
+                          // 弹层正文很高时错误文字可能滚出视野，再弹一条提示保证看得见。
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(text)),
+                          );
                         }
                       }
                     },

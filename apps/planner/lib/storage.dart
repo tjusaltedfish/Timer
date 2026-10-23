@@ -36,36 +36,53 @@ class MemoryStore implements LocalStore {
 class DeviceStore implements LocalStore {
   static const _tokenKey = 'planner_token';
   static const _fallbackKey = 'planner_token_plain';
+  static const _stateKey = 'planner_local_state';
   final _secure = const FlutterSecureStorage();
   String? _webToken;
   String? _memoryToken;
+  Map<String, String>? _values;
 
-  Future<SharedPreferences?> _prefs() async {
+  /// 本机键值状态优先存进系统加密存储，不再依赖 shared_preferences：
+  /// 部分 Android release 包上插件类版本错位，任何 prefs 调用都会抛
+  /// `NoSuchMethodError`，表现为提醒开关、离线改动都存不下来。
+  Future<Map<String, String>> _local() async {
+    final cached = _values;
+    if (cached != null) return cached;
+    final loaded = <String, String>{};
     try {
-      return await SharedPreferences.getInstance();
+      final raw = await _secure.read(key: _stateKey);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          decoded.forEach((key, value) {
+            if (key is String && value is String) loaded[key] = value;
+          });
+        }
+      }
     } catch (error) {
-      debugPrint('[store] shared preferences unavailable: ${error.runtimeType}');
-      return null;
+      debugPrint('[store] local state read failed: ${error.runtimeType}: $error');
+    }
+    _values = loaded;
+    return loaded;
+  }
+
+  Future<void> _persist(Map<String, String> values) async {
+    _values = values;
+    try {
+      await _secure.write(key: _stateKey, value: jsonEncode(values));
+    } catch (error) {
+      debugPrint('[store] local state write failed: ${error.runtimeType}: $error');
     }
   }
 
   @override
-  Future<String?> read(String key) async {
-    try {
-      return (await _prefs())?.getString(key);
-    } catch (error) {
-      debugPrint('[store] read $key failed: ${error.runtimeType}');
-      return null;
-    }
-  }
+  Future<String?> read(String key) async => (await _local())[key];
 
   @override
   Future<void> write(String key, String value) async {
-    try {
-      await (await _prefs())?.setString(key, value);
-    } catch (error) {
-      debugPrint('[store] write $key failed: ${error.runtimeType}');
-    }
+    final values = Map<String, String>.from(await _local());
+    values[key] = value;
+    await _persist(values);
   }
 
   // Browser testing keeps the credential in memory. Native devices use OS secure storage.
@@ -84,14 +101,9 @@ class DeviceStore implements LocalStore {
       // 至少不让「登录成功却进不去」这种事再发生。
       debugPrint('[store] secure read failed: ${error.runtimeType}: $error');
     }
-    try {
-      final value = (await _prefs())?.getString(_fallbackKey);
-      if (value != null && value.isNotEmpty) _memoryToken = value;
-      return value;
-    } catch (error) {
-      debugPrint('[store] plain read failed: ${error.runtimeType}: $error');
-      return null;
-    }
+    final value = (await _local())[_fallbackKey];
+    if (value != null && value.isNotEmpty) _memoryToken = value;
+    return value;
   }
 
   @override
@@ -101,24 +113,18 @@ class DeviceStore implements LocalStore {
       _webToken = token;
       return;
     }
-    final prefs = await _prefs();
     try {
       await _secure.write(key: _tokenKey, value: token);
       // 系统加密存储写成功后清掉明文备份。
-      try {
-        if (prefs != null && prefs.containsKey(_fallbackKey)) {
-          await prefs.remove(_fallbackKey);
-        }
-      } catch (_) {}
+      final values = Map<String, String>.from(await _local());
+      if (values.remove(_fallbackKey) != null) await _persist(values);
       return;
     } catch (error) {
       debugPrint('[store] secure write failed: ${error.runtimeType}: $error');
     }
-    try {
-      await prefs?.setString(_fallbackKey, token);
-    } catch (error) {
-      // 内存里已经有 token，本次会话照常可用；只是重启后要重新登录。
-      debugPrint('[store] plain write failed: ${error.runtimeType}: $error');
-    }
+    // 内存里已经有 token，本次会话照常可用；只是重启后要重新登录。
+    final values = Map<String, String>.from(await _local());
+    values[_fallbackKey] = token;
+    await _persist(values);
   }
 }

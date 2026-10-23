@@ -130,6 +130,15 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
     });
   });
 
+  /// 用当前服务器地址拼出真实回调 URL，避免让站长自己猜域名。
+  String _callbackUrl() {
+    final raw = config?['callback_path'] as String? ?? '';
+    final path = raw.isEmpty ? '/wechat/callback' : raw;
+    final base = Uri.tryParse(c.serverUrl);
+    if (base == null || base.host.isEmpty) return path;
+    return base.replace(path: path).toString();
+  }
+
   Future<void> _copy(String text, String what) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (mounted) setState(() => note = '已复制$what。');
@@ -165,7 +174,7 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
             Row(
               children: [
                 Expanded(
-                  child: Text('微信助手（旧通道）', style: theme.textTheme.titleMedium),
+                  child: Text('微信助手', style: theme.textTheme.titleMedium),
                 ),
                 if (bound) const Seal('联', label: '已绑定微信'),
               ],
@@ -352,8 +361,7 @@ class _WechatSettingsState extends State<WechatSettingsPanel> {
               const SizedBox(height: 8),
               _CopyRow(
                 label: 'URL',
-                value:
-                    'https://你的域名${config?['callback_path'] ?? '/wechat/callback'}',
+                value: _callbackUrl(),
                 onCopy: () => _copy(
                   config?['callback_path'] ?? '/wechat/callback',
                   '回调路径',

@@ -20,12 +20,22 @@ def is_owner(store, device: dict) -> bool:
     return user_id(store, device) == store.owner_id
 
 
+def role_of(store, device: dict) -> str:
+    """Role carried by the token; legacy tokens fall back to owner/member."""
+    return device.get("user_role") or ("admin" if is_owner(store, device) else "member")
+
+
 def require_owner(store, device: dict) -> None:
-    if not is_owner(store, device):
+    """Any admin account may manage the shared server settings.
+
+    Before multi-user this compared against the single owner device; after
+    promotion of a second admin the phone kept getting 403 and every settings
+    panel showed "只对主账号开放".
+    """
+    if role_of(store, device) != "admin":
         raise DomainError("这个接口暂时只对主账号开放", "OWNER_ONLY", 403)
 
 
 def require_admin(store, device: dict) -> None:
-    user = device.get("user_role") or ("admin" if is_owner(store, device) else "member")
-    if user != "admin":
+    if role_of(store, device) != "admin":
         raise DomainError("需要管理员账号", "ADMIN_ONLY", 403)

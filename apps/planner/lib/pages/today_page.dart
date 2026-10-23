@@ -115,6 +115,19 @@ extension _TodayPage on _PlannerHomeState {
                 label: const Text('开启手机开始与结束提醒'),
               ),
             ),
+          if (widget.reminders case final r?
+              when r.driver.schedulesInSystem && !r.enabled && r.status != '提醒尚未启用')
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                r.status,
+                key: const Key('reminders.status'),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ),
           if (c.activeSession == null && dateKey(now) != dateKey(selectedDay))
             Padding(
               padding: const EdgeInsets.only(top: 8),

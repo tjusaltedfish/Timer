@@ -291,7 +291,7 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
               Text(
                 config?['key_source'] == 'env'
                     ? 'Key 来自环境变量 PLANNER_LLM_API_KEY。'
-                    : 'Key 只保存在这台电脑的数据目录里，不会同步到手机，也不会显示出来。',
+                    : 'Key 只保存在服务器上，不会同步到其它设备，也不会显示出来。',
                 style: theme.textTheme.bodySmall,
               ),
             ],

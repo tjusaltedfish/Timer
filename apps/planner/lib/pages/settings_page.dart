@@ -12,6 +12,8 @@ extension _SettingsPage on _PlannerHomeState {
           const SizedBox(height: 18),
           onboardingPanel(),
           const SizedBox(height: 18),
+          // 配对是旧版（本地记录）才需要的事；登录账号后由服务器同步，不再显示。
+          if (!c.authenticated) ...[
           heading('让手机和电脑接上。', '先保留本地记录，连接恢复后再同步。'),
           panel(
             Column(
@@ -48,6 +50,7 @@ extension _SettingsPage on _PlannerHomeState {
               ],
             ),
           ),
+          ],
           const SizedBox(height: 18),
           categoriesPanel(),
           const SizedBox(height: 18),
@@ -85,11 +88,14 @@ extension _SettingsPage on _PlannerHomeState {
                     ),
                   ),
                   Text(widget.reminders!.status),
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.reminders!.diagnostics,
-                    style: const TextStyle(fontSize: 11),
-                  ),
+                  if (widget.reminders!.status.contains('失败') ||
+                      widget.reminders!.status.contains('没有响应')) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.reminders!.diagnostics,
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   Wrap(
                     spacing: 8,

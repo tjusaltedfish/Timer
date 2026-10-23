@@ -308,8 +308,11 @@ class ReminderService extends ChangeNotifier {
   Map<String, String> _registry = {}, _shown = {};
 
   Future<void> initialize() => _initialization ??= _initialize()
-      .catchError((Object _) {
-        status = '系统提醒尚未初始化成功，请在设置中重试。';
+      .catchError((Object error, StackTrace stack) {
+        // 把真实原因留下来：ColorOS 等机型上系统提醒接口可能整段不可用。
+        final brief = '$error'.split('\n').first;
+        status = '系统提醒初始化失败：$brief';
+        debugPrint('[rem] initialize failed: $error\n$stack');
         _notify();
       })
       .whenComplete(() {
@@ -360,7 +363,9 @@ class ReminderService extends ChangeNotifier {
   /// 这里一律加超时并把失败原因写到 status，避免用户点了按钮却什么也看不到。
   Future<void> enable() async {
     try {
+      debugPrint('[rem] enable tapped (init=$initialized, enabled=$enabled)');
       if (!initialized) await initialize().timeout(_driverTimeout);
+      debugPrint('[rem] after init: initialized=$initialized supported=${driver.supported}');
       if (!initialized) {
         status = '系统提醒没能初始化（可能是系统限制）。退出 App 重进，或到手机设置里允许「瞬时」通知后再试。';
         _notify();
@@ -372,6 +377,7 @@ class ReminderService extends ChangeNotifier {
         return;
       }
       enabled = await driver.requestPermission().timeout(_driverTimeout);
+      debugPrint('[rem] requestPermission -> $enabled');
       await controller.storage.write('reminders_enabled', enabled.toString());
       await refresh(force: true);
       if (!enabled) {
