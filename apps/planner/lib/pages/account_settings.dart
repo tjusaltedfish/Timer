@@ -40,6 +40,11 @@ extension _AccountSettings on _PlannerHomeState {
                   child: const Text('退出登录'),
                 ),
                 OutlinedButton(
+                  key: const Key('account.switch'),
+                  onPressed: switchAccount,
+                  child: const Text('切换账号'),
+                ),
+                OutlinedButton(
                   key: const Key('account.server'),
                   onPressed: serverAddressDialog,
                   child: const Text('修改服务器地址'),
@@ -67,10 +72,70 @@ extension _AccountSettings on _PlannerHomeState {
                   : '当前通过桌面临时令牌连接。登录账号后，日程会随账号在多台设备之间同步。',
               style: const TextStyle(fontSize: 12),
             ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                FilledButton(
+                  key: const Key('account.login'),
+                  onPressed: openLoginPage,
+                  child: const Text('登录账号'),
+                ),
+                OutlinedButton(
+                  key: const Key('account.server'),
+                  onPressed: serverAddressDialog,
+                  child: const Text('修改服务器地址'),
+                ),
+              ],
+            ),
           ],
         ],
       ),
     );
+  }
+
+  Future<void> openLoginPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => LoginPage(controller: c)),
+    );
+    final name =
+        (c.user?['display_name'] as String?)?.trim().isNotEmpty == true
+        ? c.user!['display_name'] as String
+        : (c.user?['username'] as String? ?? '');
+    if (name.isNotEmpty) message('已登录 $name。');
+  }
+
+  /// 切换账号：先退出当前账号；登录门模式下退出后会自动回到登录页。
+  Future<void> switchAccount() async {
+    final pending = c.pending.length;
+    final confirmed = await showOwnedDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('切换账号'),
+        content: Text(
+          pending == 0
+              ? '切换账号会先退出当前账号，需要重新输入用户名和密码。'
+              : '还有 $pending 条本地记录没同步。切换账号会清除这些本机记录，建议先「立即同步」。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('account.switch-confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('退出并切换'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await attempt(() async {
+      await c.logout();
+      if (!c.requiresLogin && mounted) await openLoginPage();
+    });
   }
 
   Future<void> logoutDialog() async {

@@ -16,6 +16,7 @@ import 'updates.dart';
 import 'onboarding/coach_overlay.dart';
 import 'onboarding/onboarding_controller.dart';
 import 'onboarding/onboarding_steps.dart';
+import 'pages/login_page.dart';
 
 import 'formatting.dart';
 import 'theme/tokens.dart';
