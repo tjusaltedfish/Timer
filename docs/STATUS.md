@@ -1,5 +1,12 @@
 # 当前状态
 
+## v2 修：微信输入法在这台手机上不出键盘（2026-10-23，1.2.22+32）
+
+- 现象：手机默认输入法是微信输入法时，点任何输入框只出现屏幕顶部的候选条，键盘主体不弹出；换搜狗输入法完全正常，微信输入法在其他 App 里也正常。
+- 原因：App 启动时把系统 UI 设成 edge-to-edge（全屏绘制，Flutter 在 Android 15+ 的默认行为）。这台 ColorOS 手机上，微信输入法在 edge-to-edge 窗口里算不出键盘位置，只画候选条不画键盘。
+- 修法：`apps/planner/lib/main.dart` 改为 `SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values)`，退出 edge-to-edge；界面本身都用 SafeArea 排版，视觉不变。
+- 验证：真机上微信输入法键盘已能正常弹出并输入；`dart analyze` 干净、客户端 129 passed。
+
 ## v2 修：电脑也能登录/切换账号（2026-10-23，1.2.21+31）
 
 - 账号面板补齐操作：登录过的设备有「退出登录」和「切换账号」；兼容模式（只有桌面临时令牌、还没登录账号）的设备新增「登录账号」入口，点开就是登录页，登录后本机改成账号模式。

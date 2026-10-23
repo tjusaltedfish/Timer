@@ -29,8 +29,15 @@ Future<void> main(List<String> args) async {
   };
   _boot('start');
   timezone_data.initializeTimeZones();
-  // Draw behind transparent system bars so the paper reaches the screen edge.
-  unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+  // Opt out of edge-to-edge. Some third-party IMEs (微信输入法 3.5.4 on
+  // ColorOS/Android 17) show only their candidate bar and never the keyboard
+  // in an edge-to-edge Flutter window; other keyboards are unaffected.
+  unawaited(
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    ),
+  );
   try {
     await DesktopWindow.instance.init(args);
     _boot('desktop window ready');
