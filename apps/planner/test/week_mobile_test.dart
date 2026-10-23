@@ -324,5 +324,26 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
-}
 
+  testWidgets('窄屏进详细课表也能一眼找到「返回整周」', (tester) async {
+    final c = await seed();
+    phone(tester, width: 360);
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('一周'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('week.detail.open')));
+    await tester.pumpAndSettle();
+
+    // 返回按钮在窄屏上必须可见、可点，不能因为缩放按钮挤掉。
+    expect(find.byKey(const Key('week.detail.close')), findsOneWidget);
+    expect(find.text('‹ 返回整周'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('week.detail.close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('week.overview')), findsOneWidget);
+
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
+}

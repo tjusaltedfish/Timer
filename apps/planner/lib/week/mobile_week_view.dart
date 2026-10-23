@@ -56,6 +56,7 @@ class MobileWeekView extends StatefulWidget {
   final VoidCallback? onPlan;
 
   static const double minZoom = .75, maxZoom = 2;
+  static const String backLabel = '‹ 返回整周';
 
   @override
   State<MobileWeekView> createState() => _MobileWeekViewState();
@@ -98,9 +99,24 @@ class _MobileWeekViewState extends State<MobileWeekView> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.detail) return _detail(context);
-    if (_dayOpen) return _dayView(context);
-    return _overview(context);
+    final inside = widget.detail || _dayOpen;
+    return PopScope(
+      canPop: !inside,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        // 手机返回键先退一层：详细课表/单天概览 → 整周总览。
+        if (widget.detail) {
+          widget.onDetailChanged(false);
+        } else if (_dayOpen) {
+          setState(() => _dayOpen = false);
+        }
+      },
+      child: widget.detail
+          ? _detail(context)
+          : _dayOpen
+          ? _dayView(context)
+          : _overview(context),
+    );
   }
 
   Widget _overview(BuildContext context) {
@@ -200,7 +216,7 @@ class _MobileWeekViewState extends State<MobileWeekView> {
               TextButton(
                 key: const Key('week.detail.close'),
                 onPressed: () => widget.onDetailChanged(false),
-                child: const Text('‹ 返回'),
+                child: const Text(MobileWeekView.backLabel),
               ),
               Expanded(
                 child: Text(
@@ -217,27 +233,37 @@ class _MobileWeekViewState extends State<MobileWeekView> {
                   onPressed: () => widget.onSelectDay(widget.now),
                   child: const Text('今天'),
                 ),
-              IconButton(
-                key: const Key('week.zoom.out'),
-                tooltip: '缩小',
-                visualDensity: VisualDensity.compact,
-                onPressed:
-                    _zoom > MobileWeekView.minZoom ? () => _zoomBy(-.25) : null,
-                icon: const Icon(Icons.remove, size: 18),
-              ),
-              Text(
-                '${(_zoom * 100).round()}%',
-                style: TextStyle(fontSize: 11, color: palette.inkZhong),
-              ),
-              IconButton(
-                key: const Key('week.zoom.in'),
-                tooltip: '放大',
-                visualDensity: VisualDensity.compact,
-                onPressed:
-                    _zoom < MobileWeekView.maxZoom ? () => _zoomBy(.25) : null,
-                icon: const Icon(Icons.add, size: 18),
-              ),
             ],
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  key: const Key('week.zoom.out'),
+                  tooltip: '缩小',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _zoom > MobileWeekView.minZoom
+                      ? () => _zoomBy(-.25)
+                      : null,
+                  icon: const Icon(Icons.remove, size: 18),
+                ),
+                Text(
+                  '${(_zoom * 100).round()}%',
+                  style: TextStyle(fontSize: 11, color: palette.inkZhong),
+                ),
+                IconButton(
+                  key: const Key('week.zoom.in'),
+                  tooltip: '放大',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _zoom < MobileWeekView.maxZoom
+                      ? () => _zoomBy(.25)
+                      : null,
+                  icon: const Icon(Icons.add, size: 18),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 6),
           widget.detailBuilder(_zoom),
