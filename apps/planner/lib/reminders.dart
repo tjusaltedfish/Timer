@@ -165,6 +165,9 @@ abstract class ReminderDriver {
 class NativeReminderDriver implements ReminderDriver {
   final plugin = FlutterLocalNotificationsPlugin();
   bool _precise = false;
+
+  /// 到点响铃：关掉后仍然发通知，但静音、不占横幅优先级。
+  bool sound = true;
   bool get _android =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   bool get _windows =>
@@ -182,6 +185,19 @@ class NativeReminderDriver implements ReminderDriver {
       channelDescription: '开始安排、结束反馈、等待结果和日终回顾',
       importance: Importance.high,
       priority: Priority.high,
+      groupKey: 'planner',
+    ),
+    windows: WindowsNotificationDetails(),
+  );
+  static const silentDetails = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'planner_reminders',
+      '日程与结果提醒',
+      channelDescription: '开始安排、结束反馈、等待结果和日终回顾',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      playSound: false,
+      silent: true,
       groupKey: 'planner',
     ),
     windows: WindowsNotificationDetails(),
@@ -263,7 +279,7 @@ class NativeReminderDriver implements ReminderDriver {
     await plugin.zonedSchedule(
       id: item.id,
       scheduledDate: tz.TZDateTime.from(item.at, tz.UTC),
-      notificationDetails: details,
+      notificationDetails: sound ? details : silentDetails,
       androidScheduleMode: _precise
           ? AndroidScheduleMode.exactAllowWhileIdle
           : AndroidScheduleMode.inexactAllowWhileIdle,
@@ -293,6 +309,7 @@ class ReminderService extends ChangeNotifier {
   final ReminderDriver driver;
   final DateTime Function() clock;
   bool enabled = false,
+      alarm = true,
       initialized = false,
       _disposed = false,
       _dirty = false,
@@ -322,6 +339,10 @@ class ReminderService extends ChangeNotifier {
   Future<void> _initialize() async {
     if (initialized) return;
     enabled = await controller.storage.read('reminders_enabled') == 'true';
+    alarm = await controller.storage.read('reminders_alarm') != 'false';
+    if (driver is NativeReminderDriver) {
+      (driver as NativeReminderDriver).sound = alarm;
+    }
     _registry = Map<String, String>.from(
       jsonDecode(await controller.storage.read('reminder_registry') ?? '{}'),
     );
@@ -396,6 +417,16 @@ class ReminderService extends ChangeNotifier {
   String get diagnostics =>
       '初始化${initialized ? '完成' : '未完成'} · 系统调度${driver.schedulesInSystem ? '是' : '否'}'
       ' · 准时${driver.precise ? '是' : '否'} · 开关${enabled ? '开' : '关'}';
+
+  /// 用户自己选「到点响不响」：关掉只弹静默通知。
+  Future<void> setAlarm(bool value) async {
+    alarm = value;
+    if (driver is NativeReminderDriver) {
+      (driver as NativeReminderDriver).sound = value;
+    }
+    await controller.storage.write('reminders_alarm', value.toString());
+    await refresh(force: true);
+  }
 
   Future<void> disable() async {
     enabled = false;

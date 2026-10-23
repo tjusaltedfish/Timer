@@ -87,6 +87,15 @@ extension _SettingsPage on _PlannerHomeState {
                           : widget.reminders!.disable(),
                     ),
                   ),
+                  SwitchListTile(
+                    key: const Key('reminders.alarm'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('到点响铃'),
+                    subtitle: const Text('关掉后照样提醒，但只弹通知不出声。'),
+                    value: widget.reminders!.alarm,
+                    onChanged: (value) =>
+                        attempt(() => widget.reminders!.setAlarm(value)),
+                  ),
                   Text(widget.reminders!.status),
                   if (widget.reminders!.status.contains('失败') ||
                       widget.reminders!.status.contains('没有响应')) ...[

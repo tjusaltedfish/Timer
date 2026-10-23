@@ -149,7 +149,7 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
                     label: const Text('DeepSeek'),
                     onPressed: () => setState(() {
                       url.text = 'https://api.deepseek.com';
-                      if (model.text.isEmpty) model.text = 'deepseek-chat';
+                      if (model.text.isEmpty) model.text = 'deepseek-v4-flash';
                     }),
                   ),
                   ActionChip(
@@ -177,7 +177,7 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
                 controller: model,
                 decoration: InputDecoration(
                   labelText: '模型名',
-                  hintText: '例如 deepseek-chat，以服务商文档为准',
+                  hintText: '例如 deepseek-v4-flash，以服务商文档为准',
                   suffixIcon: TextButton(
                     onPressed: busy || (config?['key_hint'] ?? '').isEmpty
                         ? null
