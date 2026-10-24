@@ -23,6 +23,7 @@ extension _BlockCard on _PlannerHomeState {
     '保护时段' => '护',
     _ => null,
   };
+
   /// Actual interval once the block has been started, with the planned one as
   /// the reference; untouched blocks keep their plan.
   ({String main, String? hint}) blockTime(Json block, Json? s) {
@@ -31,7 +32,8 @@ extension _BlockCard on _PlannerHomeState {
     final span = blockSpan(block, s);
     final start = hm(local(span.start.toIso8601String()));
     final end = hm(local(span.end.toIso8601String()));
-    final plan = '原定 ${hm(local(block['start_at']))}–${hm(local(block['end_at']))}';
+    final plan =
+        '原定 ${hm(local(block['start_at']))}–${hm(local(block['end_at']))}';
     if (s == null || s['actual_start_at'] == null) {
       return (main: '$start — $end', hint: null);
     }
@@ -43,10 +45,7 @@ extension _BlockCard on _PlannerHomeState {
       return (main: '$start 开始 · 暂停中', hint: plan);
     }
     final differs = span.start != plannedStart || span.end != plannedEnd;
-    return (
-      main: '$start — $end',
-      hint: differs ? plan : null,
-    );
+    return (main: '$start — $end', hint: differs ? plan : null);
   }
 
   Widget focusCard(Json block, {bool focused = true}) {
@@ -344,8 +343,8 @@ extension _BlockCard on _PlannerHomeState {
     });
   }
 
-  /// 把这一整段挪到别处，时长不变：既用于已过点没开始的段，也用于
-  /// 还没到点、想改时间的段（默认停在原定开始时刻上，改起来方便）。
+  /// 改一段安排的时间：挪开始时刻，也能改时长。既用于已过点没开始的段，
+  /// 也用于还没到点、想改时间的段（默认停在原定开始时刻上，改起来方便）。
   Future<void> rescheduleDialog(Json block) async {
     final opened = now;
     final wallNow = DateTime(
@@ -356,7 +355,9 @@ extension _BlockCard on _PlannerHomeState {
       opened.minute,
       opened.second,
     );
-    final duration = local(block['end_at']).difference(local(block['start_at']));
+    final duration = local(block['end_at'])
+        .difference(local(block['start_at']));
+    var minutes = duration.inMinutes;
     final original = local(block['start_at']);
     final editingUpcoming = original.isAfter(wallNow);
     final tonight = DateTime(opened.year, opened.month, opened.day, 20);
@@ -366,12 +367,7 @@ extension _BlockCard on _PlannerHomeState {
     } else {
       targets['明晚 20:00'] = tonight.add(const Duration(days: 1));
     }
-    targets['明早 9:00'] = DateTime(
-      opened.year,
-      opened.month,
-      opened.day + 1,
-      9,
-    );
+    targets['明早 9:00'] = DateTime(opened.year, opened.month, opened.day + 1, 9);
     var picked = editingUpcoming ? 'custom' : targets.keys.first;
     var custom = editingUpcoming
         ? original
@@ -383,7 +379,7 @@ extension _BlockCard on _PlannerHomeState {
         builder: (context, setDialog) {
           final at = target();
           return AlertDialog(
-            title: const Text('把这一段挪到？'),
+            title: const Text('改这一段的时间'),
             content: SizedBox(
               width: 380,
               child: SingleChildScrollView(
@@ -432,20 +428,42 @@ extension _BlockCard on _PlannerHomeState {
                             today: opened,
                             minimum: opened,
                             days: 60,
-                            onChanged: (d, h, m) => custom = DateTime(
-                              d.year,
-                              d.month,
-                              d.day,
-                              h,
-                              m,
-                            ),
+                            onChanged: (d, h, m) =>
+                                custom = DateTime(d.year, d.month, d.day, h, m),
                           ),
                         ),
                       ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text('时长'),
+                        const Spacer(),
+                        IconButton(
+                          key: const Key('reschedule.shorter'),
+                          tooltip: '缩短 15 分钟',
+                          onPressed: minutes > 15
+                              ? () => setDialog(() => minutes -= 15)
+                              : null,
+                          icon: const Icon(Icons.remove),
+                        ),
+                        Text(
+                          '$minutes 分钟',
+                          key: const Key('reschedule.duration'),
+                        ),
+                        IconButton(
+                          key: const Key('reschedule.longer'),
+                          tooltip: '延长 15 分钟',
+                          onPressed: minutes < 12 * 60
+                              ? () => setDialog(() => minutes += 15)
+                              : null,
+                          icon: const Icon(Icons.add),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
                     Text(
-                      '挪到 ${at.month}月${at.day}日 ${hm(at)}—'
-                      '${hm(at.add(duration))}，共 ${duration.inMinutes} 分钟。',
+                      '改为 ${at.month}月${at.day}日 ${hm(at)}—'
+                      '${hm(at.add(Duration(minutes: minutes)))}，共 $minutes 分钟。',
                       key: const Key('reschedule.preview'),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -461,7 +479,7 @@ extension _BlockCard on _PlannerHomeState {
               FilledButton(
                 key: const Key('reschedule.confirm'),
                 onPressed: () => Navigator.pop(dialogContext, at),
-                child: const Text('确认挪动'),
+                child: const Text('保存时间'),
               ),
             ],
           );
@@ -478,11 +496,13 @@ extension _BlockCard on _PlannerHomeState {
         'id': block['id'],
         'version': block['version'],
         'start_at': at.toUtc().toIso8601String(),
-        'end_at': at.add(duration).toUtc().toIso8601String(),
+        'end_at': at.add(Duration(minutes: minutes)).toUtc().toIso8601String(),
         if (block['kind'] != 'flexible') 'allow_fixed': true,
       });
       if (mounted) {
-        message('已挪到 ${chosen.month}月${chosen.day}日 ${hm(chosen)}。');
+        message(
+          '已改到 ${chosen.month}月${chosen.day}日 ${hm(chosen)}，共 $minutes 分钟。',
+        );
       }
     });
   }
@@ -493,21 +513,25 @@ extension _BlockCard on _PlannerHomeState {
     final today = tz.TZDateTime(zone, opened.year, opened.month, opened.day);
     final tomorrow = today.add(const Duration(days: 1));
     final start = DateTime.parse(block['start_at'] as String);
-    final candidates = c.blocks.where((b) {
-      if (b['id'] == block['id'] || b['status'] != 'scheduled') return false;
-      final t = task(b['task_id']);
-      if (t == null || ['done', 'cancelled', 'waiting'].contains(t['state'])) {
-        return false;
-      }
-      final at = local(b['start_at']);
-      return DateTime.parse(b['start_at'] as String).isAfter(start) &&
-          !at.isBefore(today) &&
-          at.isBefore(tomorrow);
-    }).toList()..sort(
-      (a, b) => DateTime.parse(
-        a['start_at'] as String,
-      ).compareTo(DateTime.parse(b['start_at'] as String)),
-    );
+    final candidates =
+        c.blocks.where((b) {
+          if (b['id'] == block['id'] || b['status'] != 'scheduled') {
+            return false;
+          }
+          final t = task(b['task_id']);
+          if (t == null ||
+              ['done', 'cancelled', 'waiting'].contains(t['state'])) {
+            return false;
+          }
+          final at = local(b['start_at']);
+          return DateTime.parse(b['start_at'] as String).isAfter(start) &&
+              !at.isBefore(today) &&
+              at.isBefore(tomorrow);
+        }).toList()..sort(
+          (a, b) =>
+              DateTime.parse(a['start_at'] as String)
+                  .compareTo(DateTime.parse(b['start_at'] as String)),
+        );
     return candidates.firstOrNull;
   }
 
@@ -625,24 +649,26 @@ extension _BlockCard on _PlannerHomeState {
         ListTile(
           contentPadding: const EdgeInsets.symmetric(vertical: 8),
           onTap: () => blockDetails(block),
+          // ListTile gives the leading slot less height than two time lines
+          // need; scale down instead of overflowing (yellow stripes in the list).
           leading: SizedBox(
             width: 56,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  start,
-                  style: TextStyle(
-                    fontFamily: 'WenKai',
-                    fontSize: 16,
-                    color: palette.inkJiao,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    start,
+                    style: TextStyle(
+                      fontFamily: 'WenKai',
+                      fontSize: 16,
+                      color: palette.inkJiao,
+                    ),
                   ),
-                ),
-                Text(
-                  end,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+                  Text(end, style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
             ),
           ),
           title: Text(

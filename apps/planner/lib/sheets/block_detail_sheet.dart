@@ -47,6 +47,18 @@ extension _BlockDetailSheet on _PlannerHomeState {
           ),
         ),
         actions: [
+          // Week view, the day list and this sheet are where people look for
+          // it; the card menu alone was too hard to find.
+          if (block['status'] == 'scheduled' &&
+              !c.sessions.any((s) => s['block_id'] == block['id']))
+            TextButton(
+              key: ValueKey('block.time.${block['id']}'),
+              onPressed: () {
+                Navigator.pop(context);
+                rescheduleDialog(block);
+              },
+              child: const Text('改时间'),
+            ),
           if (t != null)
             TextButton(
               onPressed: () {

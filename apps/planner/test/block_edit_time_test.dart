@@ -11,10 +11,7 @@ void main() {
   ) async {
     tzdata.initializeTimeZones();
     final current = DateTime.utc(2026, 10, 19, 16, 20);
-    final c = PlannerController(
-      storage: MemoryStore(),
-      clock: () => current,
-    );
+    final c = PlannerController(storage: MemoryStore(), clock: () => current);
     await c.initialize();
     await c.submit('task.create', {
       'id': 't',
@@ -39,7 +36,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // The dialog keeps the old interval visible and offers a target.
-    expect(find.text('把这一段挪到？'), findsOneWidget);
+    expect(find.text('改这一段的时间'), findsOneWidget);
     expect(find.byKey(const Key('reschedule.preview')), findsOneWidget);
     await tester.tap(find.byKey(const Key('reschedule.tonight')));
     await tester.pumpAndSettle();
@@ -50,7 +47,9 @@ void main() {
     final expected = tz.TZDateTime(zone, 2026, 10, 19, 20).toUtc();
     final moved = c.blocks.single;
     expect(
-      DateTime.parse(moved['start_at'] as String).toUtc().millisecondsSinceEpoch,
+      DateTime.parse(moved['start_at'] as String)
+          .toUtc()
+          .millisecondsSinceEpoch,
       expected.millisecondsSinceEpoch,
     );
     expect(
@@ -63,4 +62,97 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
+
+  testWidgets(
+    'time and length can be changed from the block details, meals too',
+    (tester) async {
+      tzdata.initializeTimeZones();
+      final current = DateTime.utc(2026, 10, 19, 16, 20); // 09:20 Los Angeles
+      final c = PlannerController(storage: MemoryStore(), clock: () => current);
+      await c.initialize();
+      await c.submit('task.create', {
+        'id': 't',
+        'title': '实验',
+        'outcome_criteria': '报告',
+        'remaining_minutes': 60,
+      });
+      await c.submit('block.create', {
+        'id': 'work',
+        'task_id': 't',
+        'start_at': DateTime.utc(2026, 10, 19, 17).toIso8601String(),
+        'end_at': DateTime.utc(2026, 10, 19, 18).toIso8601String(),
+      });
+      await c.submit('block.create', {
+        'id': 'meal',
+        'title': '午饭',
+        'kind': 'protected',
+        'start_at': DateTime.utc(2026, 10, 19, 19).toIso8601String(),
+        'end_at': DateTime.utc(2026, 10, 19, 20).toIso8601String(),
+      });
+      await tester.pumpWidget(PlannerApp(controller: c));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('列表'));
+      await tester.pumpAndSettle();
+
+      Future<void> openTime(String title, String id) async {
+        await tester.tap(find.text(title).first);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(ValueKey('block.time.$id')));
+        await tester.pumpAndSettle();
+        expect(find.text('改这一段的时间'), findsOneWidget);
+      }
+
+      // A work block: keep the start, make it 30 minutes longer.
+      await openTime('实验', 'work');
+      await tester.ensureVisible(find.byKey(const Key('reschedule.longer')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('reschedule.longer')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('reschedule.longer')));
+      await tester.pumpAndSettle();
+      expect(find.text('90 分钟'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('reschedule.confirm')));
+      await tester.tap(find.byKey(const Key('reschedule.confirm')));
+      await tester.pumpAndSettle();
+      final work = c.blocks.firstWhere((b) => b['id'] == 'work');
+      expect(
+        DateTime.parse(work['start_at']).toUtc(),
+        DateTime.utc(2026, 10, 19, 17),
+      );
+      expect(
+        DateTime.parse(work['end_at']).toUtc(),
+        DateTime.utc(2026, 10, 19, 18, 30),
+      );
+
+      // A meal slot has no task, yet it can move as well.
+      await openTime('午饭', 'meal');
+      await tester.tap(find.byKey(const Key('reschedule.tonight')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('reschedule.shorter')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('reschedule.shorter')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('reschedule.confirm')));
+      await tester.tap(find.byKey(const Key('reschedule.confirm')));
+      await tester.pumpAndSettle();
+      final zone = tz.getLocation(c.settings['timezone'] as String);
+      final meal = c.blocks.firstWhere((b) => b['id'] == 'meal');
+      final evening = tz.TZDateTime(
+        zone,
+        2026,
+        10,
+        19,
+        20,
+      ).millisecondsSinceEpoch;
+      expect(DateTime.parse(meal['start_at']).millisecondsSinceEpoch, evening);
+      expect(
+        DateTime.parse(meal['end_at']).millisecondsSinceEpoch,
+        evening + const Duration(minutes: 45).inMilliseconds,
+      );
+      expect(c.sessions, isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      c.dispose();
+    },
+  );
 }

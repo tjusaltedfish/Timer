@@ -214,8 +214,8 @@ void main() {
     await tester.ensureVisible(reschedule);
     await tester.tap(reschedule);
     await tester.pumpAndSettle();
-    expect(find.text('把这一段挪到？'), findsOneWidget);
-    expect(find.text('挪到 10月19日 20:00—21:00，共 60 分钟。'), findsOneWidget);
+    expect(find.text('改这一段的时间'), findsOneWidget);
+    expect(find.text('改为 10月19日 20:00—21:00，共 60 分钟。'), findsOneWidget);
     await tester.ensureVisible(find.byKey(const Key('reschedule.confirm')));
     await tester.tap(find.byKey(const Key('reschedule.confirm')));
     await tester.pumpAndSettle();
