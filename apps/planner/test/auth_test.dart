@@ -32,10 +32,10 @@ class _Backend {
         return _json({'revoked': true}, logoutStatus);
       case '/api/v1/snapshot':
         if (snapshotStatus >= 400) {
-          return _json(
-            {'code': 'TOKEN_REVOKED', 'message': '登录已失效'},
-            snapshotStatus,
-          );
+          return _json({
+            'code': 'TOKEN_REVOKED',
+            'message': '登录已失效',
+          }, snapshotStatus);
         }
         return _json({
           ...blankState(),
@@ -43,10 +43,7 @@ class _Backend {
           'device': {'id': 'd1', 'name': '瞬时客户端', 'role': 'desktop'},
         });
       case '/api/v1/operations':
-        return _json({
-          'revision': 2,
-          'entity': null,
-        });
+        return _json({'revision': 2, 'entity': null});
       default:
         return _json({'code': 'NOT_FOUND', 'message': '没有这条路由'}, 404);
     }
@@ -190,7 +187,8 @@ void main() {
       final backend = _Backend();
       var code = 'INVALID_CREDENTIALS';
       var detail = '用户名或密码不对';
-      backend.login = (_) async => _json({'code': code, 'message': detail}, 401);
+      backend.login = (_) async =>
+          _json({'code': code, 'message': detail}, 401);
 
       final controller = _controller(MemoryStore(), backend.client);
       await controller.initialize();
@@ -285,7 +283,10 @@ void main() {
       expect(find.text('注册并进入'), findsOneWidget);
 
       await tester.enterText(find.byKey(const Key('login.username')), 'newbie');
-      await tester.enterText(find.byKey(const Key('login.display-name')), '新同学');
+      await tester.enterText(
+        find.byKey(const Key('login.display-name')),
+        '新同学',
+      );
       await tester.enterText(
         find.byKey(const Key('login.password')),
         'long-enough-pw-1',
@@ -437,8 +438,11 @@ void main() {
       final requestsBefore = backend.requests.length;
       await controller.sync();
       await controller.sync();
-      expect(backend.requests.length, requestsBefore,
-          reason: '没有 token 时不能反复请求快照');
+      expect(
+        backend.requests.length,
+        requestsBefore,
+        reason: '没有 token 时不能反复请求快照',
+      );
       await tester.pumpWidget(const SizedBox());
       controller.dispose();
     });
@@ -519,7 +523,9 @@ void main() {
       expect(controller.authenticated, isFalse);
       expect(storage.token, '');
       expect(
-        backend.requests.where((request) => request.url.path == '/api/v1/auth/logout'),
+        backend.requests.where(
+          (request) => request.url.path == '/api/v1/auth/logout',
+        ),
         hasLength(1),
         reason: '退出登录应吊销当前设备',
       );
@@ -562,5 +568,69 @@ void main() {
       controller.dispose();
     });
   });
-}
 
+  group('兼容模式切到登录账号', () {
+    Json task(String id) => {
+      'id': id,
+      'title': '桌面凭证下记的事',
+      'outcome_criteria': '归主账号',
+      'remaining_minutes': 30,
+    };
+
+    test('本机还有没同步的记录时不让登录别的账号', () async {
+      final storage = MemoryStore();
+      final controller = _controller(
+        storage,
+        MockClient((_) async => throw http.ClientException('offline')),
+      );
+      await controller.initialize();
+      await controller.connect('http://127.0.0.1:9123', 'desktop-tok');
+      await controller.submit('task.create', task('legacy-1'));
+      await expectLater(
+        controller.login('http://127.0.0.1:9123', 'alice', 'secret'),
+        throwsA(isA<ApiFailure>().having((e) => e.status, 'status', 409)),
+      );
+      expect(controller.pending, hasLength(1), reason: '记录保留，不丢也不串号');
+      controller.dispose();
+    });
+
+    test('先用原凭证把记录交给原账号，再以空白缓存进入新账号', () async {
+      var offline = true;
+      final writes = <String?>[];
+      final client = MockClient((request) async {
+        if (offline) throw http.ClientException('offline');
+        switch (request.url.path) {
+          case '/api/v1/operations':
+            writes.add(request.headers['Authorization']);
+            return _json({'revision': 2, 'entity': null});
+          case '/api/v1/auth/login':
+            return _json({
+              'token': 'tok-1',
+              'user': {
+                'id': 'u1',
+                'username': 'alice',
+                'display_name': 'Alice',
+              },
+              'device': {'id': 'd1', 'role': 'member'},
+            });
+          case '/api/v1/snapshot':
+            return _json({...blankState(), 'revision': 1});
+          default:
+            return _json({'code': 'NOT_FOUND', 'message': '没有'}, 404);
+        }
+      });
+      final controller = _controller(MemoryStore(), client);
+      await controller.initialize();
+      await controller.connect('http://127.0.0.1:9123', 'desktop-tok');
+      await controller.submit('task.create', task('legacy-2'));
+      expect(controller.pending, hasLength(1));
+      offline = false;
+      await controller.login('http://127.0.0.1:9123', 'alice', 'secret');
+      expect(writes, isNotEmpty);
+      expect(writes.toSet(), {'Bearer desktop-tok'});
+      expect(controller.pending, isEmpty);
+      expect(controller.tasks, isEmpty, reason: '新账号从自己的数据开始');
+      controller.dispose();
+    });
+  });
+}

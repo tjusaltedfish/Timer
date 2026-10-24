@@ -176,6 +176,7 @@ class PlannerController extends ChangeNotifier {
   /// Signs in against the v2 server, persists the credential and loads data.
   Future<Json?> login(String url, String username, String password) async {
     final normalized = normalizeServerUrl(url);
+    await _leaveCurrentAccount();
     serverUrl = normalized;
     _token = '';
     await auth.login(normalized, username.trim(), password);
@@ -191,6 +192,7 @@ class PlannerController extends ChangeNotifier {
     String displayName = '',
   }) async {
     final normalized = normalizeServerUrl(url);
+    await _leaveCurrentAccount();
     serverUrl = normalized;
     _token = '';
     await auth.register(
@@ -200,6 +202,20 @@ class PlannerController extends ChangeNotifier {
       displayName: displayName.trim(),
     );
     return _adoptSession();
+  }
+
+  /// Cached entities and queued records belong to whoever is connected now
+  /// (in compatibility mode: the owner via the desktop token). Push them with
+  /// that credential first and start the next account from a clean cache, so
+  /// nothing is replayed into the wrong account.
+  Future<void> _leaveCurrentAccount() async {
+    if (pending.isNotEmpty && _token.isNotEmpty) await sync();
+    if (pending.isNotEmpty) {
+      throw ApiFailure('还有 ${pending.length} 条本机记录没同步到当前账号，联网同步后再登录别的账号。', 409);
+    }
+    state = blankState();
+    conflict = null;
+    lastSync = null;
   }
 
   Future<Json?> _adoptSession() async {
@@ -212,7 +228,9 @@ class PlannerController extends ChangeNotifier {
       await _save();
     } catch (error) {
       // 本地缓存写失败不该让「服务器已经登录成功」这一步作废。
-      debugPrint('[auth] save after login failed: ${error.runtimeType}: $error');
+      debugPrint(
+        '[auth] save after login failed: ${error.runtimeType}: $error',
+      );
     }
     _notify();
     await sync();
@@ -482,9 +500,7 @@ class PlannerController extends ChangeNotifier {
       await _save();
     } on ApiFailure catch (error) {
       connected = false;
-      connectionError = error.status == 401
-          ? '登录已过期，请重新登录。'
-          : error.message;
+      connectionError = error.status == 401 ? '登录已过期，请重新登录。' : error.message;
       if ([409, 422, 404].contains(error.status) && pending.isNotEmpty) {
         conflict = error.message;
       }
