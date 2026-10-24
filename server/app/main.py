@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.middleware.gzip import GZipMiddleware
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import ValidationError
@@ -31,6 +32,9 @@ from .maintenance import compact_all, expire_due
 from .repo import Repository
 from .reports import flush_archives, flush_archives_all, report_for
 from .store import Store, digest, encode, utcnow
+
+
+APK_MEDIA_TYPE = "application/vnd.android.package-archive"
 
 
 def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transport=None, qq_transport=None, qq_connect=None, background=True):
@@ -110,7 +114,10 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
 
     # Snapshot payloads are large JSON; gzip cuts phone download size several
     # times over on slow links without changing any API shape.
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # The phone package is already a zip: recompressing ~100 MB at level 9 on
+    # the event loop stalled every other request while a phone updated.
+    app.add_middleware(GZipMiddleware, minimum_size=1024,
+                       exclude_content_types=(*DEFAULT_EXCLUDED_CONTENT_TYPES, APK_MEDIA_TYPE))
 
     @app.middleware("http")
     async def headers(request, call_next):
@@ -652,10 +659,17 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
         if partial:
             headers["Content-Range"] = f"bytes {start}-{end}/{size}"
         return StreamingResponse(chunks(), status_code=206 if partial else 200,
-                                 media_type="application/vnd.android.package-archive",
+                                 media_type=APK_MEDIA_TYPE,
                                  headers=headers)
 
     return app
 
 
-app = create_app()
+
+def __getattr__(name):
+    """`uvicorn app.main:app` still finds the app, but merely importing this
+    module (tests, tools) no longer opens and migrates the live database."""
+    if name == "app":
+        globals()["app"] = create_app()
+        return globals()["app"]
+    raise AttributeError(name)

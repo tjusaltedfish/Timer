@@ -27,15 +27,30 @@ class Proactive:
             conn.execute('INSERT OR IGNORE INTO notification_cursor SELECT 1, COALESCE(MAX(revision),0) FROM events')
             legacy = conn.execute('SELECT revision FROM notification_cursor WHERE id=1').fetchone()[0]
             conn.execute('INSERT OR IGNORE INTO notification_cursors VALUES(?,?)', (store.owner_id, legacy))
+            # Earlier builds advanced an unbound account to the owner's legacy
+            # revision, which hid that account's own events once it bound a chat.
+            conn.execute('UPDATE notification_cursors SET revision=(SELECT COALESCE(MAX(e.revision),0)'
+                         ' FROM user_events e WHERE e.user_id=notification_cursors.user_id)'
+                         ' WHERE revision>(SELECT COALESCE(MAX(e.revision),0) FROM user_events e'
+                         ' WHERE e.user_id=notification_cursors.user_id)')
 
     # ---- addressing ------------------------------------------------------
-    def _legacy_target(self):
-        """The v1 single-account binding still counts for the owner."""
+    def _legacy_target(self, conn):
+        """The v1 single-account binding still counts for the owner, unless that
+        handle has since been bound to an account of its own (then the owner's
+        old schedule would land in someone else's chat as a second stream)."""
         for name, channel in (('wechat', self.channel.wechat), ('qq', self.channel.qq)):
             conf = channel.settings.load()
-            if conf.get('bound_openid'):
-                return name, conf['bound_openid']
+            bound = conf.get('bound_openid')
+            if bound and not conn.execute('SELECT 1 FROM channel_identities WHERE channel=? AND external_id=?',
+                                          (name, bound)).fetchone():
+                return name, bound
         return None
+
+    def enabled(self, channel_name):
+        """Each chat's own 「主动推送」 switch governs messages sent through it."""
+        channel = self.channel.wechat if channel_name == 'wechat' else self.channel.qq
+        return channel.settings.load().get('proactive_enabled', True)
 
     def _target(self, conn, user_id):
         rows = conn.execute(
@@ -44,7 +59,7 @@ class Proactive:
         if rows:
             return rows[0]['channel'], rows[0]['external_id']
         if user_id == self.store.owner_id:
-            return self._legacy_target()
+            return self._legacy_target(conn)
         return None
 
     def _cursor(self, conn, user_id):
@@ -66,8 +81,6 @@ class Proactive:
         with self.store.connect() as conn:
             users = [row['id'] for row in
                      conn.execute("SELECT id FROM users WHERE status='active' ORDER BY created_at")]
-        if not self.channel.wechat.settings.load().get('proactive_enabled', True):
-            return
         for user_id in users:
             try:
                 self._tick_user(user_id, now)
@@ -80,8 +93,11 @@ class Proactive:
             conn.execute('BEGIN IMMEDIATE')
             cursor = self._cursor(conn, user_id)
             target = self._target(conn, user_id)
-            if target is None:
-                latest = conn.execute('SELECT COALESCE(MAX(revision),0) FROM events').fetchone()[0]
+            if target is None or not self.enabled(target[0]):
+                # Nothing to say through a missing or muted chat; skip this
+                # account's own history so binding later does not replay it.
+                latest = conn.execute('SELECT COALESCE(MAX(revision),0) FROM user_events WHERE user_id=?',
+                                      (user_id,)).fetchone()[0]
                 self._advance(conn, user_id, latest)
                 return
             channel_name, openid = target
@@ -222,10 +238,9 @@ class Proactive:
         if len(parts) < 4:
             return False
         user_id = parts[1]
-        if not self.channel.wechat.settings.load().get('proactive_enabled', True):
-            return False
         with self.store.connect() as conn:
-            if self._target(conn, user_id) is None:
+            target = self._target(conn, user_id)
+            if target is None or not self.enabled(target[0]):
                 return False
             row = conn.execute('SELECT body FROM notification_refs WHERE key=?', (key,)).fetchone()
             if not row:

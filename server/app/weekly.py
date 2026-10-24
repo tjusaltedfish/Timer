@@ -104,8 +104,6 @@ class WeeklyBrief:
                 conn.execute("DROP TABLE weekly_briefs_v1")
 
     async def run_due(self):
-        if not self.channel.settings.load().get("proactive_enabled", True):
-            return
         now = self.clock()
         with self.store.connect() as conn:
             identities = [dict(row) for row in conn.execute(
@@ -119,11 +117,14 @@ class WeeklyBrief:
             targets.setdefault(row["user_id"], row)
         if not targets:
             # v1 install that never migrated its bound follower into channel_identities.
-            bound = self.channel.settings.load()["bound_openid"]
+            bound = self.channel.wechat.settings.load()["bound_openid"]
             if bound:
                 targets[self.store.owner_id] = {"user_id": self.store.owner_id, "channel": "wechat", "openid": bound}
         for row in targets.values():
-            await self._run_for(row["user_id"], row["openid"], row["channel"], now)
+            # Each chat's own 「主动推送」 switch governs what goes out through it.
+            source = self.channel.wechat if row["channel"] == "wechat" else self.channel.qq
+            if source.settings.load().get("proactive_enabled", True):
+                await self._run_for(row["user_id"], row["openid"], row["channel"], now)
 
     async def _run_for(self, user_id, openid, channel, now):
         state = self.store.state(user_id=user_id)

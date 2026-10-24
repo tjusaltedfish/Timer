@@ -229,7 +229,10 @@ class MaterialService:
         materials = [m['id'] for m in state.get('materials', []) if m['date'] == day][:10]
         if any(a.get('human_review_id') == human['id'] and a['material_ids'] == materials for a in state.get('analyses', [])):
             return
-        key = f"{user_id}|auto-{day}-{human['id']}-{hashlib.sha256('|'.join(materials).encode()).hexdigest()[:8]}"
+        # The request id carries the material set: material added after an
+        # automatic review must start a new request, not collide with the old one.
+        request_id = f"auto-{day}-{human['id']}-{hashlib.sha256('|'.join(materials).encode()).hexdigest()[:8]}"
+        key = f"{user_id}|{request_id}"
         with self.store.connect() as conn:
             previous = conn.execute('SELECT * FROM auto_review_attempts WHERE id=?', (key,)).fetchone()
             if previous and (previous['attempts'] >= 2 or parse(previous['next_at']) > now):
@@ -238,7 +241,7 @@ class MaterialService:
                          (key, (previous['attempts'] if previous else 0) + 1, stamp(now + timedelta(minutes=15)), user_id))
         try:
             await self.generate(GenerateReview(date=day, text=human['text'], material_ids=materials,
-                                               request_id=f"auto-{day}-{human['id']}", source_review_id=human['id']),
+                                               request_id=request_id, source_review_id=human['id']),
                                 user_id=user_id)
         except Exception as error:
             with self.store.connect() as conn:
