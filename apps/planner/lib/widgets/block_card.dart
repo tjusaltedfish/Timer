@@ -106,11 +106,23 @@ extension _BlockCard on _PlannerHomeState {
                         if (focused && t != null)
                           PopupMenuButton<String>(
                             tooltip: '待办操作',
-                            onSelected: (value) =>
-                                value == 'edit' ? editTask(t) : deleteTask(t),
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'edit', child: Text('编辑待办')),
-                              PopupMenuItem(
+                            onSelected: (value) => switch (value) {
+                              'time' => rescheduleDialog(block),
+                              'edit' => editTask(t),
+                              _ => deleteTask(t),
+                            },
+                            itemBuilder: (_) => [
+                              if (block['status'] == 'scheduled' &&
+                                  session(block['id']) == null)
+                                const PopupMenuItem(
+                                  value: 'time',
+                                  child: Text('改时间'),
+                                ),
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('编辑待办'),
+                              ),
+                              const PopupMenuItem(
                                 value: 'delete',
                                 child: Text('删除待办'),
                               ),
@@ -332,7 +344,8 @@ extension _BlockCard on _PlannerHomeState {
     });
   }
 
-  /// 已过点却没开始的段：把原定这一整段挪到之后，时长不变。
+  /// 把这一整段挪到别处，时长不变：既用于已过点没开始的段，也用于
+  /// 还没到点、想改时间的段（默认停在原定开始时刻上，改起来方便）。
   Future<void> rescheduleDialog(Json block) async {
     final opened = now;
     final wallNow = DateTime(
@@ -344,6 +357,8 @@ extension _BlockCard on _PlannerHomeState {
       opened.second,
     );
     final duration = local(block['end_at']).difference(local(block['start_at']));
+    final original = local(block['start_at']);
+    final editingUpcoming = original.isAfter(wallNow);
     final tonight = DateTime(opened.year, opened.month, opened.day, 20);
     final targets = <String, DateTime>{};
     if (tonight.isAfter(wallNow)) {
@@ -357,11 +372,10 @@ extension _BlockCard on _PlannerHomeState {
       opened.day + 1,
       9,
     );
-    var picked = targets.keys.first;
-    var custom = InkDateTimeWheel.ceilTo(
-      opened.add(const Duration(minutes: 30)),
-      5,
-    );
+    var picked = editingUpcoming ? 'custom' : targets.keys.first;
+    var custom = editingUpcoming
+        ? original
+        : InkDateTimeWheel.ceilTo(opened.add(const Duration(minutes: 30)), 5);
     DateTime target() => picked == 'custom' ? custom : targets[picked]!;
     final chosen = await showOwnedDialog<DateTime>(
       context: context,

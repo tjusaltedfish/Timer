@@ -175,11 +175,17 @@ extension _WidgetPage on _PlannerHomeState {
               if (t != null)
                 PopupMenuButton<String>(
                   tooltip: '待办操作',
-                  onSelected: (value) =>
-                      value == 'edit' ? editTask(t) : deleteTask(t),
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'edit', child: Text('编辑待办')),
-                    PopupMenuItem(value: 'delete', child: Text('删除待办')),
+                  onSelected: (value) => switch (value) {
+                    'time' => rescheduleDialog(block),
+                    'edit' => editTask(t),
+                    _ => deleteTask(t),
+                  },
+                  itemBuilder: (_) => [
+                    if (block['status'] == 'scheduled' &&
+                        session(block['id']) == null)
+                      const PopupMenuItem(value: 'time', child: Text('改时间')),
+                    const PopupMenuItem(value: 'edit', child: Text('编辑待办')),
+                    const PopupMenuItem(value: 'delete', child: Text('删除待办')),
                   ],
                 ),
             ],

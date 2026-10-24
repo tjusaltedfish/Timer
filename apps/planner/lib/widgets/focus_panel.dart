@@ -43,13 +43,20 @@ extension _FocusPanel on _PlannerHomeState {
                 PopupMenuButton<String>(
                   tooltip: '待办操作',
                   onSelected: (value) {
+                    if (value == 'time') {
+                      rescheduleDialog(block);
+                      return;
+                    }
                     final t = task(block['task_id']);
                     if (t == null) return;
                     value == 'edit' ? editTask(t) : deleteTask(t);
                   },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'edit', child: Text('编辑待办')),
-                    PopupMenuItem(value: 'delete', child: Text('删除待办')),
+                  itemBuilder: (_) => [
+                    if (block['status'] == 'scheduled' &&
+                        session(block['id']) == null)
+                      const PopupMenuItem(value: 'time', child: Text('改时间')),
+                    const PopupMenuItem(value: 'edit', child: Text('编辑待办')),
+                    const PopupMenuItem(value: 'delete', child: Text('删除待办')),
                   ],
                 ),
               ],
