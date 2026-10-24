@@ -1,6 +1,6 @@
 # One-step release for daily use:
 #   1. bump the build number in apps/planner/pubspec.yaml (Android versionCode must rise),
-#   2. build Windows (release) and Android (debug, arm64 used by the phone),
+#   2. build Windows (release) and Android (release, signed with this PC's debug key; arm64 used by the phone),
 #   3. install the Windows client (tools/install-timer.ps1),
 #   4. publish the phone APK into <data>/releases for in-app updates (not in Git),
 #   5. restart the computer backend the way the desktop shortcut starts it.
@@ -80,9 +80,9 @@ Write-Output "Release: $old -> $next"
 
 try {
     & (Join-Path $PSScriptRoot 'build-windows.ps1') -Mode release
-    & (Join-Path $PSScriptRoot 'build-android.ps1') -Mode debug
+    & (Join-Path $PSScriptRoot 'build-android.ps1') -Mode release
     & (Join-Path $PSScriptRoot 'install-timer.ps1')
-    $apk = Join-Path $repo 'apps\planner\build\app\outputs\flutter-apk\app-arm64-v8a-debug.apk'
+    $apk = Join-Path $repo 'apps\planner\build\app\outputs\flutter-apk\app-arm64-v8a-release.apk'
     if (-not (Test-Path -LiteralPath $apk)) { throw "Android build did not produce $apk" }
     $publishArgs = @('-m', 'app.releases', 'publish', $apk, '--version', $next, '--data', $data)
     if ($RequireUpdate) { $publishArgs += '--require' }
