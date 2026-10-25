@@ -42,6 +42,69 @@ extension _EditTaskSheet on _PlannerHomeState {
     });
   }
 
+  /// The task's planned slots that have not started, each with its own
+  /// 「改时间」 (start and length), plus a way to plan another slot.
+  Widget taskTimeSection(
+    Json t,
+    BuildContext dialogContext,
+    VoidCallback refresh,
+  ) {
+    final upcoming =
+        c.blocks
+            .where(
+              (b) =>
+                  b['task_id'] == t['id'] &&
+                  b['status'] == 'scheduled' &&
+                  !c.sessions.any((s) => s['block_id'] == b['id']),
+            )
+            .toList()
+          ..sort((a, b) => (a['start_at'] as String).compareTo(b['start_at']));
+    final open = !['done', 'cancelled'].contains(t['state']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('时间安排', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        if (upcoming.isEmpty)
+          Text(
+            open ? '还没有安排时间。' : '没有待开始的时间段。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        for (final block in upcoming)
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${local(block['start_at']).month}/${local(block['start_at']).day} '
+                  '${weekdays[local(block['start_at']).weekday - 1]} '
+                  '${hm(local(block['start_at']))}–${hm(local(block['end_at']))}'
+                  '（${DateTime.parse(block['end_at']).difference(DateTime.parse(block['start_at'])).inMinutes} 分钟）',
+                ),
+              ),
+              TextButton(
+                key: ValueKey('task.edit.time.${block['id']}'),
+                onPressed: () async {
+                  await rescheduleDialog(block);
+                  refresh();
+                },
+                child: const Text('改时间'),
+              ),
+            ],
+          ),
+        if (open)
+          TextButton.icon(
+            key: const Key('task.edit.add-time'),
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              taskDialog(existing: t);
+            },
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(upcoming.isEmpty ? '安排时间' : '再安排一段'),
+          ),
+      ],
+    );
+  }
+
   Future<void> editTask(Json t) async {
     final title = TextEditingController(text: t['title']),
         goal = TextEditingController(text: t['outcome_criteria']);
@@ -51,34 +114,39 @@ extension _EditTaskSheet on _PlannerHomeState {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialog) => AlertDialog(
-          title: const Text('编辑任务'),
+          title: const Text('编辑待办'),
           content: SizedBox(
             width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: title,
-                  maxLength: 200,
-                  decoration: const InputDecoration(labelText: '任务名称'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: goal,
-                  maxLines: 3,
-                  maxLength: 2000,
-                  decoration: const InputDecoration(labelText: '完成标准'),
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: categoryChips(
-                    project,
-                    (value) => setDialog(() => project = value),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: title,
+                    maxLength: 200,
+                    decoration: const InputDecoration(labelText: '任务名称'),
                   ),
-                ),
-                if (error != null) Text(error!),
-              ],
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: goal,
+                    maxLines: 3,
+                    maxLength: 2000,
+                    decoration: const InputDecoration(labelText: '完成标准'),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: categoryChips(
+                      project,
+                      (value) => setDialog(() => project = value),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Time lives here too: this is where people look for it.
+                  taskTimeSection(t, dialogContext, () => setDialog(() {})),
+                  if (error != null) Text(error!),
+                ],
+              ),
             ),
           ),
           actions: [

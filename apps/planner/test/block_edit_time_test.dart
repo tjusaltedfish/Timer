@@ -155,4 +155,74 @@ void main() {
       c.dispose();
     },
   );
+
+  testWidgets('编辑待办 itself changes the time and the length', (tester) async {
+    tzdata.initializeTimeZones();
+    final current = DateTime.utc(2026, 10, 19, 16, 20); // 09:20 Los Angeles
+    final c = PlannerController(storage: MemoryStore(), clock: () => current);
+    await c.initialize();
+    await c.submit('task.create', {
+      'id': 't',
+      'title': '实验',
+      'outcome_criteria': '报告',
+      'remaining_minutes': 60,
+    });
+    await c.submit('block.create', {
+      'id': 'b',
+      'task_id': 't',
+      'start_at': DateTime.utc(2026, 10, 19, 17).toIso8601String(),
+      'end_at': DateTime.utc(2026, 10, 19, 18).toIso8601String(),
+    });
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+
+    Future<void> lengthen(Finder open) async {
+      await tester.tap(open);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('编辑待办').last);
+      await tester.pumpAndSettle();
+      expect(find.text('时间安排'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('task.edit.time.b')),
+      );
+      await tester.tap(find.byKey(const ValueKey('task.edit.time.b')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('reschedule.longer')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('reschedule.longer')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('reschedule.confirm')));
+      await tester.tap(find.byKey(const Key('reschedule.confirm')));
+      await tester.pumpAndSettle();
+      // Back in 编辑待办, the row already shows the new length.
+      expect(find.textContaining('分钟）'), findsOneWidget);
+      await tester.tap(find.text('返回'));
+      await tester.pumpAndSettle();
+    }
+
+    int minutes() {
+      final b = c.blocks.single;
+      return DateTime.parse(b['end_at'])
+          .difference(DateTime.parse(b['start_at']))
+          .inMinutes;
+    }
+
+    // From the card's own menu.
+    await lengthen(find.byTooltip('待办操作'));
+    expect(minutes(), 75);
+    expect(find.textContaining('75 分钟'), findsWidgets);
+
+    // From the day list, through the block's details.
+    await tester.tap(find.text('列表'));
+    await tester.pumpAndSettle();
+    await lengthen(find.text('实验').first);
+    expect(minutes(), 90);
+    expect(
+      DateTime.parse(c.blocks.single['start_at']).toUtc(),
+      DateTime.utc(2026, 10, 19, 17),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
 }
