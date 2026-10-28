@@ -3,7 +3,9 @@ part of '../home.dart';
 extension _InquirySheet on _PlannerHomeState {
   Future<void> feedbackDialog(Json block, {bool followUp = false}) async {
     final s = session(block['id']);
-    if (s == null) return;
+    // A block that was never started is backfilled by its id: the server
+    // records the user's account without inventing a timed interval.
+    if (s == null && block['task_id'] == null) return;
     final text = TextEditingController();
     var choice = 'done', remaining = 30;
     final opened = now;
@@ -44,7 +46,7 @@ extension _InquirySheet on _PlannerHomeState {
             '明早 9:00': tomorrow,
           };
           return AlertDialog(
-            title: const Text('这一段，进展如何？'),
+            title: Text(s == null ? '补记这一段的结果' : '这一段，进展如何？'),
             content: ConstrainedBox(
               constraints: sheetBodyConstraints(context),
               child: SizedBox(
@@ -206,7 +208,10 @@ extension _InquirySheet on _PlannerHomeState {
                       }
                     }
                     await c.submit('feedback.create', {
-                      'session_id': s['id'],
+                      if (s != null)
+                        'session_id': s['id']
+                      else
+                        'block_id': block['id'],
                       'choice': choice,
                       'outcome_text': text.text.trim(),
                       if (choice == 'partial' || choice == 'interrupted')
