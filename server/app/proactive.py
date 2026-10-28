@@ -14,6 +14,13 @@ from .domain import parse, stamp
 from .store import encode
 
 
+# WeChat customer-service messages are only allowed within 48 hours of the
+# person's last message; leave a margin for queue and clock drift.
+WECHAT_WINDOW = timedelta(hours=48)
+WECHAT_MARGIN = timedelta(minutes=30)
+KEEPALIVE_LEAD = timedelta(hours=4)
+
+
 class Proactive:
     def __init__(self, store, channel, clock):
         self.store, self.channel, self.clock = store, channel, clock
@@ -52,12 +59,32 @@ class Proactive:
         channel = self.channel.wechat if channel_name == 'wechat' else self.channel.qq
         return channel.settings.load().get('proactive_enabled', True)
 
+    def last_wechat_message(self, conn, openid):
+        row = conn.execute('SELECT MAX(received_at) FROM wechat_inbox WHERE openid=?', (openid,)).fetchone()
+        return parse(row[0]) if row and row[0] else None
+
+    def wechat_reachable(self, conn, openid):
+        """WeChat only lets an account message someone for 48 hours after that
+        person last wrote to it; past that only a configured template gets through."""
+        if self.channel.wechat.settings.load().get('template_id'):
+            return True
+        last = self.last_wechat_message(conn, openid)
+        return last is not None and self.clock() - last < WECHAT_WINDOW - WECHAT_MARGIN
+
     def _target(self, conn, user_id):
         rows = conn.execute(
             "SELECT channel, external_id FROM channel_identities WHERE user_id=? "
             "ORDER BY CASE channel WHEN 'wechat' THEN 0 ELSE 1 END, created_at", (user_id,)).fetchall()
         if rows:
-            return rows[0]['channel'], rows[0]['external_id']
+            first = {}
+            for row in rows:
+                first.setdefault(row['channel'], row['external_id'])
+            # WeChat first while it can still reach the person; otherwise the
+            # QQ they also bound (pushes had silently failed with 45015).
+            if 'wechat' in first and ('qq' not in first or self.wechat_reachable(conn, first['wechat'])):
+                return 'wechat', first['wechat']
+            if 'qq' in first:
+                return 'qq', first['qq']
         if user_id == self.store.owner_id:
             return self._legacy_target(conn)
         return None
@@ -226,6 +253,14 @@ class Proactive:
                 queue('daily', day, 1, text, {'kind': 'daily', 'date': day,
                       'review_id': reviews[-1]['id'] if reviews else None,
                       'counts': [len(today_sessions), unanswered]}, now + timedelta(hours=3))
+            if channel_name == 'wechat' and not self.channel.wechat.settings.load().get('template_id'):
+                last = self.last_wechat_message(conn, openid)
+                if last is not None and WECHAT_WINDOW - KEEPALIVE_LEAD <= now - last < WECHAT_WINDOW:
+                    # One nudge per closing window: a reply reopens it for 48 hours.
+                    queue('keepalive', stamp(last), 1,
+                          "提醒通道快到期了\n公众号只能在你最后一次给它发消息后的 48 小时内主动提醒你。"
+                          "回个「1」，接下来两天的提醒就不会断。",
+                          {'kind': 'keepalive', 'openid': openid, 'last': stamp(last)}, last + WECHAT_WINDOW)
             if events:
                 self._advance(conn, user_id, events[-1]['revision'])
 
@@ -286,6 +321,10 @@ class Proactive:
             check = next((c for c in state['waiting_checks'] if c['id'] == ref['check_id']), None)
             return bool(check and not check.get('resolved_at') and check.get('version', 1) == ref['check_version']
                         and any(t['id'] == check['task_id'] and t['state'] == 'waiting' for t in state['tasks']))
+        if ref.get('kind') == 'keepalive':
+            with self.store.connect() as conn:
+                last = self.last_wechat_message(conn, ref['openid'])
+            return last is not None and stamp(last) == ref['last']
         if ref.get('kind') == 'daily':
             zone = ZoneInfo(state['settings']['timezone'])
             if self.clock().astimezone(zone).date().isoformat() != ref['date']:

@@ -486,7 +486,7 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     # Reminders leave through QQ as soon as it is bound; WeChat keeps the job until then.
     outbound = RoutedChannel(channel, qq)
     app.state.proactive = Proactive(store, outbound, clock)
-    app.state.weekly = WeeklyBrief(store, outbound, service, clock)
+    app.state.weekly = WeeklyBrief(store, outbound, service, clock, target=app.state.proactive._target)
     channel.notification_valid = app.state.proactive.valid
     qq.notification_valid = app.state.proactive.valid
 

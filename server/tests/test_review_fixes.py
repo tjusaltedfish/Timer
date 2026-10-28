@@ -110,3 +110,72 @@ def test_auto_review_runs_again_when_material_is_added_later(client, model):
     client.portal.call(client.app.state.materials.generate_due)
     analyses = client.get("/api/v1/snapshot").json()["analyses"]
     assert len(analyses) == 2 and analyses[-1]["material_ids"] == [upload.json()["id"]]
+
+
+def wechat_said(app, openid, at):
+    with app.state.store.connect() as conn:
+        conn.execute("INSERT INTO wechat_inbox(id,dedup_key,openid,kind,content,received_at,status) "
+                     "VALUES(?,?,?,?,?,?,?)", (os.urandom(8).hex(), os.urandom(8).hex(), openid, "text", "1",
+                                               at.isoformat(), "handled"))
+
+
+def bind_qq_too(app, user_id):
+    with app.state.store.connect() as conn:
+        app.state.qq.identities.bind(conn, "qq", "qq-" + user_id[:6], user_id, "QQ")
+
+
+def qq_texts(app):
+    with app.state.store.connect() as conn:
+        return [row[0] for row in conn.execute("SELECT text FROM qq_outbox")]
+
+
+def test_closed_wechat_window_without_template_falls_back_to_qq(world):
+    app, owner, member, wechat, owner_id, member_id = world
+    from test_proactive_multiuser import NOW as WORLD_NOW
+    wechat_said(app, MEMBER_OPENID, WORLD_NOW - timedelta(hours=50))
+    bind_qq_too(app, member_id)
+    operation(member, "task.create", id="member-task", title="具身智能", outcome_criteria="跑通", remaining_minutes=60)
+    since = len(queued(app))
+    app.state.proactive.tick()
+    assert not any("具身智能" in r["text"] for r in queued(app, since))
+    assert any("具身智能" in text for text in qq_texts(app))
+
+
+def test_open_wechat_window_or_a_template_keeps_wechat_first(world):
+    app, owner, member, wechat, owner_id, member_id = world
+    from test_proactive_multiuser import NOW as WORLD_NOW
+    bind_qq_too(app, member_id)
+    wechat_said(app, MEMBER_OPENID, WORLD_NOW - timedelta(hours=2))
+    with app.state.store.connect() as conn:
+        assert app.state.proactive._target(conn, member_id) == ("wechat", MEMBER_OPENID)
+    with app.state.store.connect() as conn:
+        conn.execute("DELETE FROM wechat_inbox")
+    settings = app.state.wechat.settings
+    settings.save({**settings.load(), "template_id": "tmpl-123"})
+    with app.state.store.connect() as conn:
+        assert app.state.proactive._target(conn, member_id) == ("wechat", MEMBER_OPENID)
+
+
+def test_wechat_only_person_is_nudged_once_before_the_window_closes(world):
+    app, owner, member, wechat, owner_id, member_id = world
+    from test_proactive_multiuser import NOW as WORLD_NOW
+    wechat_said(app, MEMBER_OPENID, WORLD_NOW - timedelta(hours=45))
+    since = len(queued(app))
+    app.state.proactive.tick()
+    app.state.proactive.tick()
+    nudges = [r for r in queued(app, since) if "提醒通道快到期了" in r["text"]]
+    assert len(nudges) == 1 and nudges[0]["openid"] == MEMBER_OPENID
+    wechat_said(app, MEMBER_OPENID, WORLD_NOW - timedelta(minutes=5))  # they replied
+    assert not app.state.proactive.valid(nudges[0]["dedup_key"])
+
+
+def test_weekly_brief_follows_the_same_channel_choice(world):
+    app, owner, member, wechat, owner_id, member_id = world
+    from test_proactive_multiuser import NOW as WORLD_NOW
+    wechat_said(app, MEMBER_OPENID, WORLD_NOW - timedelta(days=3))
+    bind_qq_too(app, member_id)
+    sunday = WORLD_NOW + timedelta(days=5, hours=20, minutes=30)  # Sunday 20:30 in Shanghai (member)
+    app.state.weekly.clock = lambda: sunday
+    app.state.proactive.clock = lambda: sunday
+    owner.portal.call(app.state.weekly.run_due)
+    assert any("本周简报" in text for text in qq_texts(app))

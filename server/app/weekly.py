@@ -89,8 +89,10 @@ def model_input(monday, facts):
 
 
 class WeeklyBrief:
-    def __init__(self, store, channel, service, clock):
+    def __init__(self, store, channel, service, clock, target=None):
         self.store, self.channel, self.service, self.clock = store, channel, service, clock
+        # Same channel choice as the other pushes (WeChat while reachable, else QQ).
+        self.target = target
         with store.connect() as conn:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(weekly_briefs)")}
             if columns and "user_id" not in columns:
@@ -105,6 +107,17 @@ class WeeklyBrief:
 
     async def run_due(self):
         now = self.clock()
+        if self.target is not None:
+            with self.store.connect() as conn:
+                users = [row["id"] for row in conn.execute("SELECT id FROM users WHERE status='active'")]
+                chosen = {user_id: self.target(conn, user_id) for user_id in users}
+            for user_id, target in chosen.items():
+                if target is None:
+                    continue
+                source = self.channel.wechat if target[0] == "wechat" else self.channel.qq
+                if source.settings.load().get("proactive_enabled", True):
+                    await self._run_for(user_id, target[1], target[0], now)
+            return
         with self.store.connect() as conn:
             identities = [dict(row) for row in conn.execute(
                 "SELECT i.user_id AS user_id, i.channel AS channel, i.external_id AS openid "
