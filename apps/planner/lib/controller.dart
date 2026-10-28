@@ -239,23 +239,31 @@ class PlannerController extends ChangeNotifier {
 
   /// Best effort: report an unexpected client-side auth failure so the desktop
   /// log has the real reason (the release package cannot write logcat).
-  Future<void> reportAuthFailure(String message) async {
+  Future<void> reportAuthFailure(String message) =>
+      reportClientEvent('client-auth', message);
+
+  /// Best effort: a short line in the computer's client log, the only place a
+  /// release package can leave evidence (auth failures, reminder state).
+  Future<void> reportClientEvent(String source, String message) async {
     if (serverUrl.isEmpty) return;
+    // Auth failures are reported before there is a token; everything else
+    // waits for a signed-in device.
+    if (source != 'client-auth' && !configured) return;
     try {
       await transport
           .post(
             Uri.parse('$serverUrl/api/v1/client-log'),
             headers: const {'content-type': 'application/json'},
             body: jsonEncode({
-              'source': 'client-auth',
+              'source': source,
               'version': clientVersion,
-              'platform': 'mobile',
+              'platform': defaultTargetPlatform.name,
               'message': message,
             }),
           )
           .timeout(const Duration(seconds: 3));
     } catch (_) {
-      // Reporting must never make a failed login worse.
+      // Reporting must never make the reported problem worse.
     }
   }
 

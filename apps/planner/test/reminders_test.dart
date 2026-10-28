@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,42 @@ void main() {
     ],
   };
   final now = DateTime.utc(2026, 10, 19, 15);
+  test(
+    'the computer starts with reminders on; an explicit off is kept',
+    () async {
+      final storage = MemoryStore();
+      final c = PlannerController(storage: storage);
+      await c.initialize();
+      final desktop = ReminderService(
+        controller: c,
+        driver: DesktopDriver(),
+        clock: () => now,
+      );
+      await desktop.initialize();
+      expect(desktop.enabled, isTrue);
+      await desktop.disable();
+      desktop.dispose();
+      final again = ReminderService(
+        controller: c,
+        driver: DesktopDriver(),
+        clock: () => now,
+      );
+      await again.initialize();
+      expect(again.enabled, isFalse, reason: '用户关掉的开关不被默认值覆盖');
+      again.dispose();
+      final phone = ReminderService(
+        controller: PlannerController(storage: MemoryStore()),
+        driver: FakeDriver(),
+        clock: () => now,
+      );
+      await phone.controller.initialize();
+      await phone.initialize();
+      expect(phone.enabled, isFalse, reason: '手机仍需用户授权通知');
+      phone.dispose();
+      c.dispose();
+    },
+  );
+
   test(
     'phone test registers an OS notification fifteen seconds in the future',
     () async {
@@ -170,10 +207,10 @@ void main() {
     service.dispose();
     c.dispose();
   });
-  test('plan contains start, end and one follow-up; paused execution cancels its old end', () {
+  test('plan contains start and end for an unstarted block; paused execution cancels its old end', () {
     final state = snapshot();
     final first = buildReminders(state, now);
-    expect(first.where((r) => r.key.startsWith('block:b:')).length, 3);
+    expect(first.where((r) => r.key.startsWith('block:b:')).length, 2);
     state['sessions'] = <Json>[
       {
         'id': 's',
@@ -303,7 +340,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(service.status, contains('没有响应'));
     expect(service.enabled, isFalse);
-    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile).first).value, isFalse);
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile).first).value,
+      isFalse,
+    );
     service.dispose();
     c.dispose();
   });
@@ -311,7 +351,8 @@ void main() {
   testWidgets('开启提醒抛异常时，状态里要显示失败原因', (tester) async {
     final c = PlannerController(storage: MemoryStore());
     await c.initialize();
-    final driver = FakeDriver()..permissionError = StateError('notification channel broken');
+    final driver = FakeDriver()
+      ..permissionError = StateError('notification channel broken');
     final service = ReminderService(
       controller: c,
       driver: driver,
@@ -356,6 +397,7 @@ class FakeDriver implements ReminderDriver {
     if (permissionError != null) throw permissionError!;
     return allowPermission;
   }
+
   @override
   Future<void> requestExactPermission() async {}
   @override
@@ -376,4 +418,11 @@ class FakeDriver implements ReminderDriver {
   Future<void> show(ReminderItem item) async {
     active.add(item.id);
   }
+}
+
+/// A desktop-like driver: shows notifications while the app runs, nothing is
+/// registered with the operating system.
+class DesktopDriver extends FakeDriver {
+  @override
+  bool get schedulesInSystem => false;
 }

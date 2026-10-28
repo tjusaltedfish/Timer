@@ -81,6 +81,8 @@ List<ReminderItem> buildReminders(Json state, DateTime now) {
         task?['outcome_criteria'] ?? '打开日程，开始这一段。',
         payload,
       );
+      // Two prompts for a block that was never started: its start, and its
+      // end (to backfill or reschedule). A third follow-up was just noise.
       add(
         'block:${block['id']}:end',
         block['end_at'],
@@ -88,7 +90,6 @@ List<ReminderItem> buildReminders(Json state, DateTime now) {
         '${block['title']}：记录结果或调整下一步。',
         payload,
       );
-      followup('block:${block['id']}', block['end_at'], payload);
     }
   }
   for (final session in sessions) {
@@ -323,6 +324,7 @@ class ReminderService extends ChangeNotifier {
   List<ReminderItem> _plan = [];
   ReminderItem? _testReminder;
   Map<String, String> _registry = {}, _shown = {};
+  String? _reported;
 
   Future<void> initialize() => _initialization ??= _initialize()
       .catchError((Object error, StackTrace stack) {
@@ -338,7 +340,12 @@ class ReminderService extends ChangeNotifier {
 
   Future<void> _initialize() async {
     if (initialized) return;
-    enabled = await controller.storage.read('reminders_enabled') == 'true';
+    final stored = await controller.storage.read('reminders_enabled');
+    // The computer needs no permission, and its only switch hid in settings,
+    // so desktop reminders start on; an explicit 「关」 is still respected.
+    enabled = stored == null
+        ? driver.supported && !driver.schedulesInSystem
+        : stored == 'true';
     alarm = await controller.storage.read('reminders_alarm') != 'false';
     if (driver is NativeReminderDriver) {
       (driver as NativeReminderDriver).sound = alarm;
@@ -386,7 +393,9 @@ class ReminderService extends ChangeNotifier {
     try {
       debugPrint('[rem] enable tapped (init=$initialized, enabled=$enabled)');
       if (!initialized) await initialize().timeout(_driverTimeout);
-      debugPrint('[rem] after init: initialized=$initialized supported=${driver.supported}');
+      debugPrint(
+        '[rem] after init: initialized=$initialized supported=${driver.supported}',
+      );
       if (!initialized) {
         status = '系统提醒没能初始化（可能是系统限制）。退出 App 重进，或到手机设置里允许「瞬时」通知后再试。';
         _notify();
@@ -550,12 +559,25 @@ class ReminderService extends ChangeNotifier {
         if (all.where((r) => r.at.isAfter(now)).length > 120) {
           status += ' 后续提醒将在打开或同步时补充。';
         }
+        _report();
         _notify();
-      } catch (_) {
+      } catch (error) {
         status = '系统提醒未能更新，请检查权限并重试。';
+        _report('$error'.split('\n').first);
         _notify();
       }
     }
+  }
+
+  /// Sends the reminder state to the computer's client log when it changes, so
+  /// "it never rang" can be checked against what the phone actually registered.
+  void _report([String? problem]) {
+    final line =
+        '$diagnostics · 登记 $registeredCount 项 · $status'
+        '${problem == null ? '' : ' · $problem'}';
+    if (line == _reported) return;
+    _reported = line;
+    unawaited(controller.reportClientEvent('reminders', line));
   }
 
   Future<void> _showDue() async {
