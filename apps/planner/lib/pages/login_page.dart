@@ -188,7 +188,7 @@ class _LoginPageState extends State<LoginPage> {
                               enableSuggestions: false,
                               decoration: const InputDecoration(
                                 labelText: '服务器地址',
-                                hintText: 'https://timer.example.com',
+                                hintText: 'https://timer.studydazi.top',
                               ),
                               onSubmitted: (_) => _usernameFocus.requestFocus(),
                             ),

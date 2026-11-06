@@ -19,6 +19,13 @@ typedef SlotPicked = void Function(tz.TZDateTime start, int minutes);
 
 const _hourHeight = 56.0, _axisWidth = 48.0, _headerHeight = 54.0;
 
+/// 桌面整周网格每小时的高度：页面本来就能上下滚动，给半小时的块留出
+/// 一行「时间 + 标题」的位置，免得挤成一团。
+const desktopHourHeight = 72.0;
+
+/// 低于这个高度，时间块改成一行「时间 标题」，不再分两行。
+const _twoLineChipHeight = 40.0;
+
 /// Visible hour range: the configured day, widened to fit every block shown.
 (int, int) visibleHours(
   Iterable<DaySlice> slices,
@@ -138,10 +145,13 @@ class _WeekCalendarState extends State<WeekCalendar> {
         widget.dayEnd,
       );
       final zoom = widget.zoom.clamp(.75, 2.0).toDouble();
-      final hourHeight = _hourHeight * zoom;
       final available = constraints.maxWidth - _axisWidth;
       // 放大后固定列宽会超出屏幕，所以 zoom > 1 时走横向滚动那一支。
       final fits = available >= 7 * 96 && zoom <= 1;
+      // 七列并排放得下（桌面）时用更高的行；手机详细课表仍按 zoom 走。
+      final hourHeight = fits && zoom == 1
+          ? desktopHourHeight
+          : _hourHeight * zoom;
       _columnWidth = fits
           ? available / 7
           : math.max(available / 3.2, 96) * zoom;
@@ -620,6 +630,17 @@ class _BlockChip extends StatelessWidget {
     final block = slice.block;
     final protected = block['kind'] == 'protected';
     final finished = ['completed', 'skipped'].contains(block['status']);
+    final time =
+        '${hm(slice.start)}'
+        '${block['kind'] == 'fixed' ? ' · 定' : ''}'
+        '${showOffset ? ' ${utcOffset(slice.start.timeZoneOffset)}' : ''}';
+    final timeStyle = TextStyle(fontSize: 10.5, color: p.inkZhong);
+    final titleStyle = TextStyle(
+      fontFamily: 'WenKai',
+      fontSize: 13.5,
+      height: 1.25,
+      color: p.inkJiao,
+    );
     return Semantics(
       button: true,
       label: '${hm(slice.start)}至${hm(slice.end)} ${block['title']}',
@@ -637,51 +658,79 @@ class _BlockChip extends StatelessWidget {
             clipBehavior: Clip.antiAlias,
             child: InkWell(
               onTap: onTap,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    width: 3,
-                    margin: const EdgeInsets.symmetric(vertical: 8),
-                    decoration: BoxDecoration(
-                      color: protected ? p.inkQing : mark ?? p.inkQing,
-                      borderRadius: const BorderRadius.horizontal(
-                        right: Radius.circular(2),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(7, 5, 6, 4),
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text:
-                                  '${hm(slice.start)}'
-                                  '${block['kind'] == 'fixed' ? ' · 定' : ''}'
-                                  '${showOffset ? ' ${utcOffset(slice.start.timeZoneOffset)}' : ''}\n',
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                color: p.inkZhong,
-                              ),
-                            ),
-                            TextSpan(
-                              text: block['title'],
-                              style: TextStyle(
-                                fontFamily: 'WenKai',
-                                fontSize: 13.5,
-                                height: 1.25,
-                                color: p.inkJiao,
-                              ),
-                            ),
-                          ],
+              child: LayoutBuilder(
+                builder: (context, box) {
+                  final height = box.maxHeight;
+                  final twoLines = height >= _twoLineChipHeight;
+                  // 短块的色条跟着变短，不再缩成一个点。
+                  final barInset = twoLines
+                      ? 8.0
+                      : ((height - 8) / 4).clamp(2.0, 6.0).toDouble();
+                  final compactTitle = height < 26
+                      ? titleStyle.copyWith(fontSize: 12, height: 1.1)
+                      : titleStyle.copyWith(height: 1.15);
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        width: 3,
+                        margin: EdgeInsets.symmetric(vertical: barInset),
+                        decoration: BoxDecoration(
+                          color: protected ? p.inkQing : mark ?? p.inkQing,
+                          borderRadius: const BorderRadius.horizontal(
+                            right: Radius.circular(2),
+                          ),
                         ),
-                        overflow: TextOverflow.fade,
                       ),
-                    ),
-                  ),
-                ],
+                      Expanded(
+                        child: twoLines
+                            ? Padding(
+                                padding: const EdgeInsets.fromLTRB(7, 5, 6, 4),
+                                child: Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: '$time\n',
+                                        style: timeStyle,
+                                      ),
+                                      TextSpan(
+                                        text: block['title'],
+                                        style: titleStyle,
+                                      ),
+                                    ],
+                                  ),
+                                  overflow: TextOverflow.fade,
+                                ),
+                              )
+                            : Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text.rich(
+                                    TextSpan(
+                                      children: [
+                                        TextSpan(
+                                          text: '$time ',
+                                          style: timeStyle,
+                                        ),
+                                        TextSpan(
+                                          text: block['title'],
+                                          style: compactTitle,
+                                        ),
+                                      ],
+                                    ),
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),

@@ -154,7 +154,7 @@ void main() {
     final columnWidth = (1280 - 48) / 7;
     Offset at(int dayIndex, double hoursFromNine) => Offset(
       48 + columnWidth * dayIndex + columnWidth / 2,
-      grid.dy + 8 + 54 * 0 + hoursFromNine * 56 + 4,
+      grid.dy + 8 + 54 * 0 + hoursFromNine * desktopHourHeight + 4,
     );
     // Thursday 15:00 (future): one-hour default.
     await tester.tapAt(at(3, 6));
@@ -167,6 +167,63 @@ void main() {
     await tester.pump();
     expect(picked.length, 1);
     expect(find.textContaining('已经过去了'), findsOneWidget);
+  });
+
+  testWidgets('short blocks on the desktop week keep time and title visible', (
+    tester,
+  ) async {
+    final zone = tz.getLocation('Asia/Shanghai');
+    tester.view.physicalSize = const Size(1280, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    Json block(String id, String title, String start, String end) => {
+      'id': id,
+      'title': title,
+      'kind': 'flexible',
+      'status': 'scheduled',
+      'start_at': start,
+      'end_at': end,
+    };
+    await tester.pumpWidget(
+      host(
+        SingleChildScrollView(
+          child: WeekCalendar(
+            blocks: [
+              // 30 分钟、10 分钟和一小时的块（上海时间周五上午）。
+              block('a', '背单词', '2026-11-06T03:30:00Z', '2026-11-06T04:00:00Z'),
+              block('b', '回邮件', '2026-11-06T02:11:00Z', '2026-11-06T02:21:00Z'),
+              block('c', '写报告', '2026-11-06T05:00:00Z', '2026-11-06T06:00:00Z'),
+            ],
+            tasks: const [],
+            zone: zone,
+            selectedDay: DateTime(2026, 11, 6),
+            dayStart: '09:00',
+            dayEnd: '18:00',
+            onSelectDay: (_) {},
+            onBlockTap: (_) {},
+          ),
+        ),
+        height: 1600,
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final (title, oneLine) in [
+      ('背单词', true),
+      ('回邮件', true),
+      ('写报告', false),
+    ]) {
+      final text = find.textContaining(title, findRichText: true);
+      expect(text, findsOneWidget);
+      final chip = tester.getRect(
+        find.ancestor(of: text, matching: find.byType(InkWell)).first,
+      );
+      final label = tester.getRect(text);
+      // The whole label sits inside the chip instead of being clipped away.
+      expect(label.top, greaterThanOrEqualTo(chip.top - .5), reason: title);
+      expect(label.bottom, lessThanOrEqualTo(chip.bottom + .5), reason: title);
+      expect(label.height < 20, oneLine, reason: title);
+    }
   });
 
   testWidgets('a task created from the form never starts in the past', (

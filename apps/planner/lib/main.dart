@@ -79,6 +79,7 @@ Future<void> main(List<String> args) async {
   _boot('runApp returned');
   unawaited(reminders.initialize());
   if (token != null) {
-    unawaited(controller.connect('http://127.0.0.1:8787', token));
+    // 电脑端也走公网地址，和手机、其他电脑连的是同一个入口。
+    unawaited(controller.connect(AuthSession.defaultBaseUrl, token));
   }
 }
