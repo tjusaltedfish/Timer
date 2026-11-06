@@ -9,11 +9,10 @@ import 'controller.dart';
 import 'formatting.dart';
 import 'theme/tokens.dart';
 
-// 手机周视图（总览 / 单天概览 / 详细课表）经由这里暴露给 `pages/week_page.dart`：
+// 手机周视图（当天列表 / 详细课表）经由这里暴露给 `pages/week_page.dart`：
 // 那个文件是 home.dart 的 part，不能自己 import。
 export 'week/day_overview.dart';
 export 'week/mobile_week_view.dart';
-export 'week/week_blocks_overview.dart';
 export 'week/week_stats.dart';
 
 /// Called with the chosen start and length when an empty slot is picked.

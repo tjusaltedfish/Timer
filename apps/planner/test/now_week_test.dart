@@ -54,7 +54,7 @@ void main() {
       expect(find.byKey(const Key('focus.remaining')), findsOneWidget);
       await tester.tap(find.text('一周'));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('week.overview')), findsOneWidget);
+      expect(find.byKey(const Key('week.list')), findsOneWidget);
       for (var i = 0; i < 7; i++) {
         final rect = tester.getRect(find.byKey(ValueKey('week.day.$i')));
         expect(rect.left, greaterThanOrEqualTo(0));

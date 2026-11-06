@@ -97,7 +97,7 @@ const List<CoachStep> coachSteps = [
   CoachStep(
     id: StepId.week,
     title: '一周的走法',
-    body: '「一周」里能看见整周的疏密，需要时可以拉长、挪动或留白。',
+    body: '「一周」里按天看安排，进「详细课表」可以拉长、挪动或留白。',
     target: CoachKeys.navWeek,
     page: 1,
   ),

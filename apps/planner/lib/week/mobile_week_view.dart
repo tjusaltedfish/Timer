@@ -5,13 +5,12 @@ import '../controller.dart';
 import '../formatting.dart';
 import '../theme/tokens.dart';
 import 'day_overview.dart';
-import 'week_blocks_overview.dart';
 
-/// 手机周视图的三段式入口：整周总览 → 单天概览 → 详细课表。
+/// 手机的「一周」：默认是选中那天的时间列表，用日期条换天；需要拖动、捏合时
+/// 再进「详细课表」。
 ///
-/// 总览和单天概览是本文件里的状态；「详细课表」沿用桌面那套 hour 网格，
-/// 由 [detailBuilder] 注入（固定细节：DST 时间解析、横向滑动仍走 WeekCalendar），
-/// 这里只负责切换与缩放。
+/// 「详细课表」沿用桌面那套 hour 网格，由 [detailBuilder] 注入（固定细节：
+/// DST 时间解析、横向滑动仍走 WeekCalendar），这里只负责切换与缩放。
 class MobileWeekView extends StatefulWidget {
   const MobileWeekView({
     super.key,
@@ -21,8 +20,6 @@ class MobileWeekView extends StatefulWidget {
     required this.zone,
     required this.now,
     required this.selectedDay,
-    required this.dayStart,
-    required this.dayEnd,
     required this.weekNav,
     required this.detail,
     required this.onDetailChanged,
@@ -39,8 +36,6 @@ class MobileWeekView extends StatefulWidget {
   final tz.Location zone;
   final DateTime now;
   final DateTime selectedDay;
-  final String dayStart;
-  final String dayEnd;
 
   /// 上一周 / 今天 / 下一周 那一行，由首页提供（保持与桌面一致）。
   final Widget weekNav;
@@ -56,18 +51,17 @@ class MobileWeekView extends StatefulWidget {
   /// 空状态里「排一件事」的入口。
   final VoidCallback? onPlan;
 
-  /// 总览顶部的一行本周小结（点开看明细）。
+  /// 列表上方的一行本周小结（点开看明细）。
   final Widget? summary;
 
   static const double minZoom = .75, maxZoom = 2;
-  static const String backLabel = '‹ 返回整周';
+  static const String backLabel = '‹ 返回列表';
 
   @override
   State<MobileWeekView> createState() => _MobileWeekViewState();
 }
 
 class _MobileWeekViewState extends State<MobileWeekView> {
-  bool _dayOpen = false;
   double _zoom = 1;
 
   // 双指捏合：两根手指的距离变化换算成缩放倍数。
@@ -114,11 +108,6 @@ class _MobileWeekViewState extends State<MobileWeekView> {
   String get _dayLabel => '${_day.month}月${_day.day}日 '
       '${weekdays[_day.weekday - 1]}';
 
-  void _openDay(DateTime date) {
-    widget.onSelectDay(date);
-    setState(() => _dayOpen = true);
-  }
-
   void _zoomBy(double delta) => setState(() {
         _zoom = (_zoom + delta)
             .clamp(MobileWeekView.minZoom, MobileWeekView.maxZoom)
@@ -126,98 +115,36 @@ class _MobileWeekViewState extends State<MobileWeekView> {
       });
 
   @override
-  void didUpdateWidget(covariant MobileWeekView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (dateKey(oldWidget.selectedDay) == dateKey(widget.selectedDay)) return;
-    final oldMonday = _mondayOf(oldWidget.selectedDay);
-    final monday = _mondayOf(widget.selectedDay);
-    // 换了一周就回到整周总览，避免停在上周某天的单天页。
-    if (_dayOpen && dateKey(oldMonday) != dateKey(monday)) {
-      _dayOpen = false;
-    }
-  }
-
-  static DateTime _mondayOf(DateTime day) =>
-      DateTime(day.year, day.month, day.day - day.weekday + 1);
-
-  @override
   Widget build(BuildContext context) {
-    final inside = widget.detail || _dayOpen;
     return PopScope(
-      canPop: !inside,
+      canPop: !widget.detail,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        // 手机返回键先退一层：详细课表/单天概览 → 整周总览。
-        if (widget.detail) {
-          widget.onDetailChanged(false);
-        } else if (_dayOpen) {
-          setState(() => _dayOpen = false);
-        }
+        // 手机返回键先退一层：详细课表 → 当天列表。
+        widget.onDetailChanged(false);
       },
-      child: widget.detail
-          ? _detail(context)
-          : _dayOpen
-          ? _dayView(context)
-          : _overview(context),
+      child: widget.detail ? _detail(context) : _list(context),
     );
   }
 
-  Widget _overview(BuildContext context) {
+  Widget _list(BuildContext context) {
     final theme = Theme.of(context);
     return Column(
+      key: const Key('week.list'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         widget.weekNav,
-        Row(
-          children: [
-            Expanded(
-              child: Text('一色一事 · 长按看全名',
-                  style: theme.textTheme.bodySmall),
-            ),
-            TextButton(
-              key: const Key('week.detail.open'),
-              onPressed: () => widget.onDetailChanged(true),
-              child: const Text('详细课表'),
-            ),
-          ],
+        _DayStrip(
+          selected: widget.selectedDay,
+          now: widget.now,
+          onSelect: widget.onSelectDay,
         ),
-        ?widget.summary,
         const SizedBox(height: 4),
-        Expanded(
-          child: WeekBlocksOverview(
-            key: const Key('week.overview'),
-            blocks: widget.blocks,
-            tasks: widget.tasks,
-            sessions: widget.sessions,
-            day: widget.selectedDay,
-            now: widget.now,
-            zone: widget.zone,
-            dayStart: widget.dayStart,
-            dayEnd: widget.dayEnd,
-            onSelectDay: _openDay,
-            onBlockTap: widget.onBlockTap,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _dayView(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
         Row(
           children: [
-            TextButton(
-              key: const Key('week.day.close'),
-              onPressed: () => setState(() => _dayOpen = false),
-              child: const Text('‹ 整周'),
-            ),
             Expanded(
               child: Text(
                 '$_dayLabel${_today ? ' · 今天' : ''}',
-                textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleSmall,
@@ -230,6 +157,7 @@ class _MobileWeekViewState extends State<MobileWeekView> {
             ),
           ],
         ),
+        ?widget.summary,
         const SizedBox(height: 6),
         Expanded(
           child: DayOverview(
@@ -326,6 +254,80 @@ class _MobileWeekViewState extends State<MobileWeekView> {
           const SizedBox(height: 70),
         ],
       ),
+    );
+  }
+}
+
+/// 选中那天所在一周的七天，点一下换到那天。
+class _DayStrip extends StatelessWidget {
+  const _DayStrip({
+    required this.selected,
+    required this.now,
+    required this.onSelect,
+  });
+
+  final DateTime selected, now;
+  final ValueChanged<DateTime> onSelect;
+
+  static const _names = '一二三四五六日';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final palette = context.inkPalette;
+    final monday = DateTime(
+      selected.year,
+      selected.month,
+      selected.day - selected.weekday + 1,
+    );
+    return Row(
+      children: [
+        for (var i = 0; i < 7; i++)
+          Expanded(
+            child: Builder(
+              builder: (context) {
+                final date = DateTime(monday.year, monday.month, monday.day + i);
+                final chosen = dateKey(date) == dateKey(selected);
+                final today = dateKey(date) == dateKey(now);
+                return Semantics(
+                  button: true,
+                  selected: chosen,
+                  label: '${date.month}月${date.day}日 ${weekdays[i]}',
+                  child: InkWell(
+                    key: ValueKey('week.day.$i'),
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => onSelect(date),
+                    child: Ink(
+                      padding: const EdgeInsets.symmetric(vertical: 7),
+                      decoration: BoxDecoration(
+                        color: chosen ? palette.washStrong : null,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: ExcludeSemantics(
+                        child: Column(
+                          children: [
+                            Text(
+                              today ? '今' : _names[i],
+                              style: theme.textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${date.day}',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight:
+                                    chosen ? FontWeight.w600 : FontWeight.w400,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 }

@@ -10,8 +10,6 @@ extension _WeekPage on _PlannerHomeState {
             zone: zone,
             now: now,
             selectedDay: selectedDay,
-            dayStart: c.settings['day_start'],
-            dayEnd: c.settings['day_end'],
             weekNav: weekNav(),
             detail: weekDetail,
             onDetailChanged: (detail) => update(() => weekDetail = detail),

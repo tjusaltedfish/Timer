@@ -9,7 +9,7 @@ import '../formatting.dart';
 import '../theme/schedule_ink.dart';
 import '../theme/tokens.dart';
 
-/// 单天概览：先给数字（计划多久、实际投入多久、完成/中断几段），再给当天的紧凑列表。
+/// 当天列表：先给数字（计划多久、实际投入多久、完成/中断几段），再给当天的紧凑列表。
 class DayOverview extends StatelessWidget {
   const DayOverview({
     super.key,

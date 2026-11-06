@@ -6,7 +6,7 @@ import 'package:time_planner/controller.dart';
 import 'package:time_planner/planner_app.dart';
 import 'package:time_planner/week_calendar.dart';
 
-/// 手机周视图的回归测试：7 列总览 → 单天概览 → 详细课表。
+/// 手机「一周」的回归测试：默认是当天列表，按日期条换天，需要时进详细课表。
 ///
 /// 时间固定在 2026-10-19（周一）16:00Z，即 Los Angeles 本地 09:00。
 void main() {
@@ -50,7 +50,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('手机整周总览：7 列都放得下，今天高亮，点色块命中', (tester) async {
+  testWidgets('一周默认是当天列表：没有整周色块，七天都放得下，能换天看详情', (tester) async {
     phone(tester, width: 360, height: 780);
     final c = await seed();
     await c.submit('task.create', {
@@ -71,10 +71,11 @@ void main() {
     await tester.pumpAndSettle();
     await openWeek(tester);
 
-    expect(find.byKey(const Key('week.overview')), findsOneWidget);
+    expect(find.byKey(const Key('week.list')), findsOneWidget);
+    expect(find.byKey(const Key('week.overview')), findsNothing);
     expect(
       find.descendant(
-        of: find.byKey(const Key('week.overview')),
+        of: find.byKey(const Key('week.list')),
         matching: find.text('今'),
       ),
       findsOneWidget,
@@ -85,33 +86,19 @@ void main() {
       expect(rect.right, lessThanOrEqualTo(360));
       expect(rect.bottom, lessThanOrEqualTo(780));
     }
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('week.overview')),
-        matching: find.textContaining('实验代码'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('week.overview')),
-        matching: find.textContaining('算法学习'),
-      ),
-      findsOneWidget,
-    );
 
-    // 长按色块看全名（窄列里标题会被截断）。
-    await tester.longPress(find.byKey(const ValueKey('week.stamp.b1')));
-    await tester.pumpAndSettle();
-    expect(find.text('实验代码\n09:00—10:00'), findsOneWidget);
-    await tester.pump(const Duration(seconds: 2));
-    await tester.pumpAndSettle();
+    // 打开就是今天的安排，不需要再点一层；别的天不混进来。
+    expect(find.byKey(const ValueKey('week.day.item.b1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('week.day.item.b2')), findsNothing);
 
-    // 点色块 = 打开这件事的详情，不需要先进单天概览。
-    await tester.tap(find.byKey(const ValueKey('week.stamp.b1')));
+    await tester.tap(find.byKey(const ValueKey('week.day.1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('week.day.item.b2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('week.day.item.b1')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('week.day.item.b2')));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text('实验代码'), findsOneWidget);
     await tester.tapAt(const Offset(5, 5));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
@@ -121,7 +108,7 @@ void main() {
     c.dispose();
   });
 
-  testWidgets('点某一天进入单天概览：计划/已投入/完成/中断 + 紧凑列表', (tester) async {
+  testWidgets('当天列表带统计：计划/已投入/完成/中断 + 紧凑列表', (tester) async {
     phone(tester);
     var clock = DateTime.utc(2026, 10, 19, 16);
     final c = await seed(clock: () => clock);
@@ -133,10 +120,6 @@ void main() {
     await tester.pumpAndSettle();
     await openWeek(tester);
 
-    await tester.tap(find.byKey(const ValueKey('week.day.0')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('week.day.close')), findsOneWidget);
     expect(find.text('已投入'), findsOneWidget);
     // 计划一小时，实际只投入 25 分钟。
     expect(find.text('1 小时'), findsOneWidget);
@@ -154,17 +137,12 @@ void main() {
     await tester.tapAt(const Offset(5, 5));
     await tester.pumpAndSettle();
 
-    // 回到整周总览。
-    await tester.tap(find.byKey(const Key('week.day.close')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('week.overview')), findsOneWidget);
-
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
 
-  testWidgets('概览与详细课表可来回切换，缩放有上下边界', (tester) async {
+  testWidgets('列表与详细课表可来回切换，缩放有上下边界', (tester) async {
     phone(tester);
     final c = await seed();
     await tester.pumpWidget(PlannerApp(controller: c));
@@ -204,40 +182,35 @@ void main() {
       isNull,
     );
 
-    // 返回整周总览。
+    // 返回当天列表。
     await tester.tap(find.byKey(const Key('week.detail.close')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('week.overview')), findsOneWidget);
+    expect(find.byKey(const Key('week.list')), findsOneWidget);
     expect(find.byKey(const Key('week.detail')), findsNothing);
 
-    // 从单天概览进详细课表，返回后仍在单天概览。
-    await tester.tap(find.byKey(const ValueKey('week.day.0')));
+    // 换一天进详细课表，返回后还是那一天。
+    await tester.tap(find.byKey(const ValueKey('week.day.2')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('week.detail.open')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('week.detail')), findsOneWidget);
     await tester.tap(find.byKey(const Key('week.detail.close')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('week.day.close')), findsOneWidget);
-    expect(find.byKey(const Key('week.detail')), findsNothing);
+    expect(find.byKey(const Key('week.list')), findsOneWidget);
+    expect(find.textContaining('10月21日'), findsWidgets);
 
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     c.dispose();
   });
 
-  testWidgets('空状态：整周空着、单天空着，都能一键开始排', (tester) async {
+  testWidgets('空状态：这一天空着，能一键开始排', (tester) async {
     phone(tester, width: 360, height: 780);
     final c = await seed(weekEmpty: true);
     await tester.pumpWidget(PlannerApp(controller: c));
     await tester.pumpAndSettle();
     await openWeek(tester);
 
-    expect(find.text('这周还空着'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-
-    await tester.tap(find.byKey(const ValueKey('week.day.2')));
-    await tester.pumpAndSettle();
     expect(find.text('这一天还空着。'), findsOneWidget);
     expect(find.byKey(const Key('week.day.plan')), findsOneWidget);
 
@@ -255,7 +228,7 @@ void main() {
     c.dispose();
   });
 
-  testWidgets('360/390/430dp 三档总览 7 列都不溢出', (tester) async {
+  testWidgets('360/390/430dp 三档日期条 7 天都不溢出', (tester) async {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     for (final width in const [360.0, 390.0, 430.0]) {
@@ -287,7 +260,7 @@ void main() {
     await openWeek(tester);
 
     expect(find.byType(WeekCalendar), findsOneWidget);
-    expect(find.byKey(const Key('week.overview')), findsNothing);
+    expect(find.byKey(const Key('week.list')), findsNothing);
     expect(find.byKey(const Key('week.detail.open')), findsNothing);
     expect(tester.takeException(), isNull);
 
@@ -330,6 +303,36 @@ void main() {
     c.dispose();
   });
 
+  testWidgets('拖动后的撤销提示几秒后自己消失，不挡后面的提示', (tester) async {
+    tester.view.physicalSize = const Size(1280, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final c = await seed();
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+    await openWeek(tester);
+
+    final chip = find.byKey(const ValueKey('week.block.b1'));
+    final column = tester.getSize(chip).width + 8;
+    final gesture = await tester.startGesture(
+      tester.getCenter(chip),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveBy(Offset(column, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('week.drag.undo')), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 7));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('week.drag.undo')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
+
   testWidgets('详细课表里有「今天」；离开本周后一点就回到今天', (tester) async {
     phone(tester);
     final c = await seed();
@@ -361,7 +364,7 @@ void main() {
     c.dispose();
   });
 
-  testWidgets('窄屏进详细课表也能一眼找到「返回整周」', (tester) async {
+  testWidgets('窄屏进详细课表也能一眼找到「返回列表」', (tester) async {
     final c = await seed();
     phone(tester, width: 360);
     await tester.pumpWidget(PlannerApp(controller: c));
@@ -373,10 +376,10 @@ void main() {
 
     // 返回按钮在窄屏上必须可见、可点，不能因为缩放按钮挤掉。
     expect(find.byKey(const Key('week.detail.close')), findsOneWidget);
-    expect(find.text('‹ 返回整周'), findsOneWidget);
+    expect(find.text('‹ 返回列表'), findsOneWidget);
     await tester.tap(find.byKey(const Key('week.detail.close')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('week.overview')), findsOneWidget);
+    expect(find.byKey(const Key('week.list')), findsOneWidget);
 
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

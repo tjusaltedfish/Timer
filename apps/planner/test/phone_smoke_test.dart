@@ -172,7 +172,7 @@ void main() {
     // 5) 切到「一周」「助手」，页面能渲染、不抛异常。
     await tester.tap(find.text('一周'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('week.overview')), findsOneWidget);
+    expect(find.byKey(const Key('week.list')), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.forum_outlined));
     await tester.pumpAndSettle();
