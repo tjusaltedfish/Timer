@@ -29,6 +29,12 @@ def memory_key(text):
     return re.sub(r"[\s。，、；：！？!?,.;:：（）()「」\"'“”‘’]", "", text or "").lower()
 
 
+def memory_lines(memories):
+    """「1. 文字」, marking the ones the assistant picked up on its own."""
+    return [f"{i}. {m['text']}{'（我自己记下的）' if m.get('source') == 'assistant' else ''}"
+            for i, m in enumerate(memories, 1)]
+
+
 def undo_operations(before, after):
     """Operations that turn the schedule in `after` back into `before`.
 
@@ -202,6 +208,40 @@ class AssistantService:
             conn.execute("INSERT INTO assistant_messages VALUES(?,?,?,?,?)", (identifier(), "assistant", answer, stamp(now + timedelta(microseconds=1)), user_id))
             return assistant.message_rows(conn, 2, user_id)
 
+    def memory_list_text(self, user_id=None):
+        """Numbered memories for chat; the numbers are what 「忘记 3」 refers to."""
+        memories = self.store.state(user_id=self.user(user_id)).get("memories", [])
+        if not memories:
+            return "目前还没有记住什么。说「记住：……」就能让我记下。"
+        return "\n".join([f"我记住的事（{len(memories)}/{MEMORY_LIMIT}）：", *memory_lines(memories),
+                          "要删哪条，回复「忘记 编号」。"])
+
+    def forget(self, target, user_id=None):
+        """Deletes a memory by its list number, its exact text or a unique fragment."""
+        user_id = self.user(user_id)
+        memories = self.store.state(user_id=user_id).get("memories", [])
+        number = re.fullmatch(r"(?:第\s*)?(\d{1,2})\s*条?", target)
+        if number:
+            index = int(number.group(1)) - 1
+            if not 0 <= index < len(memories):
+                return f"没有第 {index + 1} 条记忆。回复「记忆」看看编号。"
+            matches = [memories[index]]
+        else:
+            matches = [m for m in memories if m["text"] == target]
+            key = memory_key(target)
+            if not matches and key:
+                matches = [m for m in memories if key in memory_key(m["text"])]
+            if len(matches) > 1:
+                numbered = [line for line, m in zip(memory_lines(memories), memories) if m in matches]
+                return "\n".join(["有几条都对得上，回复「忘记 编号」选一条：", *numbered])
+        if not matches:
+            return "没有找到这条记忆，回复「记忆」可以看全部。"
+        position = memories.index(matches[0]) + 1
+        for item in matches:
+            self.apply_operation("memory.delete", {"id": item["id"]}, user_id=user_id)
+        # 不复述原文：忘掉的内容不该再出现在聊天记录里，被下一轮当上下文带给模型。
+        return f"已忘记第 {position} 条。"
+
     async def converse(self, text, request_id=None, device_id="assistant", image=None, user_id=None):
         """One user turn. Returns the stored user + assistant rows (with drafts).
 
@@ -212,7 +252,8 @@ class AssistantService:
         expire_due(self.store, now, user_id)
         shown = f"[图片] {text}".strip() if image else text
         memory = re.fullmatch(r"(?:请)?记住[：:]\s*(.{1,1000})", text.strip(), re.S)
-        forget = re.fullmatch(r"(?:请)?忘记[：:]\s*(.{1,1000})", text.strip(), re.S)
+        forget = (re.fullmatch(r"(?:请)?(?:忘记|忘掉)[：:]\s*(.{1,1000})", text.strip(), re.S)
+                  or re.fullmatch(r"(?:请)?(?:忘记|忘掉)\s*((?:第\s*)?\d{1,2}\s*条?)", text.strip()))
         if memory:
             memory_id = uuid5(NAMESPACE_URL, request_id).hex if request_id else identifier()
             self.apply_operation("memory.save", {"id": memory_id, "text": memory.group(1).strip()},
@@ -220,10 +261,7 @@ class AssistantService:
                                  user_id=user_id)
             return self._exchange(text, "已记住。你可以在助手的「记忆」中查看或删除。", user_id)
         if forget:
-            matches = [m for m in self.store.state(user_id=user_id).get("memories", []) if m["text"] == forget.group(1).strip()]
-            for item in matches:
-                self.apply_operation("memory.delete", {"id": item["id"]}, user_id=user_id)
-            return self._exchange(text, "已删除这条记忆。" if matches else "没有找到这条记忆，可在助手的「记忆」中查看。", user_id)
+            return self._exchange(text, self.forget(forget.group(1).strip(), user_id), user_id)
         with self.store.connect() as conn:
             conf, key = self.require(conn, user_id)
             state = self.store.state(conn, user_id)

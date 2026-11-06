@@ -19,6 +19,7 @@ HELP = ("我是你的瞬时助手。\n"
         "· 我没听明白时会反问你，回序号（比如「1」）或直接说都行\n"
         "· 发图片我可以看看（助手用的模型支持看图时）\n"
         "· 「今日总结：……」保存原文，「记住：……」保存偏好\n"
+        "· 「记忆」看我记住了什么，「忘记 编号」删掉一条\n"
         "· 「取消 某某」「把午饭挪到一点」也可以直接说\n"
         "· 还没绑定？关注后把 6 位绑定码发我；换绑在 App「我的」里解绑")
 
@@ -97,8 +98,7 @@ class ChatCommands:
         if compact in ("今天", "今日", "今天的安排"):
             return self.today_summary()
         if compact in ('记忆', '你记住了什么'):
-            memories = self.store.state(user_id=self.user_id).get('memories', [])
-            return '\n'.join(['你明确让我记住的事：', *[m['text'] for m in memories]]) if memories else '目前还没有保存的长期偏好。'
+            return self.assistant.memory_list_text(self.user_id)
         undo = UNDO.match(compact)
         if undo:
             return self.undo(undo.group(2))

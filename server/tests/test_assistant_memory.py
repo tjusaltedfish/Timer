@@ -68,3 +68,35 @@ def test_a_turn_can_add_at_most_two_memories(client, model):
 def test_punctuation_only_is_not_a_memory(client, model):
     say(client, model, "记一下", ["。。。", " ，"])
     assert memories(client) == []
+
+
+def chat(client, text):
+    response = client.post("/api/v1/assistant/messages", json={"text": text})
+    assert response.status_code == 200, response.text
+    return response.json()["messages"][-1]["text"]
+
+
+def test_memories_are_listed_with_numbers_and_forgotten_by_number(client, model):
+    for text in ("上午优先做实验", "回答简短一点", "晚上不排实验"):
+        chat(client, f"记住：{text}")
+    say(client, model, "我周末不想排事", ["周末留空"])
+    listing = client.app.state.assistant.memory_list_text()
+    assert "1. 上午优先做实验" in listing
+    assert "4. 周末留空（我自己记下的）" in listing
+    assert "（4/50）" in listing
+    assert chat(client, "忘记 2") == "已忘记第 2 条。"
+    assert memories(client) == ["上午优先做实验", "晚上不排实验", "周末留空"]
+    assert "没有第 9 条" in chat(client, "忘记第9条")
+    assert len(model.requests) == 1  # only the turn that remembered on its own
+
+
+def test_forget_by_fragment_deletes_one_match_and_asks_when_several(client, model):
+    for text in ("上午优先做实验", "晚上不排实验", "回答简短一点"):
+        chat(client, f"记住：{text}")
+    several = chat(client, "忘记：实验")
+    assert "有几条都对得上" in several
+    assert "1. 上午优先做实验" in several and "2. 晚上不排实验" in several
+    assert len(memories(client)) == 3
+    assert chat(client, "忘记：简短") == "已忘记第 3 条。"
+    assert "没有找到" in chat(client, "忘记：游泳")
+    assert memories(client) == ["上午优先做实验", "晚上不排实验"]
