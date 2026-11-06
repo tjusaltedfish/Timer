@@ -524,22 +524,116 @@ class AssistantService:
             if not row or row["status"] != "applied":
                 raise DomainError("这条改动不能撤销，或已经撤销过了", "NOT_FOUND", 404)
             state = self.store.state(conn, user_id)
-            for kind, payload in json.loads(row["operations"]):
-                operation = Operation(operation_id=identifier(), kind=kind, payload=payload)
-                try:
-                    entity = apply(state, operation, device_id, now)
-                except DomainError as error:
-                    raise DomainError(f"之后日程又有变化，没法整体撤销：{error.message}", "UNDO_STALE", 409) from None
-                state["revision"] += 1
-                result = {"revision": state["revision"], "operation_id": operation.operation_id, "entity": entity}
-                conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, user_id,
-                             digest(encode(operation.model_dump())), encode(result)))
-                self.store.record_event(conn, user_id, state["revision"], device_id, kind, payload, now)
+            self._replay_undo(conn, state, draft_id, row["operations"], device_id, user_id, now)
             self.store.save(conn, state, user_id)
-            conn.execute("UPDATE assistant_drafts SET status='undone' WHERE id=?", (draft_id,))
-            conn.execute("DELETE FROM assistant_undo WHERE draft_id=?", (draft_id,))
         flush_archives(self.store, self.clock(), user_id)
         return {"revision": state["revision"], "undone": True}
+
+    def _replay_undo(self, conn, state, draft_id, operations, device_id, user_id, now):
+        """Apply one draft's undo list to ``state``; the caller saves it or rolls back."""
+        for kind, payload in json.loads(operations):
+            operation = Operation(operation_id=identifier(), kind=kind, payload=payload)
+            try:
+                entity = apply(state, operation, device_id, now)
+            except DomainError as error:
+                raise DomainError(f"之后日程又有变化，没法整体撤销：{error.message}", "UNDO_STALE", 409) from None
+            state["revision"] += 1
+            result = {"revision": state["revision"], "operation_id": operation.operation_id, "entity": entity}
+            conn.execute("INSERT INTO operations(id, device_id, user_id, request_hash, response) VALUES(?,?,?,?,?)", (operation.operation_id, device_id, user_id,
+                         digest(encode(operation.model_dump())), encode(result)))
+            self.store.record_event(conn, user_id, state["revision"], device_id, kind, payload, now)
+        conn.execute("UPDATE assistant_drafts SET status='undone' WHERE id=?", (draft_id,))
+        conn.execute("DELETE FROM assistant_undo WHERE draft_id=?", (draft_id,))
+
+    # ---- Taking messages back ---------------------------------------------
+    def _own_message(self, conn, message_id, user_id):
+        row = conn.execute("SELECT rowid AS position, * FROM assistant_messages WHERE id=? AND user_id=?",
+                           (message_id, user_id)).fetchone()
+        if not row:
+            raise DomainError("这条消息已经不在了", "NOT_FOUND", 404)
+        return row
+
+    def _spoken_message(self, conn, message_id, user_id):
+        row = self._own_message(conn, message_id, user_id)
+        if row["role"] != "user":
+            raise DomainError("只能撤回或修改自己发的消息", "VALIDATION_ERROR", 422)
+        return row
+
+    @staticmethod
+    def _answer_to(conn, message, user_id):
+        """The assistant row that answered a user message, if there is one."""
+        following = conn.execute(
+            "SELECT id, role FROM assistant_messages WHERE user_id=? AND (created_at>? OR (created_at=? AND rowid>?)) "
+            "ORDER BY created_at, rowid LIMIT 1",
+            (user_id, message["created_at"], message["created_at"], message["position"])).fetchone()
+        return following if following and following["role"] == "assistant" else None
+
+    @staticmethod
+    def _drop_messages(conn, message_ids, user_id):
+        """Remove rows from the chat, which also keeps them out of the model's context."""
+        for message_id in message_ids:
+            # A draft that was only waiting goes with its message, so 「确认」 cannot apply it later.
+            conn.execute("UPDATE assistant_drafts SET status='dismissed' WHERE message_id=? AND user_id=? AND status='pending'",
+                         (message_id, user_id))
+            conn.execute("DELETE FROM assistant_memes WHERE message_id=? AND user_id=?", (message_id, user_id))
+            conn.execute("DELETE FROM assistant_messages WHERE id=? AND user_id=?", (message_id, user_id))
+
+    def delete_message(self, message_id, user_id=None):
+        """Take one message out of the chat; anything it already changed stays."""
+        user_id = self.user(user_id)
+        with self.store.connect() as conn:
+            row = self._own_message(conn, message_id, user_id)
+            if row["role"] == "assistant":
+                close_pending_questions(conn, user_id, self.clock())
+            self._drop_messages(conn, [row["id"]], user_id)
+        return {"deleted": True}
+
+    def _withdraw(self, conn, message_id, device_id, user_id, now):
+        """Undo a turn inside the caller's transaction; returns how many changes went back."""
+        message = self._spoken_message(conn, message_id, user_id)
+        answer = self._answer_to(conn, message, user_id)
+        # Newest first: a later draft may have touched what an earlier one created.
+        applied = [] if answer is None else conn.execute(
+            "SELECT d.id, u.operations FROM assistant_drafts d LEFT JOIN assistant_undo u ON u.draft_id=d.id "
+            "WHERE d.message_id=? AND d.user_id=? AND d.status='applied' ORDER BY d.rowid DESC",
+            (answer["id"], user_id)).fetchall()
+        if any(draft["operations"] is None for draft in applied):
+            raise DomainError("这条的改动没法自动撤销，消息已保留。可以手动调整日程，或只删除这条消息。",
+                              "UNDO_UNAVAILABLE", 409)
+        if applied:
+            state = self.store.state(conn, user_id)
+            for draft in applied:
+                self._replay_undo(conn, state, draft["id"], draft["operations"], device_id, user_id, now)
+            self.store.save(conn, state, user_id)
+        close_pending_questions(conn, user_id, now)
+        conn.execute("DELETE FROM assistant_context WHERE user_id=?", (user_id,))
+        self._drop_messages(conn, [message["id"]] + ([answer["id"]] if answer else []), user_id)
+        return len(applied)
+
+    def withdraw_message(self, message_id, device_id, user_id=None):
+        """Take back a message, its answer and what that answer changed, all or nothing."""
+        user_id = self.user(user_id)
+        now = self.clock()
+        with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            undone = self._withdraw(conn, message_id, device_id, user_id, now)
+        flush_archives(self.store, self.clock(), user_id)
+        return {"withdrawn": True, "undone": undone}
+
+    async def edit_message(self, message_id, text, device_id, user_id=None):
+        """Replace the last thing said: withdraw that turn, then send the new words."""
+        user_id = self.user(user_id)
+        now = self.clock()
+        with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            message = self._spoken_message(conn, message_id, user_id)
+            last = conn.execute("SELECT id FROM assistant_messages WHERE user_id=? AND role='user' "
+                                "ORDER BY created_at DESC, rowid DESC LIMIT 1", (user_id,)).fetchone()
+            if last["id"] != message["id"]:
+                raise DomainError("只能修改最后一条消息", "NOT_LAST_MESSAGE", 409)
+            self._withdraw(conn, message_id, device_id, user_id, now)
+        flush_archives(self.store, self.clock(), user_id)
+        return await self.converse(text, user_id=user_id)
 
     def dismiss_draft(self, draft_id, user_id=None):
         user_id = self.user(user_id)

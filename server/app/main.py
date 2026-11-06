@@ -467,6 +467,19 @@ def create_app(directory=None, clock=utcnow, llm_transport=None, wechat_transpor
     async def assistant_message(data: assistant.AssistantMessageIn, device=Depends(authenticated)):
         return {"messages": await service.converse(data.text, user_id=assistant_user(device))}
 
+    @app.post("/api/v1/assistant/messages/{message_id}/delete")
+    def assistant_delete_message(message_id: str, device=Depends(authenticated)):
+        return service.delete_message(message_id, assistant_user(device))
+
+    @app.post("/api/v1/assistant/messages/{message_id}/withdraw")
+    def assistant_withdraw_message(message_id: str, device=Depends(authenticated)):
+        return service.withdraw_message(message_id, device["id"], assistant_user(device))
+
+    @app.post("/api/v1/assistant/messages/{message_id}/edit")
+    async def assistant_edit_message(message_id: str, data: assistant.AssistantMessageIn,
+                                     device=Depends(authenticated)):
+        return {"messages": await service.edit_message(message_id, data.text, device["id"], assistant_user(device))}
+
     @app.post("/api/v1/assistant/drafts/{draft_id}/apply")
     def assistant_apply(draft_id: str, device=Depends(authenticated)):
         return service.apply_draft(draft_id, device["id"], assistant_user(device))
