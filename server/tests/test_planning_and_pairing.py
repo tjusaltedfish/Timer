@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from test_workflow import client, new_task, send, operation, block
+
+LA = ZoneInfo("America/Los_Angeles")
 
 
 def test_pairing_is_one_time_and_revocable(client):
@@ -17,8 +20,9 @@ def test_pairing_is_one_time_and_revocable(client):
 
 
 def test_replan_preserves_hard_blocks_and_reports_overload(client):
-    start = datetime.now(timezone.utc) + timedelta(days=2)
-    start = start.replace(hour=16, minute=0, second=0, microsecond=0)  # 09:00 PDT
+    # 09:00 in Los Angeles two days out, whether or not daylight saving is on.
+    day = (datetime.now(LA) + timedelta(days=2)).date()
+    start = datetime(day.year, day.month, day.day, 9, tzinfo=LA).astimezone(timezone.utc)
     code = new_task(client)
     learn = new_task(client, "算法")
     fixed = block(client, learn["id"], start + timedelta(hours=1), duration=60, kind="fixed")
