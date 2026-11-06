@@ -124,6 +124,144 @@ class _AssistantPanelState extends State<AssistantPanel> {
 
   Future<void> showMemories() => showMemoryDialog(context, c);
 
+  /// Whether the answer to this message changed the schedule.
+  bool _changedSchedule(Json message) {
+    final next = messages.indexOf(message) + 1;
+    if (next == 0 || next >= messages.length) return false;
+    final answer = messages[next];
+    return answer['role'] == 'assistant' &&
+        (answer['drafts'] as List? ?? []).any(
+          (draft) => draft['status'] == 'applied',
+        );
+  }
+
+  Future<bool> _confirm(String title, String body, String action) async {
+    final sure = await showOwnedDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('message.confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return sure == true;
+  }
+
+  Future<void> _reload() async {
+    final fresh = await c.assistantMessages();
+    if (mounted) setState(() => messages = fresh);
+  }
+
+  Future<void> withdraw(Json message) async {
+    final sure = await _confirm(
+      '撤回这条消息？',
+      _changedSchedule(message) ? '助手的回复和它做的改动会一起撤销。' : '助手的回复也会一起删掉。',
+      '撤回',
+    );
+    if (!sure) return;
+    setState(() => problem = null);
+    try {
+      await c.withdrawAssistantMessage(message['id']);
+      await _reload();
+    } catch (error) {
+      if (mounted) setState(() => problem = error.toString());
+    }
+  }
+
+  Future<void> remove(Json message) async {
+    final sure = await _confirm(
+      '删除这条消息？',
+      '只从聊天里删掉，日程不会变，助手之后也看不到它。',
+      '删除',
+    );
+    if (!sure) return;
+    setState(() => problem = null);
+    try {
+      await c.deleteAssistantMessage(message['id']);
+      await _reload();
+    } catch (error) {
+      if (mounted) setState(() => problem = error.toString());
+    }
+  }
+
+  Future<void> edit(Json message) async {
+    final original = message['text'] as String;
+    final note = _changedSchedule(message)
+        ? '发送时会先撤销原来的回复和改动。'
+        : '发送时会替换原来的回复。';
+    final field = TextEditingController(text: original);
+    final text = await showOwnedDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('修改这条消息'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                key: const Key('message.edit.field'),
+                controller: field,
+                autofocus: true,
+                minLines: 1,
+                maxLines: 5,
+                maxLength: 4000,
+              ),
+              Text(note, style: Theme.of(dialogContext).textTheme.bodySmall),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('message.edit.send'),
+            onPressed: () => Navigator.pop(dialogContext, field.text.trim()),
+            child: const Text('重新发送'),
+          ),
+        ],
+      ),
+    );
+    field.dispose();
+    if (text == null || text.isEmpty || text == original || !mounted) return;
+    setState(() {
+      sending = true;
+      problem = null;
+    });
+    _toBottom();
+    try {
+      await c.editAssistantMessage(message['id'], text);
+      await _reload();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => problem = error.toString());
+      // The original may already be gone if only the resend failed; keep the
+      // new words so they are not lost.
+      try {
+        await _reload();
+      } catch (_) {}
+      if (mounted && !messages.any((m) => m['id'] == message['id'])) {
+        input.text = text;
+      }
+    } finally {
+      if (mounted) setState(() => sending = false);
+      _toBottom();
+    }
+  }
+
   Future<void> undo(Json draft) async {
     setState(() => busyDrafts.add(draft['id']));
     try {
@@ -163,6 +301,7 @@ class _AssistantPanelState extends State<AssistantPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final narrow = MediaQuery.sizeOf(context).width < 600;
+    final lastMine = messages.where((m) => m['role'] == 'user').lastOrNull;
     if (loading) {
       return const Center(child: CircularProgressIndicator(strokeWidth: 1.5));
     }
@@ -263,6 +402,12 @@ class _AssistantPanelState extends State<AssistantPanel> {
                               busy: busyDrafts,
                               onDecide: decide,
                               onUndo: undo,
+                              actionable:
+                                  !sending && messages[i]['id'] != 'local',
+                              editable: identical(messages[i], lastMine),
+                              onWithdraw: withdraw,
+                              onEdit: edit,
+                              onDelete: remove,
                             ),
                     ),
             ),
@@ -327,11 +472,56 @@ class _MessageView extends StatelessWidget {
     required this.busy,
     required this.onDecide,
     required this.onUndo,
+    required this.actionable,
+    required this.editable,
+    required this.onWithdraw,
+    required this.onEdit,
+    required this.onDelete,
   });
   final Json message;
   final Set<String> busy;
   final void Function(Json draft, bool accept) onDecide;
   final void Function(Json draft) onUndo;
+
+  /// False while a reply is on its way, or for a message not stored yet.
+  final bool actionable;
+
+  /// Only the last message the user wrote can be rewritten.
+  final bool editable;
+  final void Function(Json message) onWithdraw, onEdit, onDelete;
+
+  Widget _menu(BuildContext context, bool mine) => SizedBox(
+    width: 40,
+    height: 32,
+    child: PopupMenuButton<void Function(Json)>(
+      key: ValueKey('message.menu.${message['id']}'),
+      tooltip: '消息操作',
+      padding: EdgeInsets.zero,
+      iconSize: 18,
+      icon: Icon(Icons.more_horiz, color: context.inkPalette.inkZhong),
+      onSelected: (action) => action(message),
+      itemBuilder: (_) => [
+        if (mine)
+          PopupMenuItem(
+            key: const Key('message.withdraw'),
+            value: onWithdraw,
+            child: const Text('撤回'),
+          ),
+        if (mine && editable)
+          PopupMenuItem(
+            key: const Key('message.edit'),
+            value: onEdit,
+            child: const Text('修改'),
+          ),
+        PopupMenuItem(
+          key: const Key('message.delete'),
+          value: onDelete,
+          child: const Text('删除'),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final p = context.inkPalette;
@@ -380,6 +570,7 @@ class _MessageView extends StatelessWidget {
                     ],
                   ),
           ),
+          if (actionable) _menu(context, mine),
           for (final draft in drafts)
             Padding(
               padding: const EdgeInsets.only(top: 10, left: 32),

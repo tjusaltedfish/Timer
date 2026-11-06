@@ -705,6 +705,24 @@ class PlannerController extends ChangeNotifier {
     return messages;
   }
 
+  /// Takes a message back with its answer and whatever that answer changed.
+  Future<void> withdrawAssistantMessage(String id) async {
+    await sync();
+    await _assistant('POST', '/messages/$id/withdraw', {});
+    await sync();
+  }
+
+  /// Removes one message from the chat; the schedule stays as it is.
+  Future<void> deleteAssistantMessage(String id) =>
+      _assistant('POST', '/messages/$id/delete', {});
+
+  /// Replaces the last thing said: that turn is undone, then the new words go out.
+  Future<void> editAssistantMessage(String id, String text) async {
+    await sync();
+    await _assistant('POST', '/messages/$id/edit', {'text': text});
+    await sync();
+  }
+
   Future<void> undoDraft(String id) async {
     await sync();
     await _assistant('POST', '/drafts/$id/undo', {});
