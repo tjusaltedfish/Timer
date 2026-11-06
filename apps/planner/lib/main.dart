@@ -66,20 +66,25 @@ Future<void> main(List<String> args) async {
   } catch (error) {
     _boot('token failed: $error');
   }
-  // An explicit desktop token keeps the legacy single-user desktop path; every
-  // other launch goes through the account gate (login page or /me check).
+  // The desktop token is the legacy single-user path, used only until someone
+  // signs in here; every other launch goes through the account gate (login
+  // page or /me check).
+  final useDesktopToken = controller.desktopTokenApplies(
+    token,
+    explicit: args.contains('--desktop-token-file'),
+  );
   runApp(
     PlannerApp(
       controller: controller,
       reminders: reminders,
       updates: updates,
-      requireLogin: token == null,
+      requireLogin: !useDesktopToken,
     ),
   );
   _boot('runApp returned');
   unawaited(reminders.initialize());
-  if (token != null) {
+  if (useDesktopToken) {
     // 电脑端也走公网地址，和手机、其他电脑连的是同一个入口。
-    unawaited(controller.connect(AuthSession.defaultBaseUrl, token));
+    unawaited(controller.connect(AuthSession.defaultBaseUrl, token!));
   }
 }

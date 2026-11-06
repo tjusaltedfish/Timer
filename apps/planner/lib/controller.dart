@@ -136,6 +136,17 @@ class PlannerController extends ChangeNotifier {
     _notify();
   }
 
+  /// Whether this launch should use the machine's desktop token.
+  ///
+  /// The token file always exists on the computer, and it belongs to the owner
+  /// account. Adopting it unconditionally replaced whatever account was signed
+  /// in here on every restart, which silently split the computer from the
+  /// phone. A token named on the command line is still taken as asked.
+  bool desktopTokenApplies(String? desktopToken, {bool explicit = false}) {
+    if (desktopToken == null || desktopToken.isEmpty) return false;
+    return explicit || _token.isEmpty || _token == desktopToken;
+  }
+
   /// Startup token check: `GET /api/v1/me`.
   ///
   /// 200 keeps the session, 401 clears the token (login page), and a network
