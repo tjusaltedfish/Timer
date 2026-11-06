@@ -134,6 +134,18 @@ class _AssistantSettingsState extends State<AssistantSettingsPanel> {
                   : '还没有配置模型服务。填好下面三项就能开始用。',
               style: theme.textTheme.bodySmall,
             ),
+            if (c.configured)
+              TextButton.icon(
+                key: const Key('settings.assistant.memory'),
+                onPressed: () async {
+                  await showMemoryDialog(context, c);
+                  if (mounted) setState(() {});
+                },
+                icon: const Icon(Icons.bookmark_outline, size: 18),
+                label: Text(
+                  '助手记住的事 · ${(c.state['memories'] as List? ?? []).length} 条',
+                ),
+              ),
             if (!loaded)
               const Padding(
                 padding: EdgeInsets.only(top: 12),

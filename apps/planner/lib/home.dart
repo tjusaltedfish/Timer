@@ -47,6 +47,7 @@ part 'pages/settings_page.dart';
 part 'pages/account_settings.dart';
 part 'pages/assistant_page.dart';
 part 'pages/assistant_settings.dart';
+part 'pages/memory_dialog.dart';
 part 'pages/wechat_settings.dart';
 part 'pages/qq_settings.dart';
 part 'pages/review_page.dart';

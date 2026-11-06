@@ -17,7 +17,11 @@ void _optimistic(Json state, Json operation, {required DateTime now}) {
     if (memories.length >= 50 || (p['text'] as String).trim().isEmpty) {
       throw ApiFailure('请填写记忆，最多保留 50 条。', 422);
     }
-    memories.add({...p, 'source': 'user', 'created_at': now.toIso8601String()});
+    memories.add({
+      ...p,
+      'source': p['source'] ?? 'user',
+      'created_at': now.toIso8601String(),
+    });
   } else if (kind == 'memory.delete') {
     (state['memories'] as List).removeWhere((m) => m['id'] == p['id']);
   } else if (kind == 'task.create') {
