@@ -19,6 +19,11 @@ extension _WeekPage on _PlannerHomeState {
             onBlockTap: blockDetails,
             onPlan: () => taskDialog(),
             detailBuilder: _weekGrid,
+            summary: WeekStatsCard(
+              stats: _weekStats,
+              markOf: markOf,
+              compact: true,
+            ),
           ),
         )
       : SingleChildScrollView(
@@ -28,12 +33,28 @@ extension _WeekPage on _PlannerHomeState {
               children: [
                 weekNav(),
                 const SizedBox(height: 8),
+                WeekStatsCard(stats: _weekStats, markOf: markOf),
+                const SizedBox(height: 20),
                 _weekGrid(1),
                 const SizedBox(height: 70),
               ],
             ),
           ),
         );
+
+  WeekStats get _weekStats => WeekStats.of(
+    blocks: c.blocks,
+    sessions: c.sessions,
+    tasks: c.tasks,
+    projects: c.projects,
+    monday: DateTime(
+      selectedDay.year,
+      selectedDay.month,
+      selectedDay.day - selectedDay.weekday + 1,
+    ),
+    zone: zone,
+    now: now,
+  );
 
   /// 桌面（和手机「详细课表」）用的整周 hour 网格；[zoom] 为 1 时行为与以前一致。
   Widget _weekGrid(double zoom) => WeekCalendar(

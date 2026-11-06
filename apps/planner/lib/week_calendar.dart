@@ -14,6 +14,7 @@ import 'theme/tokens.dart';
 export 'week/day_overview.dart';
 export 'week/mobile_week_view.dart';
 export 'week/week_blocks_overview.dart';
+export 'week/week_stats.dart';
 
 /// Called with the chosen start and length when an empty slot is picked.
 typedef SlotPicked = void Function(tz.TZDateTime start, int minutes);

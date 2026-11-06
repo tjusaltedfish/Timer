@@ -30,6 +30,7 @@ class MobileWeekView extends StatefulWidget {
     required this.onBlockTap,
     required this.detailBuilder,
     this.onPlan,
+    this.summary,
   });
 
   final List<Json> blocks;
@@ -54,6 +55,9 @@ class MobileWeekView extends StatefulWidget {
 
   /// 空状态里「排一件事」的入口。
   final VoidCallback? onPlan;
+
+  /// 总览顶部的一行本周小结（点开看明细）。
+  final Widget? summary;
 
   static const double minZoom = .75, maxZoom = 2;
   static const String backLabel = '‹ 返回整周';
@@ -138,6 +142,7 @@ class _MobileWeekViewState extends State<MobileWeekView> {
             ),
           ],
         ),
+        ?widget.summary,
         const SizedBox(height: 4),
         Expanded(
           child: WeekBlocksOverview(
