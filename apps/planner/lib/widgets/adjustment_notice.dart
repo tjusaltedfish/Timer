@@ -36,6 +36,7 @@ extension _AdjustmentNotice on _PlannerHomeState {
         messenger.hideCurrentSnackBar();
         messenger.showSnackBar(
           SnackBar(
+            persist: false,
             duration: const Duration(seconds: 10),
             content: Text(
               status == 'applied'

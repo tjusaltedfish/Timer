@@ -109,6 +109,9 @@ extension _WeekPage on _PlannerHomeState {
               '「${block['title']}」改到 ${start.month}月${start.day}日 '
               '${hm(start)}–${hm(end)}。',
             ),
+            // 带按钮的提示默认不消失，会挡住后面的提示，隔久了还能撤掉新改动。
+            persist: false,
+            duration: const Duration(seconds: 6),
             action: SnackBarAction(
               key: const Key('week.drag.undo'),
               label: '撤销',

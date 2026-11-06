@@ -428,8 +428,10 @@ extension _BlockCard on _PlannerHomeState {
                             today: opened,
                             minimum: opened,
                             days: 60,
-                            onChanged: (d, h, m) =>
-                                custom = DateTime(d.year, d.month, d.day, h, m),
+                            onChanged: (d, h, m) => setDialog(
+                              () => custom =
+                                  DateTime(d.year, d.month, d.day, h, m),
+                            ),
                           ),
                         ),
                       ),
@@ -478,7 +480,7 @@ extension _BlockCard on _PlannerHomeState {
               ),
               FilledButton(
                 key: const Key('reschedule.confirm'),
-                onPressed: () => Navigator.pop(dialogContext, at),
+                onPressed: () => Navigator.pop(dialogContext, target()),
                 child: const Text('保存时间'),
               ),
             ],

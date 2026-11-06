@@ -40,6 +40,7 @@ extension _SleepSheet on _PlannerHomeState {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('$greeting，睡了 ${sleepLength(saved)}。'),
+        persist: false,
         action: SnackBarAction(
           label: '评一下',
           onPressed: () => sleepDialog(existing: saved),
