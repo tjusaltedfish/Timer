@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
@@ -288,6 +289,41 @@ void main() {
     expect(find.byType(WeekCalendar), findsOneWidget);
     expect(find.byKey(const Key('week.overview')), findsNothing);
     expect(find.byKey(const Key('week.detail.open')), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
+
+  testWidgets('桌面周视图拖动改期：存进本地，撤销能改回去', (tester) async {
+    tester.view.physicalSize = const Size(1280, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final c = await seed();
+    await tester.pumpWidget(PlannerApp(controller: c));
+    await tester.pumpAndSettle();
+    await openWeek(tester);
+
+    final chip = find.byKey(const ValueKey('week.block.b1'));
+    final column = tester.getSize(chip).width + 8;
+    final gesture = await tester.startGesture(
+      tester.getCenter(chip),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveBy(Offset(column, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    DateTime startOf() => DateTime.parse(
+      c.blocks.singleWhere((b) => b['id'] == 'b1')['start_at'] as String,
+    );
+    expect(startOf(), DateTime.utc(2026, 10, 20, 16));
+    expect(find.textContaining('改到 10月20日'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('week.drag.undo')));
+    await tester.pumpAndSettle();
+    expect(startOf(), DateTime.utc(2026, 10, 19, 16));
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox());

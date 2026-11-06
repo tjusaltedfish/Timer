@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -16,6 +17,32 @@ export 'week/week_blocks_overview.dart';
 
 /// Called with the chosen start and length when an empty slot is picked.
 typedef SlotPicked = void Function(tz.TZDateTime start, int minutes);
+
+/// Called when a block was dragged (moved or stretched) to a new interval.
+typedef BlockMoved =
+    void Function(Json block, tz.TZDateTime start, tz.TZDateTime end);
+
+/// 拖动改期时对齐到的分钟数。
+const dragSnapMinutes = 15;
+
+enum _DragMode { move, resize }
+
+class _BlockDrag {
+  _BlockDrag(this.slice, this.mode, this.dayIndex, this.origin);
+  final DaySlice slice;
+  final _DragMode mode;
+  final int dayIndex;
+  final Offset origin;
+  Offset delta = Offset.zero;
+}
+
+/// Where a dragged block would land, and why it cannot (if it cannot).
+class _DragTarget {
+  const _DragTarget(this.dayIndex, this.start, this.end, this.problem);
+  final int dayIndex;
+  final tz.TZDateTime start, end;
+  final String? problem;
+}
 
 const _hourHeight = 56.0, _axisWidth = 48.0, _headerHeight = 54.0;
 
@@ -61,6 +88,7 @@ class WeekCalendar extends StatefulWidget {
     required this.onBlockTap,
     this.now,
     this.onSlotPicked,
+    this.onBlockMoved,
     this.markOf,
     this.zoom = 1,
   });
@@ -72,6 +100,9 @@ class WeekCalendar extends StatefulWidget {
   final ValueChanged<DateTime> onSelectDay;
   final ValueChanged<Json> onBlockTap;
   final SlotPicked? onSlotPicked;
+
+  /// 拖动时间块改期/改时长；为空时时间块不能拖。
+  final BlockMoved? onBlockMoved;
   final Color? Function(Json block)? markOf;
 
   /// 放大倍数（默认 1，桌面不受影响）。手机详细课表用 +/− 按钮调它。
@@ -83,6 +114,108 @@ class WeekCalendar extends StatefulWidget {
 class _WeekCalendarState extends State<WeekCalendar> {
   final scroll = ScrollController();
   double _columnWidth = 0;
+  _BlockDrag? _drag;
+
+  /// Only a planned, untouched block that lies within one day can be dragged.
+  bool _canDrag(DaySlice slice) {
+    if (widget.onBlockMoved == null || slice.actual) return false;
+    final block = slice.block;
+    if (block['status'] != 'scheduled') return false;
+    if (widget.sessions.any((s) => s['block_id'] == block['id'])) return false;
+    final start = DateTime.tryParse(block['start_at'] as String? ?? '');
+    final end = DateTime.tryParse(block['end_at'] as String? ?? '');
+    return start != null &&
+        end != null &&
+        slice.start.isAtSameMomentAs(start) &&
+        slice.end.isAtSameMomentAs(end);
+  }
+
+  _DragTarget _target(
+    _BlockDrag drag,
+    List<DateTime> days,
+    int firstHour,
+    int lastHour,
+    double hourHeight,
+  ) {
+    int snap(double minutes) =>
+        (minutes / dragSnapMinutes).round() * dragSnapMinutes;
+    final start = drag.slice.start, end = drag.slice.end;
+    final moved = drag.delta.dy / hourHeight * 60;
+    final length = end.difference(start).inMinutes;
+    final top = firstHour * 60, bottom = lastHour * 60;
+    final startMinute = start.hour * 60 + start.minute;
+    late final int dayIndex;
+    late final tz.TZDateTime from, to;
+    if (drag.mode == _DragMode.resize) {
+      dayIndex = drag.dayIndex;
+      final endMinute = startMinute + length;
+      final latest = math.min(bottom, startMinute + 24 * 60);
+      final target = snap(endMinute + moved)
+          .clamp(startMinute + dragSnapMinutes, math.max(latest, endMinute))
+          .toInt();
+      from = start;
+      to = start.add(Duration(minutes: target - startMinute));
+    } else {
+      final shift = _columnWidth == 0
+          ? 0
+          : (drag.delta.dx / _columnWidth).round().clamp(
+              -drag.dayIndex,
+              days.length - 1 - drag.dayIndex,
+            );
+      dayIndex = drag.dayIndex + shift;
+      // Keep the block inside the visible hours when it fits there.
+      final latestStart = math.max(top, bottom - length);
+      final target = snap(startMinute + moved).clamp(top, latestStart).toInt();
+      final day = days[dayIndex];
+      from = tz.TZDateTime(widget.zone, day.year, day.month, day.day, 0, target);
+      to = from.add(Duration(minutes: length));
+    }
+    return _DragTarget(dayIndex, from, to, _problem(drag.slice.block, from, to));
+  }
+
+  String? _problem(Json block, tz.TZDateTime start, tz.TZDateTime end) {
+    final now = widget.now;
+    if (now != null && start.isBefore(now)) return '这段时间已经过去了';
+    for (final other in widget.blocks) {
+      if (other['id'] == block['id'] || other['status'] != 'scheduled') {
+        continue;
+      }
+      final a = DateTime.tryParse(other['start_at'] as String? ?? '');
+      final b = DateTime.tryParse(other['end_at'] as String? ?? '');
+      if (a != null && b != null && start.isBefore(b) && end.isAfter(a)) {
+        return '和「${other['title']}」撞了';
+      }
+    }
+    return null;
+  }
+
+  void _dragStart(DaySlice slice, _DragMode mode, int dayIndex, Offset at) =>
+      setState(() => _drag = _BlockDrag(slice, mode, dayIndex, at));
+
+  void _dragUpdate(Offset at) {
+    final drag = _drag;
+    if (drag == null) return;
+    setState(() => drag.delta = at - drag.origin);
+  }
+
+  void _dragEnd(_DragTarget? target) {
+    final drag = _drag;
+    setState(() => _drag = null);
+    if (drag == null || target == null) return;
+    if (target.start.isAtSameMomentAs(drag.slice.start) &&
+        target.end.isAtSameMomentAs(drag.slice.end)) {
+      return;
+    }
+    if (target.problem != null) {
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text('没挪过去：${target.problem}。')),
+        );
+      return;
+    }
+    widget.onBlockMoved?.call(drag.slice.block, target.start, target.end);
+  }
 
   DateTime get monday => DateTime(
     widget.selectedDay.year,
@@ -173,10 +306,14 @@ class _WeekCalendarState extends State<WeekCalendar> {
         );
         return a.timeZoneOffset != b.timeZoneOffset;
       });
+      final drag = _drag;
+      final target = drag == null
+          ? null
+          : _target(drag, days, first, last, hourHeight);
       final columns = Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          for (final day in days)
+          for (final (index, day) in days.indexed)
             SizedBox(
               width: _columnWidth,
               child: Column(
@@ -204,6 +341,19 @@ class _WeekCalendarState extends State<WeekCalendar> {
                       onBlockTap: widget.onBlockTap,
                       onSlotPicked: widget.onSlotPicked,
                       markOf: widget.markOf,
+                      canDrag: _canDrag,
+                      draggingId: drag?.slice.block['id'] as String?,
+                      preview: target?.dayIndex == index ? target : null,
+                      previewTitle: drag?.slice.block['title'] as String?,
+                      onDragStart: (slice, mode, at) =>
+                          _dragStart(slice, mode, index, at),
+                      onDragUpdate: _dragUpdate,
+                      onDragEnd: () => _dragEnd(
+                        _drag == null
+                            ? null
+                            : _target(_drag!, days, first, last, hourHeight),
+                      ),
+                      onDragCancel: () => setState(() => _drag = null),
                     ),
                   ),
                 ],
@@ -267,7 +417,10 @@ class _WeekCalendarState extends State<WeekCalendar> {
             Padding(
               padding: const EdgeInsets.only(top: 14, left: _axisWidth),
               child: Text(
-                '点空白处安排一件事；长按后上下拖动，可以圈出一段时间。',
+                widget.onBlockMoved == null
+                    ? '点空白处安排一件事；长按后上下拖动，可以圈出一段时间。'
+                    : '点空白处安排一件事；长按后上下拖动，可以圈出一段时间。'
+                          '拖动时间块可以改期，拖它的下边缘改时长（手机上先长按）。',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -354,6 +507,14 @@ class _DayColumn extends StatefulWidget {
     required this.onBlockTap,
     required this.onSlotPicked,
     required this.markOf,
+    required this.canDrag,
+    required this.draggingId,
+    required this.preview,
+    required this.previewTitle,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+    required this.onDragCancel,
   });
   final DateTime day;
   final DateTime? now;
@@ -366,6 +527,13 @@ class _DayColumn extends StatefulWidget {
   final ValueChanged<Json> onBlockTap;
   final SlotPicked? onSlotPicked;
   final Color? Function(Json block)? markOf;
+  final bool Function(DaySlice slice) canDrag;
+  final String? draggingId;
+  final _DragTarget? preview;
+  final String? previewTitle;
+  final void Function(DaySlice slice, _DragMode mode, Offset at) onDragStart;
+  final ValueChanged<Offset> onDragUpdate;
+  final VoidCallback onDragEnd, onDragCancel;
   @override
   State<_DayColumn> createState() => _DayColumnState();
 }
@@ -547,10 +715,38 @@ class _DayColumnState extends State<_DayColumn> {
                   20,
                 ),
                 child: _BlockChip(
+                  key: ValueKey('week.block.${widget.slices[i].block['id']}'),
                   slice: widget.slices[i],
                   mark: widget.markOf?.call(widget.slices[i].block),
                   showOffset: widget.showOffset,
+                  lifted:
+                      widget.draggingId != null &&
+                      widget.draggingId == widget.slices[i].block['id'],
                   onTap: () => widget.onBlockTap(widget.slices[i].block),
+                  drag: widget.canDrag(widget.slices[i])
+                      ? _ChipDrag(
+                          start: (mode, at) =>
+                              widget.onDragStart(widget.slices[i], mode, at),
+                          update: widget.onDragUpdate,
+                          end: widget.onDragEnd,
+                          cancel: widget.onDragCancel,
+                        )
+                      : null,
+                ),
+              ),
+            if (widget.preview case final target?)
+              Positioned(
+                top: _y(target.start) + 1.5,
+                left: 4,
+                right: 4,
+                height: math.max(_y(target.end) - _y(target.start) - 3, 20),
+                child: _Ghost(
+                  key: const Key('week.drag.preview'),
+                  text:
+                      '${hm(target.start)}–${hm(target.end)}'
+                      '${target.problem == null ? ' ${widget.previewTitle ?? ''}' : ' · ${target.problem}'}',
+                  strong: true,
+                  warn: target.problem != null,
                 ),
               ),
             if (isToday && now.isAfter(origin) && now.isBefore(end))
@@ -584,9 +780,14 @@ class _DayColumnState extends State<_DayColumn> {
 }
 
 class _Ghost extends StatelessWidget {
-  const _Ghost({required this.text, this.strong = false});
+  const _Ghost({
+    super.key,
+    required this.text,
+    this.strong = false,
+    this.warn = false,
+  });
   final String text;
-  final bool strong;
+  final bool strong, warn;
   @override
   Widget build(BuildContext context) {
     final p = context.inkPalette;
@@ -596,7 +797,10 @@ class _Ghost extends StatelessWidget {
           color: strong ? p.washStrong : p.wash,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: p.inkJiao.withValues(alpha: strong ? .25 : .1),
+            color: warn
+                ? p.accent
+                : p.inkJiao.withValues(alpha: strong ? .25 : .1),
+            width: warn ? 1.4 : 1,
           ),
         ),
         child: Padding(
@@ -613,19 +817,93 @@ class _Ghost extends StatelessWidget {
   }
 }
 
+/// Drag callbacks for one chip; positions are global.
+class _ChipDrag {
+  const _ChipDrag({
+    required this.start,
+    required this.update,
+    required this.end,
+    required this.cancel,
+  });
+  final void Function(_DragMode mode, Offset at) start;
+  final ValueChanged<Offset> update;
+  final VoidCallback end, cancel;
+
+  /// Mouse: press and drag right away. Touch: long-press first so the page
+  /// still scrolls under a finger.
+  Widget wrap(_DragMode mode, Widget child) => GestureDetector(
+    supportedDevices: const {PointerDeviceKind.mouse},
+    dragStartBehavior: DragStartBehavior.down,
+    behavior: HitTestBehavior.opaque,
+    onPanStart: (d) => start(mode, d.globalPosition),
+    onPanUpdate: (d) => update(d.globalPosition),
+    onPanEnd: (_) => end(),
+    onPanCancel: cancel,
+    child: GestureDetector(
+      supportedDevices: const {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.stylus,
+        PointerDeviceKind.invertedStylus,
+        PointerDeviceKind.unknown,
+      },
+      behavior: HitTestBehavior.opaque,
+      onLongPressStart: (d) => start(mode, d.globalPosition),
+      onLongPressMoveUpdate: (d) => update(d.globalPosition),
+      onLongPressEnd: (_) => end(),
+      onLongPressCancel: cancel,
+      child: child,
+    ),
+  );
+}
+
 class _BlockChip extends StatelessWidget {
   const _BlockChip({
+    super.key,
     required this.slice,
     required this.mark,
     required this.showOffset,
     required this.onTap,
+    this.drag,
+    this.lifted = false,
   });
   final DaySlice slice;
   final Color? mark;
   final bool showOffset;
   final VoidCallback onTap;
+  final _ChipDrag? drag;
+
+  /// The block is being dragged: its old place stays as a faint outline.
+  final bool lifted;
   @override
   Widget build(BuildContext context) {
+    final drag = this.drag;
+    final chip = _chip(context);
+    if (drag == null) return chip;
+    return drag.wrap(
+      _DragMode.move,
+      Stack(
+        fit: StackFit.expand,
+        children: [
+          chip,
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 8,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeUpDown,
+              child: drag.wrap(
+                _DragMode.resize,
+                const SizedBox.expand(key: Key('week.block.resize')),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(BuildContext context) {
     final p = context.inkPalette;
     final block = slice.block;
     final protected = block['kind'] == 'protected';
@@ -646,7 +924,11 @@ class _BlockChip extends StatelessWidget {
       label: '${hm(slice.start)}至${hm(slice.end)} ${block['title']}',
       excludeSemantics: true,
       child: Opacity(
-        opacity: finished ? .55 : 1,
+        opacity: lifted
+            ? .3
+            : finished
+            ? .55
+            : 1,
         child: DecoratedBox(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),

@@ -46,11 +46,57 @@ extension _WeekPage on _PlannerHomeState {
     markOf: blockMark,
     zoom: zoom,
     onSlotPicked: (start, minutes) => taskDialog(start: start, minutes: minutes),
+    onBlockMoved: _dragBlock,
     dayStart: c.settings['day_start'],
     dayEnd: c.settings['day_end'],
     onSelectDay: selectDate,
     onBlockTap: blockDetails,
   );
+
+  /// 周视图里拖完一块：提交 `block.move`，并给一次撤销的机会。
+  Future<void> _dragBlock(
+    Json block,
+    tz.TZDateTime start,
+    tz.TZDateTime end,
+  ) async {
+    final id = block['id'] as String;
+    final before = (block['start_at'] as String, block['end_at'] as String);
+    final manual = block['kind'] != 'flexible';
+    Future<void> move(String from, String to) {
+      final current = c.blocks.where((b) => b['id'] == id).firstOrNull;
+      if (current == null) throw ApiFailure('这段安排已经不在了。', 404);
+      return c.submit('block.move', {
+        'id': id,
+        'version': current['version'],
+        'start_at': from,
+        'end_at': to,
+        if (manual) 'allow_fixed': true,
+      });
+    }
+
+    await attempt(() async {
+      await move(
+        start.toUtc().toIso8601String(),
+        end.toUtc().toIso8601String(),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              '「${block['title']}」改到 ${start.month}月${start.day}日 '
+              '${hm(start)}–${hm(end)}。',
+            ),
+            action: SnackBarAction(
+              key: const Key('week.drag.undo'),
+              label: '撤销',
+              onPressed: () => attempt(() => move(before.$1, before.$2)),
+            ),
+          ),
+        );
+    });
+  }
 
   Future<tz.TZDateTime> resolvePlannedTime(
     DateTime date,
