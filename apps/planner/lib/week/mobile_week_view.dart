@@ -70,6 +70,45 @@ class _MobileWeekViewState extends State<MobileWeekView> {
   bool _dayOpen = false;
   double _zoom = 1;
 
+  // 双指捏合：两根手指的距离变化换算成缩放倍数。
+  final _fingers = <int, Offset>{};
+  double? _pinchSpread;
+  double _pinchZoom = 1;
+
+  double get _spread {
+    final points = _fingers.values.toList();
+    return (points[0] - points[1]).distance;
+  }
+
+  void _fingerDown(PointerDownEvent event) {
+    _fingers[event.pointer] = event.position;
+    if (_fingers.length == 2) {
+      setState(() {
+        _pinchSpread = _spread;
+        _pinchZoom = _zoom;
+      });
+    }
+  }
+
+  void _fingerMove(PointerMoveEvent event) {
+    if (!_fingers.containsKey(event.pointer)) return;
+    _fingers[event.pointer] = event.position;
+    final from = _pinchSpread;
+    if (_fingers.length != 2 || from == null || from < 1) return;
+    final next = (_pinchZoom * _spread / from)
+        .clamp(MobileWeekView.minZoom, MobileWeekView.maxZoom);
+    // 5% 一档，避免每一帧都重排整张课表。
+    final stepped = (next * 20).round() / 20;
+    if (stepped != _zoom) setState(() => _zoom = stepped);
+  }
+
+  void _fingerUp(PointerEvent event) {
+    _fingers.remove(event.pointer);
+    if (_fingers.length < 2 && _pinchSpread != null) {
+      setState(() => _pinchSpread = null);
+    }
+  }
+
   DateTime get _day => widget.selectedDay;
   bool get _today => dateKey(_day) == dateKey(widget.now);
   String get _dayLabel => '${_day.month}月${_day.day}日 '
@@ -213,6 +252,10 @@ class _MobileWeekViewState extends State<MobileWeekView> {
     final palette = context.inkPalette;
     return SingleChildScrollView(
       key: const Key('week.detail'),
+      // 捏合时页面不跟着上下滚。
+      physics: _pinchSpread == null
+          ? null
+          : const NeverScrollableScrollPhysics(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -271,7 +314,15 @@ class _MobileWeekViewState extends State<MobileWeekView> {
             ),
           ),
           const SizedBox(height: 6),
-          widget.detailBuilder(_zoom),
+          Listener(
+            key: const Key('week.detail.pinch'),
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: _fingerDown,
+            onPointerMove: _fingerMove,
+            onPointerUp: _fingerUp,
+            onPointerCancel: _fingerUp,
+            child: widget.detailBuilder(_zoom),
+          ),
           const SizedBox(height: 70),
         ],
       ),

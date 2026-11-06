@@ -224,13 +224,20 @@ class _WeekCalendarState extends State<WeekCalendar> {
     widget.selectedDay.day - widget.selectedDay.weekday + 1,
   );
 
-  void _reveal() {
+  void _reveal({bool animate = true}) {
     if (!mounted || !scroll.hasClients || _columnWidth == 0) return;
     final index = widget.selectedDay.weekday - 1;
-    final target = (index - .5) * _columnWidth;
+    final target = ((index - .5) * _columnWidth).clamp(
+      0.0,
+      scroll.position.maxScrollExtent,
+    );
+    if (!animate || context.stillMotion) {
+      scroll.jumpTo(target);
+      return;
+    }
     scroll.animateTo(
-      target.clamp(0, scroll.position.maxScrollExtent),
-      duration: context.stillMotion ? Duration.zero : InkMetrics.transition,
+      target,
+      duration: InkMetrics.transition,
       curve: InkMetrics.settle,
     );
   }
@@ -238,9 +245,13 @@ class _WeekCalendarState extends State<WeekCalendar> {
   @override
   void didUpdateWidget(covariant WeekCalendar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (dateKey(oldWidget.selectedDay) != dateKey(widget.selectedDay) ||
-        oldWidget.zoom != widget.zoom) {
+    if (dateKey(oldWidget.selectedDay) != dateKey(widget.selectedDay)) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
+    } else if (oldWidget.zoom != widget.zoom) {
+      // 缩放（尤其是捏合）时直接跟住选中的那天，不做动画。
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _reveal(animate: false),
+      );
     }
   }
 
